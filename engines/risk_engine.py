@@ -131,10 +131,14 @@ def _build_one_line_summary(
     top_etfs: list,
 ) -> str:
     top = ", ".join(top_etfs[:2])
+    # 버그 수정: risk_level 기준이 아닌 regime 기준으로 문구 결정
+    # 기존: risk_level==LOW 이면 "risk-on conditions" → Risk-Off일 때도 같은 문구가 나오는 오류
     if risk_level == "HIGH":
-        return f"{regime} — high risk environment favors {top} defensively."
-    elif risk_level == "LOW":
-        return f"{regime} — risk-on conditions favor growth via {top}."
+        return f"{regime} — high risk environment. Defensive posture via {top}."
+    elif "Risk-Off" in regime or "Shock" in regime or "Crisis" in regime or "Risk" in regime:
+        return f"{regime} — defensive conditions. Focus on {top}."
+    elif "Risk-On" in regime or "AI Bubble" in regime:
+        return f"{regime} — growth conditions favor {top}."
     else:
         return f"{regime} — mixed signals; selective exposure to {top}."
 

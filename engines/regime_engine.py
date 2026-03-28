@@ -14,19 +14,44 @@ logger = logging.getLogger(__name__)
 
 def _compute_composite_risk_score(market_score: dict, signals: dict) -> int:
     """
-    Market Score 6개 축을 종합하여 0~100 Risk Score 산출.
-    (5점 체계이므로 최대 합산 30, 최소 6)
+    Market Score 6개 축 + 원시 신호(VIX/Oil) 직접 반영 → 0~100 Risk Score.
+
+    버그 수정 (v1.5.3):
+      - 기존 정규화 공식이 너무 낮은 점수를 반환해 VIX=31도 LOW로 판정
+      - VIX/Oil 임계치 직접 체크로 하한 보정 추가
     """
     ms = market_score
+
+    # 1. 가중합 (최소 100, 최대 500)
     total = (
-        ms.get("risk_score", 2) * 25 +          # 위험 심리 (가중 25%)
-        ms.get("liquidity_score", 2) * 20 +      # 유동성 (20%)
-        ms.get("inflation_score", 2) * 20 +      # 인플레이션 (20%)
-        ms.get("financial_stability_score", 2) * 20 +  # 금융 안정 (20%)
-        ms.get("commodity_pressure_score", 2) * 15     # 원자재 (15%)
+        ms.get("risk_score", 2) * 25 +
+        ms.get("liquidity_score", 2) * 20 +
+        ms.get("inflation_score", 2) * 20 +
+        ms.get("financial_stability_score", 2) * 20 +
+        ms.get("commodity_pressure_score", 2) * 15
     )
-    # 최소 100, 최대 500 범위를 0~100으로 정규화
+    # 0~100 정규화
     normalized = int((total - 100) / 4)
+
+    # 2. VIX 직접 하한 보정 — 점수가 낮아도 VIX가 높으면 강제 상향
+    vix_state = signals.get("vix_state", "Normal")
+    vix_floor = {
+        "Low":      0,
+        "Normal":   0,
+        "Elevated": 35,   # VIX 20~30 → 최소 MEDIUM(35)
+        "High":     55,   # VIX 30~40 → 최소 MEDIUM 상단(55)
+        "Extreme":  75,   # VIX 40+   → HIGH 진입(75)
+    }
+    normalized = max(normalized, vix_floor.get(vix_state, 0))
+
+    # 3. Oil Shock 직접 하한 보정
+    if signals.get("oil_shock_signal", False):
+        normalized = max(normalized, 50)   # Oil Shock → 최소 MEDIUM
+
+    # 4. 수익률 곡선 역전 보정
+    if signals.get("yield_curve_inverted", False):
+        normalized = max(normalized, 40)   # 역전 → 최소 MEDIUM 진입
+
     return max(0, min(100, normalized))
 
 
