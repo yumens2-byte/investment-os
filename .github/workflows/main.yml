@@ -1,2 +1,135 @@
-# 모든 job이 이 한 줄로 통일
-run: python main.py run all --session morning --mode tweet
+name: Investment OS Auto Publish
+
+on:
+  schedule:
+    - cron: "30 21 * * 0-4"
+    - cron: "30 14 * * 1-5"
+    - cron: "0 22 * * 0-4"
+    - cron: "0 11 * * 4"
+  workflow_dispatch:
+    inputs:
+      session:
+        description: session
+        required: true
+        default: morning
+        type: choice
+        options:
+          - morning
+          - intraday
+          - close
+      mode:
+        description: mode
+        required: true
+        default: tweet
+        type: choice
+        options:
+          - tweet
+          - thread
+  push:
+    branches:
+      - main
+  pull_request:
+    branches:
+      - main
+
+env:
+  FRED_API_KEY: ${{ secrets.FRED_API_KEY }}
+  X_API_KEY: ${{ secrets.X_API_KEY }}
+  X_API_SECRET: ${{ secrets.X_API_SECRET }}
+  X_ACCESS_TOKEN: ${{ secrets.X_ACCESS_TOKEN }}
+  X_ACCESS_TOKEN_SECRET: ${{ secrets.X_ACCESS_TOKEN_SECRET }}
+  DRY_RUN: ${{ secrets.DRY_RUN }}
+  LOG_LEVEL: INFO
+
+jobs:
+  pilot_test:
+    name: Pilot Test
+    if: github.event_name == 'push' || github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+      - run: pip install -r requirements.txt
+      - run: python main.py test --round all
+        env:
+          DRY_RUN: "true"
+          LOG_LEVEL: WARNING
+
+  morning:
+    name: Morning Brief
+    if: github.event.schedule == '30 21 * * 0-4' || (github.event_name == 'workflow_dispatch' && github.event.inputs.session == 'morning')
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+      - run: pip install -r requirements.txt
+      - run: python main.py run all --session morning --mode tweet
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: morning-${{ github.run_id }}
+          path: data/outputs/core_data.json
+          retention-days: 7
+
+  intraday:
+    name: Intraday Update
+    if: github.event.schedule == '30 14 * * 1-5' || (github.event_name == 'workflow_dispatch' && github.event.inputs.session == 'intraday')
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+      - run: pip install -r requirements.txt
+      - run: python main.py run all --session intraday --mode tweet
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: intraday-${{ github.run_id }}
+          path: data/outputs/core_data.json
+          retention-days: 3
+
+  close:
+    name: Close Summary
+    if: github.event.schedule == '0 22 * * 0-4' || (github.event_name == 'workflow_dispatch' && github.event.inputs.session == 'close')
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+      - run: pip install -r requirements.txt
+      - run: python main.py run all --session close --mode tweet
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: close-${{ github.run_id }}
+          path: data/outputs/core_data.json
+          retention-days: 3
+
+  weekly_thread:
+    name: Weekly Thread
+    if: github.event.schedule == '0 11 * * 4'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+      - run: pip install -r requirements.txt
+      - run: python main.py run all --session close --mode thread
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: weekly-${{ github.run_id }}
+          path: data/outputs/
+          retention-days: 14
