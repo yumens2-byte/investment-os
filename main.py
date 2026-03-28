@@ -287,6 +287,7 @@ def build_parser() -> argparse.ArgumentParser:
                      help="실행할 라운드 (기본: all)")
 
     # ── status ───────────────────────────────────────────────────
+    sub.add_parser("alert", help="Alert 감지 + 발송 (즉시 실행)")
     sub.add_parser("status", help="최근 실행 결과 요약")
 
     return parser
@@ -324,6 +325,11 @@ def main() -> None:
 
     elif args.command == "test":
         rc = cmd_test(args.round)
+
+    elif args.command == "alert":
+        import run_alert
+        result = run_alert.run()
+        print(json.dumps(result, ensure_ascii=False, indent=2))
 
     elif args.command == "status":
         rc = cmd_status()
