@@ -6,6 +6,7 @@ on:
     - cron: "30 14 * * 1-5"
     - cron: "0 22 * * 0-4"
     - cron: "0 11 * * 4"
+    - cron: "*/10 13-21 * * 1-5"
   workflow_dispatch:
     inputs:
       session:
@@ -39,13 +40,17 @@ env:
   X_ACCESS_TOKEN: ${{ secrets.X_ACCESS_TOKEN }}
   X_ACCESS_TOKEN_SECRET: ${{ secrets.X_ACCESS_TOKEN_SECRET }}
   DRY_RUN: ${{ secrets.DRY_RUN }}
+  TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+  TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
   LOG_LEVEL: INFO
 
 jobs:
+
   pilot_test:
     name: Pilot Test
     if: github.event_name == 'push' || github.event_name == 'pull_request'
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -62,6 +67,7 @@ jobs:
     name: Morning Brief
     if: github.event.schedule == '30 21 * * 0-4' || (github.event_name == 'workflow_dispatch' && github.event.inputs.session == 'morning')
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -74,13 +80,16 @@ jobs:
         if: always()
         with:
           name: morning-${{ github.run_id }}
-          path: data/outputs/core_data.json
+          path: |
+            data/outputs/core_data.json
+            data/outputs/validation_result.json
           retention-days: 7
 
   intraday:
     name: Intraday Update
     if: github.event.schedule == '30 14 * * 1-5' || (github.event_name == 'workflow_dispatch' && github.event.inputs.session == 'intraday')
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -100,6 +109,7 @@ jobs:
     name: Close Summary
     if: github.event.schedule == '0 22 * * 0-4' || (github.event_name == 'workflow_dispatch' && github.event.inputs.session == 'close')
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -119,6 +129,7 @@ jobs:
     name: Weekly Thread
     if: github.event.schedule == '0 11 * * 4'
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -133,3 +144,35 @@ jobs:
           name: weekly-${{ github.run_id }}
           path: data/outputs/
           retention-days: 14
+
+  alert_check:
+    name: Alert Check
+    if: github.event.schedule == '*/10 13-21 * * 1-5'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+      - name: Restore alert history cache
+        uses: actions/cache@v4
+        with:
+          path: data/published/alert_history.json
+          key: alert-history-${{ github.ref }}
+          restore-keys: alert-history-
+      - run: pip install -r requirements.txt
+      - run: python main.py alert
+      - name: Save alert history cache
+        uses: actions/cache/save@v4
+        if: always()
+        with:
+          path: data/published/alert_history.json
+          key: alert-history-${{ github.ref }}-${{ github.run_id }}
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: alert-${{ github.run_id }}
+          path: data/published/alert_history.json
+          retention-days: 7
