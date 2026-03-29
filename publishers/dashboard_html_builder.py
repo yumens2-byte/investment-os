@@ -246,18 +246,18 @@ body::after{{content:'';position:absolute;inset:0;background:repeating-linear-gr
 .badge-sg{{background:rgba(245,196,50,.08);border:1px solid rgba(245,196,50,.3);color:#f5c432;}}
 .hdr-right{{margin-left:auto;text-align:right;}}
 .hdr-time{{font-family:'IBM Plex Mono',monospace;font-size:24px;font-weight:700;color:#e8f4ff;letter-spacing:1px;line-height:1;}}
-.hdr-tz{{font-family:'IBM Plex Mono',monospace;font-size:8px;color:#2a4060;letter-spacing:1.5px;margin-top:2px;}}
-.main{{flex:1;display:grid;grid-template-columns:1.05fr 1fr 1fr;overflow:hidden;}}
-.col{{display:flex;flex-direction:column;overflow:hidden;}}
+.hdr-tz{{font-family:'IBM Plex Mono',monospace;font-size:8px;color:#7aA8C8;letter-spacing:1.5px;margin-top:2px;}}
+.main{{height:877px;display:grid;grid-template-columns:1.05fr 1fr 1fr;grid-template-rows:877px;overflow:hidden;}}
+.col{{display:flex;flex-direction:column;overflow:hidden;height:877px;}}
 .col+.col{{border-left:1px solid #111e2e;}}
-.s{{padding:9px 13px;border-bottom:1px solid #111e2e;flex-shrink:0;}}
-.s:last-child{{border-bottom:none;flex:1;}}
+.s{{padding:9px 13px;border-bottom:1px solid #111e2e;flex-shrink:0;min-height:0;}}
+.s:last-child{{border-bottom:none;flex:1;display:flex;flex-direction:column;}}
 .sl{{font-family:'IBM Plex Mono',monospace;font-size:7.5px;letter-spacing:2px;color:#2a4060;text-transform:uppercase;margin-bottom:6px;display:flex;align-items:center;gap:5px;}}
 .sl::after{{content:'';flex:1;height:1px;background:linear-gradient(90deg,#111e2e,transparent);}}
 /* Snapshot */
 .snap{{display:flex;flex-direction:column;gap:2px;}}
 .snap-row{{display:flex;align-items:center;padding:4px 7px;background:rgba(255,255,255,.018);border:1px solid #0f1a28;border-radius:3px;}}
-.snap-n{{font-size:10px;color:#5a7a98;flex:1;font-weight:500;}}
+.snap-n{{font-size:10px;color:#e0f0ff;flex:1;font-weight:500;}}
 .snap-v{{font-family:'IBM Plex Mono',monospace;font-size:15px;font-weight:700;}}
 .snap-c{{font-family:'IBM Plex Mono',monospace;font-size:9px;margin-left:7px;white-space:nowrap;}}
 .dn{{color:#ff3a5a;}}.up{{color:#11cc77;}}.nu{{color:#7a9ab8;}}
@@ -268,15 +268,15 @@ body::after{{content:'';position:absolute;inset:0;background:repeating-linear-gr
 .vix-g{{height:5px;border-radius:3px;background:linear-gradient(90deg,#11cc77 0%,#aaee00 28%,#f5c020 52%,#ff8800 72%,#ff2244 100%);position:relative;margin:3px 0;}}
 .vix-n{{position:absolute;top:-4px;width:2px;height:12px;background:#fff;border-radius:1px;box-shadow:0 0 5px #fff;left:{vix_pct:.0f}%;}}
 .vix-ls{{display:flex;justify-content:space-between;margin-top:1px;}}
-.vix-l{{font-family:'IBM Plex Mono',monospace;font-size:6.5px;}}
+.vix-l{{font-family:'IBM Plex Mono',monospace;font-size:6.5px;color:#b0c8e0;}}
 /* FX */
 .fx3{{display:grid;grid-template-columns:1fr 1fr 1fr;gap:3px;}}
 .fxi{{background:rgba(0,200,220,.04);border:1px solid rgba(0,200,220,.1);border-radius:3px;padding:4px 6px;text-align:center;}}
-.fxl{{font-family:'IBM Plex Mono',monospace;font-size:7px;color:#2a5070;letter-spacing:.5px;margin-bottom:2px;}}
+.fxl{{font-family:'IBM Plex Mono',monospace;font-size:7px;color:#b8d8f0;letter-spacing:.5px;margin-bottom:2px;}}
 .fxv{{font-family:'IBM Plex Mono',monospace;font-size:12px;font-weight:600;color:#00cce0;}}
 /* FRED */
 .fred-row{{display:flex;align-items:center;padding:3px 6px;background:rgba(255,255,255,.015);border:1px solid #0f1a28;border-radius:3px;margin-bottom:2px;}}
-.fred-n{{font-size:9px;color:#4a6a88;flex:1;}}
+.fred-n{{font-size:9px;color:#d4eaff;flex:1;}}
 .fred-v{{font-family:'IBM Plex Mono',monospace;font-size:11px;font-weight:600;margin-right:5px;}}
 .fred-t{{font-family:'IBM Plex Mono',monospace;font-size:7px;padding:1px 4px;border-radius:1px;letter-spacing:.5px;}}
 .t-hold{{background:rgba(245,160,32,.1);border:1px solid rgba(245,160,32,.25);color:#f5a020;}}
@@ -294,7 +294,7 @@ body::after{{content:'';position:absolute;inset:0;background:repeating-linear-gr
 .ml2{{display:grid;grid-template-columns:1fr 1fr;gap:5px;}}
 .mlb{{background:rgba(255,255,255,.015);border:1px solid #0f1a28;border-radius:3px;padding:6px 8px;}}
 .mlt{{font-family:'IBM Plex Mono',monospace;font-size:7px;letter-spacing:1.5px;color:#2a4060;margin-bottom:4px;}}
-.mli{{display:flex;align-items:flex-start;gap:3px;font-size:8.5px;color:#5a7a98;line-height:1.6;}}
+.mli{{display:flex;align-items:flex-start;gap:3px;font-size:8.5px;color:#c8e0f8;line-height:1.6;}}
 /* regime badge */
 .reg-badge{{padding:6px 10px;border-radius:3px;text-align:center;margin-top:6px;}}
 .reg-lbl{{font-size:8px;color:#3a5a78;margin-bottom:2px;}}
@@ -302,14 +302,14 @@ body::after{{content:'';position:absolute;inset:0;background:repeating-linear-gr
 /* Market Score */
 .ms6{{display:grid;grid-template-columns:1fr 1fr;gap:3px;}}
 .msi{{background:rgba(255,255,255,.018);border:1px solid #0f1a28;border-radius:3px;padding:4px 7px;}}
-.msl{{font-family:'IBM Plex Mono',monospace;font-size:7px;color:#2a4060;margin-bottom:3px;}}
+.msl{{font-family:'IBM Plex Mono',monospace;font-size:7px;color:#a8c8e8;margin-bottom:3px;}}
 .msb{{height:3px;background:#0f1a28;border-radius:2px;overflow:hidden;margin-bottom:2px;}}
 .msf{{height:100%;border-radius:2px;}}
 .msv{{font-family:'IBM Plex Mono',monospace;font-size:9px;font-weight:600;text-align:right;}}
 /* Portfolio Risk */
 .pr4{{display:grid;grid-template-columns:1fr 1fr;gap:3px;}}
 .pri{{background:rgba(255,255,255,.015);border:1px solid #0f1a28;border-radius:3px;padding:4px 6px;}}
-.prl{{font-family:'IBM Plex Mono',monospace;font-size:7px;color:#2a4060;margin-bottom:2px;}}
+.prl{{font-family:'IBM Plex Mono',monospace;font-size:7px;color:#a8c8e8;margin-bottom:2px;}}
 .prv{{font-family:'IBM Plex Mono',monospace;font-size:9px;font-weight:600;}}
 /* Position Sizing */
 .ps-bar{{height:5px;background:#0f1a28;border-radius:3px;overflow:hidden;margin:3px 0;}}
@@ -318,7 +318,7 @@ body::after{{content:'';position:absolute;inset:0;background:repeating-linear-gr
 .ps-l{{font-family:'IBM Plex Mono',monospace;font-size:6.5px;}}
 /* Portfolio Score */
 .psc-row{{display:flex;align-items:center;gap:5px;margin-bottom:3px;}}
-.psc-n{{font-size:8px;color:#4a6a88;width:70px;flex-shrink:0;}}
+.psc-n{{font-size:8px;color:#d4eaff;width:70px;flex-shrink:0;}}
 .psc-b{{flex:1;height:4px;background:#0f1a28;border-radius:2px;overflow:hidden;}}
 .psc-f{{height:100%;border-radius:2px;}}
 .psc-v{{font-family:'IBM Plex Mono',monospace;font-size:8px;font-weight:600;width:34px;text-align:right;}}
@@ -336,7 +336,7 @@ body::after{{content:'';position:absolute;inset:0;background:repeating-linear-gr
 .rank-row{{display:flex;align-items:center;gap:5px;padding:3px 6px;border-radius:3px;background:rgba(255,255,255,.015);border:1px solid #0f1a28;margin-bottom:2px;}}
 .rank-n{{font-family:'IBM Plex Mono',monospace;font-size:8px;font-weight:700;width:12px;}}
 .rank-t{{font-family:'IBM Plex Mono',monospace;font-size:10px;font-weight:700;color:#c8dff5;width:36px;}}
-.rank-d{{font-size:8px;flex:1;}}
+.rank-d{{font-size:8px;flex:1;color:#c8dff5;}}
 .rank-dots{{font-family:'IBM Plex Mono',monospace;font-size:8px;}}
 /* Signal Banner */
 .sig-banner{{flex-shrink:0;background:linear-gradient(180deg,#0c1520 0%,#080e16 100%);border-top:1px solid #111e2e;padding:8px 18px;display:flex;align-items:center;gap:14px;position:relative;overflow:hidden;}}
@@ -350,7 +350,7 @@ body::after{{content:'';position:absolute;inset:0;background:repeating-linear-gr
 .sig-mr{{display:flex;align-items:center;gap:5px;}}
 .stag{{font-family:'IBM Plex Mono',monospace;font-size:7px;font-weight:700;letter-spacing:1px;padding:1px 5px;border-radius:1px;width:44px;text-align:center;}}
 .stag-e{{font-family:'IBM Plex Mono',monospace;font-size:9px;}}
-.sig-reason{{flex:1;font-size:9px;line-height:1.7;}}
+.sig-reason{{flex:1;font-size:9px;line-height:1.7;color:#b8d0e8;}}
 .sig-meta{{display:flex;flex-direction:column;gap:2px;align-items:flex-end;margin-left:auto;flex-shrink:0;}}
 .smeta{{font-family:'IBM Plex Mono',monospace;font-size:6.5px;color:#1a2e42;letter-spacing:.3px;}}
 /* Footer */
@@ -420,7 +420,7 @@ body::after{{content:'';position:absolute;inset:0;background:repeating-linear-gr
     <div class="fred-row"><div class="fred-n">HY Credit Spread</div><div class="fred-v nu">3.21%</div><div class="fred-t t-norm">NORMAL</div></div>
     <div class="fred-row"><div class="fred-n">Yield Curve 2-10</div><div class="fred-v up">+0.56%</div><div class="fred-t t-good">NORMAL</div></div>
   </div>
-  <div class="s" style="flex:1">
+  <div class="s" style="flex:1;display:flex;flex-direction:column;">
     <div class="sl">RSS Sentiment</div>
     <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:4px;">
       <span style="font-size:8.5px;color:#3a5a78">9 Sources · 82 Headlines</span>
@@ -437,6 +437,16 @@ body::after{{content:'';position:absolute;inset:0;background:repeating-linear-gr
       <div style="font-size:7.5px;color:#3a5a78;display:flex;gap:3px;align-items:center"><span style="color:#11cc77">●</span> CNBC Economy</div>
     </div>
     <div style="margin-top:4px;font-family:'IBM Plex Mono',monospace;font-size:6.5px;color:#1a2e42">CNBC weight×1.5 · Yahoo×1.3 · 9SUCCESS/0FAIL</div>
+    <div style="flex:1;margin-top:8px;padding:7px 9px;background:rgba(255,255,255,.015);border:1px solid #0f1a28;border-radius:3px;">
+      <div style="font-family:'IBM Plex Mono',monospace;font-size:7px;color:#2a4060;letter-spacing:1.5px;margin-bottom:5px;">MARKET BRIEF</div>
+      <div style="font-size:8.5px;color:#3a5a78;line-height:1.8;">{summary[:80] if summary else "—"}</div>
+      <div style="margin-top:6px;display:flex;gap:6px;flex-wrap:wrap;">
+        <div style="font-family:'IBM Plex Mono',monospace;font-size:7px;padding:2px 6px;border-radius:2px;background:rgba(255,255,255,.03);border:1px solid #111e2e;color:#2a4060">VIX {vix:.1f}</div>
+        <div style="font-family:'IBM Plex Mono',monospace;font-size:7px;padding:2px 6px;border-radius:2px;background:rgba(255,255,255,.03);border:1px solid #111e2e;color:#2a4060">SPY {sp500:+.2f}%</div>
+        <div style="font-family:'IBM Plex Mono',monospace;font-size:7px;padding:2px 6px;border-radius:2px;background:rgba(255,255,255,.03);border:1px solid #111e2e;color:#2a4060">US10Y {us10y:.2f}%</div>
+        <div style="font-family:'IBM Plex Mono',monospace;font-size:7px;padding:2px 6px;border-radius:2px;background:rgba(255,255,255,.03);border:1px solid #111e2e;color:#2a4060">WTI ${oil:.1f}</div>
+      </div>
+    </div>
   </div>
 </div>
 
@@ -507,7 +517,7 @@ body::after{{content:'';position:absolute;inset:0;background:repeating-linear-gr
       <div class="pri"><div class="prl">Beta Exposure</div><div class="prv nu">{prisk.get('position_exposure','—')}</div></div>
     </div>
   </div>
-  <div class="s" style="flex:1">
+  <div class="s" style="flex:1;display:flex;flex-direction:column;">
     <div class="sl">Position Sizing</div>
     <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:4px;">
       <div style="padding:4px 8px;background:rgba(245,160,32,.08);border:1px solid rgba(245,160,32,.25);border-radius:3px;display:flex;align-items:center;gap:5px;">
@@ -523,6 +533,17 @@ body::after{{content:'';position:absolute;inset:0;background:repeating-linear-gr
       <div class="psc-row"><div class="psc-n">Diversification</div><div class="psc-b"><div class="psc-f" style="width:45%;background:linear-gradient(90deg,#c88010,#f5a020)"></div></div><div class="psc-v" style="color:#f5a020">45/100</div></div>
       <div class="psc-row"><div class="psc-n">Regime Fit</div><div class="psc-b"><div class="psc-f" style="width:78%;background:linear-gradient(90deg,#009960,#11cc77)"></div></div><div class="psc-v" style="color:#11cc77">78/100</div></div>
       <div class="psc-row"><div class="psc-n">Signal Strength</div><div class="psc-b"><div class="psc-f" style="width:62%;background:linear-gradient(90deg,#0060aa,#2288ff)"></div></div><div class="psc-v" style="color:#2288ff">62/100</div></div>
+    </div>
+    <div style="flex:1;margin-top:8px;padding:7px 9px;background:rgba(255,255,255,.015);border:1px solid #0f1a28;border-radius:3px;">
+      <div style="font-family:'IBM Plex Mono',monospace;font-size:7px;color:#2a4060;letter-spacing:1.5px;margin-bottom:5px;">SIGNAL SUMMARY</div>
+      <div style="display:flex;flex-direction:column;gap:4px;">
+        <div style="display:flex;justify-content:space-between;font-size:8px;"><span style="color:#3a5a78">Regime</span><span style="font-family:'IBM Plex Mono',monospace;color:{rc};font-weight:600">{regime_name}</span></div>
+        <div style="display:flex;justify-content:space-between;font-size:8px;"><span style="color:#3a5a78">Risk Level</span><span style="font-family:'IBM Plex Mono',monospace;color:{rkc};font-weight:600">{risk_level}</span></div>
+        <div style="display:flex;justify-content:space-between;font-size:8px;"><span style="color:#3a5a78">Signal</span><span style="font-family:'IBM Plex Mono',monospace;color:{sc};font-weight:600">{signal}</span></div>
+        <div style="display:flex;justify-content:space-between;font-size:8px;"><span style="color:#3a5a78">Sizing</span><span style="font-family:'IBM Plex Mono',monospace;color:#f5a020;font-weight:600">{sizing:.2f}×</span></div>
+        <div style="height:1px;background:#111e2e;margin:2px 0;"></div>
+        <div style="font-family:'IBM Plex Mono',monospace;font-size:6.5px;color:#1a2e42;line-height:1.7">{tsig.get('signal_reason','—')[:50]}</div>
+      </div>
     </div>
   </div>
 </div>
@@ -541,9 +562,9 @@ body::after{{content:'';position:absolute;inset:0;background:repeating-linear-gr
       {sig_rows()}
     </table>
   </div>
-  <div class="s" style="flex:1">
+  <div class="s" style="flex:1;display:flex;flex-direction:column;">
     <div class="sl">ETF Rank</div>
-    {rank_rows() if ranked else '<div style="font-size:9px;color:#2a4060">Rank data unavailable</div>'}
+    <div style="flex:1;display:flex;flex-direction:column;gap:2px;justify-content:space-around;">{rank_rows() if ranked else '<div style="font-size:9px;color:#2a4060">Rank data unavailable</div>'}</div>
   </div>
 </div>
 </div>
