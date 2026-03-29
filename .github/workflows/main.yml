@@ -84,6 +84,7 @@ jobs:
           path: |
             data/outputs/core_data.json
             data/outputs/validation_result.json
+            data/images/
           retention-days: 7
 
   intraday:
@@ -104,6 +105,7 @@ jobs:
         with:
           name: intraday-${{ github.run_id }}
           path: data/outputs/core_data.json
+                data/images/
           retention-days: 3
 
   close:
@@ -124,6 +126,7 @@ jobs:
         with:
           name: close-${{ github.run_id }}
           path: data/outputs/core_data.json
+                data/images/
           retention-days: 3
 
   weekly_thread:
