@@ -1,137 +1,177 @@
 """
-run_alert.py
+scheduler.py
 =============
-역할: Alert 감지 + 발송
-실행: python run_alert.py
-     python main.py alert
+역할: 자동 스케줄 실행 (KST 기준)
+실행: python scheduler.py
 
-파이프라인:
-  시장 데이터 수집 (yfinance)
-  RSS 뉴스 수집 (rss_extended)
-  → Alert 엔진 (조건 판정)
-  → 쿨다운 체크 (1시간)
-  → Alert 포맷 생성
-  → X 발행 (DRY_RUN or 실제)
-  → 이력 기록
+스케줄:
+  평일 06:30 KST → Morning Brief   (run_market morning → run_view tweet)
+  평일 23:30 KST → Intraday Update (run_market intraday → run_view tweet)
+  평일 07:00 KST → Close Summary   (run_market close   → run_view tweet)
 
-이상 없으면 조용히 종료 (Alert 없음 = 정상)
+주간:
+  매주 금요일 20:00 KST → Weekly Thread (run_market close → run_view thread)
+
+수동 즉시 실행:
+  python scheduler.py --run-now morning
+  python scheduler.py --run-now intraday
+  python scheduler.py --run-now close
+  python scheduler.py --run-now weekly
 """
-import json
+import argparse
 import logging
+import subprocess
 import sys
-from datetime import datetime, timezone
+from datetime import datetime
 
-from config.settings import LOG_LEVEL, DRY_RUN
+import pytz
+import schedule
+import time
+
+from config.settings import LOG_LEVEL, SCHEDULE_MORNING, SCHEDULE_INTRADAY, SCHEDULE_CLOSE
 
 logging.basicConfig(
     level=getattr(logging, LOG_LEVEL, logging.INFO),
     format="%(asctime)s [%(levelname)s] %(name)s — %(message)s",
     datefmt="%Y-%m-%d %H:%M:%S",
 )
-logger = logging.getLogger("run_alert")
+logger = logging.getLogger("scheduler")
+
+KST = pytz.timezone("Asia/Seoul")
+PYTHON = sys.executable  # 현재 Python 인터프리터 경로
 
 
-def _load_prev_snapshot() -> dict:
-    """직전 core_data.json에서 이전 스냅샷 로드 (급변 감지용)"""
-    from config.settings import CORE_DATA_FILE
-    try:
-        if CORE_DATA_FILE.exists():
-            with open(CORE_DATA_FILE, encoding="utf-8") as f:
-                envelope = json.load(f)
-            return envelope.get("data", {}).get("market_snapshot", {})
-    except Exception:
-        pass
-    return {}
+# ──────────────────────────────────────────────────────────────
+# 실행 함수
+# ──────────────────────────────────────────────────────────────
+
+def _is_weekday() -> bool:
+    """현재 KST 기준 평일 여부"""
+    now_kst = datetime.now(KST)
+    return now_kst.weekday() < 5  # 0=월 ~ 4=금
 
 
-def run() -> dict:
-    logger.info("=" * 50)
-    logger.info(f"[run_alert] 시작 | DRY_RUN={DRY_RUN}")
-    logger.info("=" * 50)
+def _run_pipeline(session: str, mode: str = "tweet") -> None:
+    """
+    run_market → run_view 순차 실행.
+    run_market 실패 시 run_view 실행 안 함.
+    """
+    if not _is_weekday() and session != "weekly":
+        logger.info(f"[Scheduler] 주말 — {session} 건너뜀")
+        return
 
-    # ── Step 1: 데이터 수집 ────────────────────────────────
-    logger.info("[Step 1] 시장 데이터 + RSS 수집")
-    from collectors.yahoo_finance import collect_market_snapshot
-    from collectors.news_rss import collect_news_sentiment
+    logger.info(f"[Scheduler] ▶ 파이프라인 시작: session={session} mode={mode}")
 
-    prev_snapshot = _load_prev_snapshot()
-    snapshot      = collect_market_snapshot()
-    news_result   = collect_news_sentiment()
+    # Step 1: run_market
+    logger.info(f"[Scheduler] run_market.py --session {session}")
+    result_market = subprocess.run(
+        [PYTHON, "run_market.py", "--session", session],
+        capture_output=False,  # 로그를 터미널에 출력
+        text=True,
+    )
 
-    # ── Step 2: Alert 엔진 실행 ───────────────────────────
-    logger.info("[Step 2] Alert 엔진 실행")
-    from engines.alert_engine import run_alert_engine
-    alerts = run_alert_engine(snapshot, news_result, prev_snapshot or None)
-
-    if not alerts:
-        logger.info("[run_alert] Alert 없음 — 정상 종료")
-        return {"alerts_detected": 0, "alerts_sent": 0}
-
-    # ── Step 3: 쿨다운 체크 + 발송 ───────────────────────
-    from core.alert_history import should_send, record_alert
-    from publishers.alert_formatter import format_alert_tweet
-    from publishers.x_publisher import publish_tweet
-
-    sent_count = 0
-    results = []
-
-    for signal in alerts:
-        # 발송 여부 판단 (등급 변화 + 쿨다운)
-        send, reason = should_send(signal.alert_type, signal.level)
-        if not send:
-            logger.info(f"[run_alert] 발송 차단: {signal.alert_type}/{signal.level} — {reason}")
-            continue
-        logger.info(f"[run_alert] 발송 결정: {signal.alert_type}/{signal.level} — {reason}")
-
-        # 트윗 포맷 생성
-        tweet = format_alert_tweet(signal)
-
-        # 발행 직전 로그
-        logger.info(
-            f"[run_alert] 발행 예정 [{signal.alert_type}/{signal.level}] "
-            f"({len(tweet)}자)\n{tweet}"
+    if result_market.returncode not in (0,):
+        logger.error(
+            f"[Scheduler] run_market 실패 (rc={result_market.returncode}) "
+            f"— run_view 실행 차단"
         )
+        return
 
-        # X 발행
-        result = publish_tweet(tweet)
+    # Step 2: run_view
+    logger.info(f"[Scheduler] run_view.py --mode {mode}")
+    result_view = subprocess.run(
+        [PYTHON, "run_view.py", "--mode", mode],
+        capture_output=False,
+        text=True,
+    )
 
-        tweet_id = result.get("tweet_id", "FAIL")
-        if result.get("success"):
-            record_alert(signal.alert_type, signal.level, str(tweet_id), tweet)
-            sent_count += 1
-            logger.info(f"[run_alert] 발행 완료: {signal.alert_type}/{signal.level} → {tweet_id}")
-        else:
-            logger.error(f"[run_alert] 발행 실패: {signal.alert_type}/{signal.level}")
+    if result_view.returncode == 0:
+        logger.info(f"[Scheduler] ✅ 파이프라인 완료: {session}")
+    elif result_view.returncode == 2:
+        logger.warning(f"[Scheduler] ⚠️ 발행 차단됨 (중복 또는 Validation 실패): {session}")
+    else:
+        logger.error(f"[Scheduler] ❌ run_view 실패 (rc={result_view.returncode})")
 
-        results.append({
-            "type": signal.alert_type,
-            "level": signal.level,
-            "tweet_id": tweet_id,
-            "success": result.get("success"),
-        })
 
-    summary = {
-        "alerts_detected": len(alerts),
-        "alerts_sent": sent_count,
-        "results": results,
-        "timestamp": datetime.now(timezone.utc).isoformat(),
-    }
+# ──────────────────────────────────────────────────────────────
+# 스케줄 잡 정의
+# ──────────────────────────────────────────────────────────────
 
-    logger.info("=" * 50)
-    logger.info(f"[run_alert] 완료 — 감지:{len(alerts)}개 발송:{sent_count}개")
-    logger.info("=" * 50)
+def job_morning():
+    logger.info(f"[Scheduler] ⏰ Morning Brief 시작 ({SCHEDULE_MORNING} KST)")
+    _run_pipeline("morning", mode="tweet")
 
-    return summary
 
+def job_intraday():
+    logger.info(f"[Scheduler] ⏰ Intraday Update 시작 ({SCHEDULE_INTRADAY} KST)")
+    _run_pipeline("intraday", mode="tweet")
+
+
+def job_close():
+    logger.info(f"[Scheduler] ⏰ Close Summary 시작 ({SCHEDULE_CLOSE} KST)")
+    _run_pipeline("close", mode="tweet")
+
+
+def job_weekly():
+    logger.info("[Scheduler] ⏰ Weekly Thread 시작 (금요일 20:00 KST)")
+    _run_pipeline("close", mode="thread")
+
+
+# ──────────────────────────────────────────────────────────────
+# 스케줄 등록
+# ──────────────────────────────────────────────────────────────
+
+def setup_schedule():
+    """schedule 라이브러리로 KST 기준 잡 등록"""
+    schedule.every().day.at(SCHEDULE_MORNING).do(job_morning)
+    schedule.every().day.at(SCHEDULE_INTRADAY).do(job_intraday)
+    schedule.every().day.at(SCHEDULE_CLOSE).do(job_close)
+    schedule.every().friday.at("20:00").do(job_weekly)
+
+    logger.info("─── 스케줄 등록 완료 ───")
+    logger.info(f"  Morning Brief   : 평일 {SCHEDULE_MORNING} KST")
+    logger.info(f"  Intraday Update : 평일 {SCHEDULE_INTRADAY} KST")
+    logger.info(f"  Close Summary   : 평일 {SCHEDULE_CLOSE} KST")
+    logger.info(f"  Weekly Thread   : 매주 금요일 20:00 KST")
+    logger.info("────────────────────────")
+
+
+# ──────────────────────────────────────────────────────────────
+# 메인
+# ──────────────────────────────────────────────────────────────
 
 def main():
+    parser = argparse.ArgumentParser(description="Investment OS Scheduler")
+    parser.add_argument(
+        "--run-now",
+        choices=["morning", "intraday", "close", "weekly"],
+        help="즉시 특정 잡 실행 (스케줄 없이 단발 실행)",
+    )
+    args = parser.parse_args()
+
+    # 즉시 실행 모드
+    if args.run_now:
+        logger.info(f"[Scheduler] 즉시 실행 모드: {args.run_now}")
+        if args.run_now == "morning":
+            job_morning()
+        elif args.run_now == "intraday":
+            job_intraday()
+        elif args.run_now == "close":
+            job_close()
+        elif args.run_now == "weekly":
+            job_weekly()
+        return
+
+    # 데몬 모드
+    setup_schedule()
+    logger.info("[Scheduler] 대기 중 (Ctrl+C로 종료)...")
+
     try:
-        result = run()
-        # Alert 발송 성공이든 없든 정상 종료
-        sys.exit(0)
-    except Exception as e:
-        logger.critical(f"[run_alert] 예외: {e}", exc_info=True)
-        sys.exit(1)
+        while True:
+            schedule.run_pending()
+            time.sleep(30)  # 30초마다 스케줄 체크
+    except KeyboardInterrupt:
+        logger.info("[Scheduler] 종료")
 
 
 if __name__ == "__main__":
