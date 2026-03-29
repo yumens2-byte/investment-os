@@ -591,13 +591,14 @@ body::after{{content:'';position:absolute;inset:0;background:repeating-linear-gr
 # ────────────────────────────────────────────────
 # 렌더링 함수 (Playwright)
 # ────────────────────────────────────────────────
-async def _render_async(html: str, out_path: str) -> bool:
+async def _render_async(url: str, out_path: str) -> bool:
     try:
         from playwright.async_api import async_playwright
         async with async_playwright() as p:
             browser = await p.chromium.launch()
             page = await browser.new_page(viewport={"width": 1080, "height": 1080})
-            await page.set_content(html, wait_until="networkidle")
+            # set_content 대신 goto 사용 — URL(file://)을 올바르게 탐색
+            await page.goto(url, wait_until="load")
             await page.wait_for_timeout(1500)
             await page.screenshot(
                 path=out_path,
@@ -610,14 +611,13 @@ async def _render_async(html: str, out_path: str) -> bool:
         return False
 
 
-def _render(html: str, out_path: str) -> bool:
+def _render(url: str, out_path: str) -> bool:
     try:
-        return asyncio.run(_render_async(html, out_path))
+        return asyncio.run(_render_async(url, out_path))
     except RuntimeError:
-        # 이미 이벤트 루프가 돌고 있으면 새 스레드에서 실행
         import concurrent.futures
         with concurrent.futures.ThreadPoolExecutor(max_workers=1) as ex:
-            future = ex.submit(asyncio.run, _render_async(html, out_path))
+            future = ex.submit(asyncio.run, _render_async(url, out_path))
             return future.result()
 
 
