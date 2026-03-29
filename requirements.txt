@@ -1,5 +1,5 @@
-# Investment OS — Python Dependencies (v1.5.0)
-# v1.5.0 변경: praw 제거 (Reddit 유료화)
+# Investment OS — Python Dependencies (v1.8.0)
+# v1.8.0 변경: playwright 추가 (HTML 대시보드 렌더링)
 
 # 데이터 수집
 yfinance==0.2.51
@@ -29,6 +29,5 @@ pytz==2024.2
 # praw — Reddit API 유료화로 제거
 matplotlib>=3.8.0
 Pillow>=10.0.0
--e 
 # v1.8.0 신규: HTML 대시보드 렌더링
 playwright>=1.40.0
