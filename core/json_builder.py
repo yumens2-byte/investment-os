@@ -44,6 +44,7 @@ def assemble_core_data(
     모든 Output 엔진(run_view 등)은 이 dict만 참조한다.
     """
     return {
+        "fx_rates": fx_rates or {},
         "market_snapshot": snapshot,
         "market_regime": market_regime,
         "market_score": market_score,
