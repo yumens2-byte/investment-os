@@ -188,7 +188,7 @@ IMAGE_DPI    = 96
 IMAGE_FORMAT = "PNG"
 
 # 대시보드 코드네임 (푸터 표시)
-CODENAME = "EDT"
+CODENAME = "EDT Investment"
 
 # 세션별 영문 표시명
 SESSION_LABELS = {
