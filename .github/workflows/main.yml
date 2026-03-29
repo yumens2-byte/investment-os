@@ -18,7 +18,6 @@ on:
           - morning
           - intraday
           - close
-          - alert
       mode:
         description: mode
         required: true
@@ -41,8 +40,6 @@ env:
   X_ACCESS_TOKEN: ${{ secrets.X_ACCESS_TOKEN }}
   X_ACCESS_TOKEN_SECRET: ${{ secrets.X_ACCESS_TOKEN_SECRET }}
   DRY_RUN: ${{ secrets.DRY_RUN }}
-  TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
-  TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
   LOG_LEVEL: INFO
 
 jobs:
@@ -84,7 +81,6 @@ jobs:
           path: |
             data/outputs/core_data.json
             data/outputs/validation_result.json
-            data/images/
           retention-days: 7
 
   intraday:
@@ -105,7 +101,6 @@ jobs:
         with:
           name: intraday-${{ github.run_id }}
           path: data/outputs/core_data.json
-                data/images/
           retention-days: 3
 
   close:
@@ -126,7 +121,6 @@ jobs:
         with:
           name: close-${{ github.run_id }}
           path: data/outputs/core_data.json
-                data/images/
           retention-days: 3
 
   weekly_thread:
@@ -151,7 +145,7 @@ jobs:
 
   alert_check:
     name: Alert Check
-    if: github.event.schedule == '*/10 13-21 * * 1-5' || (github.event_name == 'workflow_dispatch' && github.event.inputs.session == 'alert')
+    if: github.event.schedule == '*/10 13-21 * * 1-5'
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
@@ -160,20 +154,26 @@ jobs:
         with:
           python-version: "3.11"
           cache: pip
+
+      # Alert 이력 캐시 복원 (등급 변화 감지 핵심)
       - name: Restore alert history cache
         uses: actions/cache@v4
         with:
           path: data/published/alert_history.json
           key: alert-history-${{ github.ref }}
           restore-keys: alert-history-
+
       - run: pip install -r requirements.txt
       - run: python main.py alert
+
+      # Alert 이력 캐시 저장 (다음 실행 시 복원)
       - name: Save alert history cache
         uses: actions/cache/save@v4
         if: always()
         with:
           path: data/published/alert_history.json
           key: alert-history-${{ github.ref }}-${{ github.run_id }}
+
       - uses: actions/upload-artifact@v4
         if: always()
         with:
