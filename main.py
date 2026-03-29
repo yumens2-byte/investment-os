@@ -8,7 +8,7 @@ main.py — Investment OS 단일 진입점
 
   python main.py run market [--session morning|intraday|close|auto]
   python main.py run view   [--mode tweet|thread]
-  python main.py run all    [--session morning|intraday|close|auto] [--mode tweet|thread]
+  python main.py run all    [--session morning|intraday|close|full|auto] [--mode tweet|thread]
 
   python main.py schedule            ← 데몬 모드 (scheduler.py 동등)
   python main.py schedule --now morning
@@ -252,7 +252,7 @@ def build_parser() -> argparse.ArgumentParser:
     # run market
     rm = run_sub.add_parser("market", help="수집 + 분석 (core_data.json 저장)")
     rm.add_argument("--session",
-                    choices=["morning", "intraday", "close", "auto"],
+                    choices=["morning", "intraday", "close", "full", "auto"],
                     default="auto",
                     help="실행 세션 (auto=현재 시간 자동 감지)")
 
@@ -266,7 +266,7 @@ def build_parser() -> argparse.ArgumentParser:
     # run all
     ra = run_sub.add_parser("all", help="수집 + 분석 + 발행 전체")
     ra.add_argument("--session",
-                    choices=["morning", "intraday", "close", "auto"],
+                    choices=["morning", "intraday", "close", "full", "auto"],
                     default="auto")
     ra.add_argument("--mode",
                     choices=["tweet", "thread"],
