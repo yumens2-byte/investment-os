@@ -40,15 +40,25 @@ def generate_image(
 
     logger.info(f"[ImageGen] 이미지 생성 시작 — session={session}")
 
-    # 현재는 모든 세션 → 대시보드 이미지
-    # 추후 alert → alert_banner.py 로 분기
-    from publishers.dashboard_builder import build_dashboard
-    path = build_dashboard(
-        data=data,
-        session=session,
-        dt_utc=dt_utc,
-        output_dir=output_dir,
-    )
+    if session == "full":
+        # v1.8.0 신규: HTML/Playwright 풀버전 대시보드
+        from publishers.dashboard_html_builder import build_html_dashboard
+        path = build_html_dashboard(
+            data=data,
+            session=session,
+            dt_utc=dt_utc,
+            output_dir=output_dir,
+        )
+    else:
+        # 기존: matplotlib 대시보드 (morning/intraday/close/weekly)
+        # ★ 절대 수정 금지 — 기존 로직 완전 유지
+        from publishers.dashboard_builder import build_dashboard
+        path = build_dashboard(
+            data=data,
+            session=session,
+            dt_utc=dt_utc,
+            output_dir=output_dir,
+        )
 
     if path:
         logger.info(f"[ImageGen] 생성 완료: {path}")

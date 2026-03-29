@@ -80,20 +80,26 @@ def run(mode: str = "tweet") -> dict:
 
     session_type = data.get("output_helpers", {}).get("session_type", "postmarket")
     session_labels = {
-        "morning": "Morning Brief 🌅",
-        "intraday": "Intraday Update 📡",
-        "close": "Close Summary 🔔",
-        "postmarket": "Market Snapshot 📊",
+        "morning":   "Morning Brief 🌅",
+        "intraday":  "Intraday Update 📡",
+        "close":     "Close Summary 🔔",
+        "postmarket":"Market Snapshot 📊",
+        "full":      "Full Brief 📊",          # v1.8.0 신규
     }
     session_label = session_labels.get(session_type, "Market Snapshot 📊")
 
-    if mode == "thread":
+    # v1.8.0: session=full 은 mode 무시 — 이미지 트윗 고정
+    if session_type == "full":
+        primary_text     = format_image_tweet(data, "full")
+        image_tweet_text = primary_text
+        posts            = [primary_text]
+    elif mode == "thread":
         posts = format_thread_posts(data)
         primary_text = posts[0] if posts else ""
         image_tweet_text = None
     else:
         primary_text = format_market_snapshot_tweet(data, session_label)
-        image_tweet_text = format_image_tweet(data, session_type)   # 이미지 첨부용 간결 포맷
+        image_tweet_text = format_image_tweet(data, session_type)
         posts = [primary_text]
 
     logger.info(f"[Step 3] 생성 완료 ({len(primary_text)}자)")

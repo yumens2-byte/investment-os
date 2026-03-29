@@ -33,8 +33,12 @@ check("파일럿 테스트 28/28 PASS", "28/28 PASS" in output)
 check("파일럿 테스트 14/14 PASS", "14/14 PASS" in output)
 
 print("\n── [2] SYSTEM_VERSION + CODENAME ─────────────────────────────")
-from config.settings import SYSTEM_VERSION, CODENAME
-check("SYSTEM_VERSION = v1.7.0", SYSTEM_VERSION == "v1.7.0", SYSTEM_VERSION)
+import importlib
+import config.settings as _cs_mod
+importlib.reload(_cs_mod)
+SYSTEM_VERSION = _cs_mod.SYSTEM_VERSION
+CODENAME = _cs_mod.CODENAME
+check("SYSTEM_VERSION = v1.8.0", SYSTEM_VERSION == "v1.8.0", SYSTEM_VERSION)
 check("CODENAME = EDT Investment", CODENAME == "EDT Investment", CODENAME)
 
 print("\n── [3] fx_rates 수집 흐름 ─────────────────────────────────────")
@@ -97,6 +101,43 @@ print("\n── [8] 파일 정리 확인 ─────────────
 check("dashboard_builder.py 존재", os.path.exists("publishers/dashboard_builder.py"))
 check("image_generator.py 존재",   os.path.exists("publishers/image_generator.py"))
 check("dashboard_builder_v2.py 제거", not os.path.exists("publishers/dashboard_builder_v2.py"))
+
+print("\n── [9] dashboard_html_builder import + session=full 라우팅 ─────")
+try:
+    from publishers.dashboard_html_builder import build_html_dashboard
+    check("dashboard_html_builder import OK", True)
+except Exception as e:
+    check("dashboard_html_builder import OK", False, str(e))
+
+try:
+    import inspect
+    from publishers.image_generator import generate_image
+    src = inspect.getsource(generate_image)
+    has_full   = 'session == "full"' in src
+    has_html   = 'build_html_dashboard' in src
+    has_mpl    = 'build_dashboard' in src
+    check("image_generator full 분기", has_full)
+    check("image_generator HTML 라우팅", has_html)
+    check("image_generator matplotlib 유지", has_mpl)
+except Exception as e:
+    check("image_generator full 분기 검증", False, str(e))
+
+try:
+    import inspect
+    import run_view
+    src = inspect.getsource(run_view.run)
+    has_full_branch = 'session_type == "full"' in src
+    check("run_view full 세션 분기", has_full_branch)
+    has_full_label = '"full"' in src and '"Full Brief' in src
+    check("run_view full 레이블 정의", has_full_label)
+except Exception as e:
+    check("run_view full 분기 검증", False, str(e))
+
+try:
+    from config.settings import SCHEDULE_FULL
+    check("SCHEDULE_FULL = 18:30", SCHEDULE_FULL == "18:30", SCHEDULE_FULL)
+except Exception as e:
+    check("SCHEDULE_FULL 상수", False, str(e))
 
 print(f"\n{'='*60}")
 print(f"  전수 테스트 결과: {PASS}개 PASS  {FAIL}개 FAIL")

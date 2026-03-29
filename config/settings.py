@@ -41,7 +41,7 @@ HISTORY_FILE = PUBLISHED_DIR / "history.json"
 
 # ─── 시스템 상수 ──────────────────────────────────────────
 SYSTEM_NAME = "Investment OS"
-SYSTEM_VERSION = "v1.7.0"
+SYSTEM_VERSION = "v1.8.0"
 
 # ─── 시장 임계값 (Market Thresholds) ────────────────────────
 VIX_LOW_THRESHOLD = 20.0
@@ -167,6 +167,7 @@ SENTIMENT_BEARISH_THRESHOLD = -0.5
 
 # ─── 스케줄 (KST 기준) ────────────────────────────────────
 SCHEDULE_MORNING = "06:30"
+SCHEDULE_FULL    = "18:30"  # v1.8.0 신규: 풀버전 대시보드 (KST)
 SCHEDULE_INTRADAY = "23:30"
 SCHEDULE_CLOSE = "07:00"
 
