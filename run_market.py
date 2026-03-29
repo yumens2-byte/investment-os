@@ -67,10 +67,6 @@ def run(session: str) -> dict:
     sources_ok = news_result.get("sources_ok", 0)
     sources_fail = news_result.get("sources_fail", 0)
 
-    # FX 환율 수집 (USD/KRW, EUR/USD, USD/JPY)
-    fx_rates = collect_fx_rates()
-    logger.info(f"[Step 1-FX] FX 환율 수집 완료: {fx_rates}")
-
     logger.info(
         f"[Step 1] 완료 — 감성={combined_sentiment} | "
         f"RSS소스 {sources_ok}성공/{sources_fail}실패"
