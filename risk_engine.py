@@ -1,217 +1,198 @@
 """
-engines/risk_engine.py
-05_portfolio_risk_engine.md 기준 구현.
-ETF 결과 + Market Regime → Portfolio Risk + Trading Signal.
+engines/macro_engine.py
+02_macro_liquidity_engine.md 기준 구현.
+Raw 시장 데이터 → Standard Signal → Market Score 산출.
 """
 import logging
-from typing import Dict
-from config.settings import ETF_CORE
+from typing import Optional
+from config.settings import (
+    VIX_LOW_THRESHOLD, VIX_HIGH_THRESHOLD,
+    US10Y_LOW_THRESHOLD, US10Y_HIGH_THRESHOLD,
+    OIL_LOW_THRESHOLD, OIL_HIGH_THRESHOLD,
+    DXY_HIGH_THRESHOLD,
+)
 
 logger = logging.getLogger(__name__)
 
-# ──────────────────────────────────────────────────────────────
-# 1. Position Sizing
-# ──────────────────────────────────────────────────────────────
-
-def _compute_position_sizing_multiplier(risk_level: str, composite_score: int) -> float:
-    """
-    Risk Level → Position Sizing Multiplier.
-    1.0 = 풀 포지션, 0.5 = 절반 축소
-    """
-    if risk_level == "LOW":
-        return 1.0
-    elif risk_level == "MEDIUM":
-        return 0.9 if composite_score < 55 else 0.75
-    else:  # HIGH
-        return 0.6 if composite_score < 80 else 0.5
-
 
 # ──────────────────────────────────────────────────────────────
-# 2. Crash Alert
+# 1. Signal Layer  (출력: 1~5 점수, 낮을수록 Risk-Off 우호)
 # ──────────────────────────────────────────────────────────────
 
-def _compute_crash_alert(
-    risk_level: str,
-    vix_state: str,
-    credit_stress: str,
-) -> str:
-    """
-    Crash Alert Level: LOW / MEDIUM / HIGH / CRITICAL
-    """
-    if risk_level == "HIGH" and vix_state in ("High", "Extreme") and credit_stress == "High":
-        return "HIGH"
-    elif risk_level == "HIGH" or vix_state in ("High", "Extreme"):
-        return "MEDIUM"
-    elif risk_level == "MEDIUM":
-        return "LOW"
+def _score_vix(vix: float) -> dict:
+    """VIX → 변동성 압박 점수 (5=극단 공포, 1=안정)"""
+    if vix < 15:
+        level, score = "Low", 1
+    elif vix < VIX_LOW_THRESHOLD:
+        level, score = "Normal", 2
+    elif vix < VIX_HIGH_THRESHOLD:
+        level, score = "Elevated", 3
+    elif vix < 40:
+        level, score = "High", 4
     else:
-        return "LOW"
+        level, score = "Extreme", 5
+    return {"vix_state": level, "volatility_score": score}
 
 
-# ──────────────────────────────────────────────────────────────
-# 3. Hedge Intensity
-# ──────────────────────────────────────────────────────────────
-
-def _compute_hedge_intensity(risk_level: str, crash_alert: str) -> str:
-    """
-    Hedge Intensity: None / Low / Medium / High
-    """
-    if crash_alert == "HIGH" or risk_level == "HIGH":
-        return "High"
-    elif risk_level == "MEDIUM":
-        return "Medium"
+def _score_us10y(us10y: float) -> dict:
+    """US10Y → 금리 환경 점수 (4=고금리 압박)"""
+    if us10y < US10Y_LOW_THRESHOLD:
+        env, score = "Low Rate", 1
+    elif us10y < US10Y_HIGH_THRESHOLD:
+        env, score = "Moderate Rate", 2
+    elif us10y < 5.0:
+        env, score = "High Rate", 3
     else:
-        return "Low"
+        env, score = "Very High Rate", 4
+    return {"rate_environment": env, "rate_score": score}
 
 
-# ──────────────────────────────────────────────────────────────
-# 4. Trading Signal
-# ──────────────────────────────────────────────────────────────
-
-def _determine_trading_signal(
-    risk_level: str,
-    stance: Dict[str, str],
-    timing_signal: Dict[str, str],
-) -> dict:
-    """
-    포트폴리오 전체 Trading Signal 결정.
-    BUY / ADD / HOLD / REDUCE / HEDGE / SELL
-    """
-    buy_watch = [
-        etf for etf in ETF_CORE
-        if timing_signal.get(etf) in ("BUY", "ADD ON PULLBACK")
-    ]
-    hold = [
-        etf for etf in ETF_CORE
-        if timing_signal.get(etf) == "HOLD"
-    ]
-    reduce = [
-        etf for etf in ETF_CORE
-        if timing_signal.get(etf) in ("REDUCE", "SELL")
-    ]
-
-    # 전체 시그널
-    if risk_level == "HIGH":
-        signal = "HEDGE"
-        reason = "High risk environment — defensive posture required"
-    elif risk_level == "MEDIUM":
-        if len(buy_watch) >= 3:
-            signal = "ADD"
-            reason = "Moderate risk with selective opportunities"
-        else:
-            signal = "HOLD"
-            reason = "Moderate risk — maintain current exposure"
-    else:  # LOW
-        if len(buy_watch) >= 3:
-            signal = "BUY"
-            reason = "Low risk, positive momentum across multiple ETFs"
-        else:
-            signal = "HOLD"
-            reason = "Low risk but limited broad momentum"
-
+def _score_oil(oil: float) -> dict:
+    """WTI → 원자재/인플레이션 압박 점수"""
+    if oil < OIL_LOW_THRESHOLD:
+        state, score = "Low", 1
+    elif oil < OIL_HIGH_THRESHOLD:
+        state, score = "Moderate", 2
+    elif oil < 110:
+        state, score = "High", 3
+    else:
+        state, score = "Oil Shock", 4
     return {
-        "trading_signal": signal,
-        "signal_reason": reason,
-        "signal_matrix": {
-            "buy_watch": buy_watch,
-            "hold": hold,
-            "reduce": reduce,
-        },
+        "oil_state": state,
+        "commodity_pressure_score": score,
+        "oil_shock_signal": score >= 4,
     }
 
 
-# ──────────────────────────────────────────────────────────────
-# 5. One-Line Summary
-# ──────────────────────────────────────────────────────────────
-
-def _build_one_line_summary(
-    regime: str,
-    risk_level: str,
-    trading_signal: str,
-    top_etfs: list,
-) -> str:
-    top = ", ".join(top_etfs[:2])
-    # 버그 수정: risk_level 기준이 아닌 regime 기준으로 문구 결정
-    # 기존: risk_level==LOW 이면 "risk-on conditions" → Risk-Off일 때도 같은 문구가 나오는 오류
-    if risk_level == "HIGH":
-        return f"{regime} — high risk environment. Defensive posture via {top}."
-    elif "Risk-Off" in regime or "Shock" in regime or "Crisis" in regime or "Risk" in regime:
-        return f"{regime} — defensive conditions. Focus on {top}."
-    elif "Risk-On" in regime or "AI Bubble" in regime:
-        return f"{regime} — growth conditions favor {top}."
+def _score_dxy(dxy: float) -> dict:
+    """Dollar Index → 유동성 축소 신호"""
+    if dxy < 98:
+        state, score = "Weak", 1
+    elif dxy < DXY_HIGH_THRESHOLD:
+        state, score = "Moderate", 2
     else:
-        return f"{regime} — mixed signals; selective exposure to {top}."
+        state, score = "Strong", 3
+    return {
+        "dollar_state": state,
+        "dollar_tightening_signal": score >= 3,
+    }
+
+
+def _score_credit(credit_stress: str) -> dict:
+    """신용 스트레스 → 금융 안정 점수"""
+    mapping = {"Low": 1, "Moderate": 2, "High": 3, "Unknown": 2}
+    score = mapping.get(credit_stress, 2)
+    return {
+        "credit_stress_signal": credit_stress,
+        "financial_stability_score": score,
+    }
+
+
+def _score_yield_curve(inverted: bool) -> dict:
+    """장단기 역전 여부 → 경기침체 신호"""
+    return {
+        "yield_curve_inverted": inverted,
+        "recession_signal": inverted,
+    }
+
+
+def _score_news_sentiment(news_sentiment: str) -> dict:
+    """뉴스/Reddit 감성 → 심리 점수"""
+    mapping = {"Bullish": 1, "Neutral": 2, "Bearish": 3, "Unknown": 2}
+    score = mapping.get(news_sentiment, 2)
+    return {"sentiment_score": score, "sentiment_state": news_sentiment}
 
 
 # ──────────────────────────────────────────────────────────────
-# 6. 통합 진입점
+# 2. Market Score  (6개 축)
 # ──────────────────────────────────────────────────────────────
 
-def run_risk_engine(
-    regime: str,
-    risk_level: str,
-    composite_score: int,
-    market_score: dict,
-    signals: dict,
-    etf_analysis: dict,
-    etf_strategy: dict,
-    etf_allocation: dict,
-    session_type: str = "postmarket",
+def compute_market_score(signals: dict) -> dict:
+    """
+    6개 축 Market Score 산출.
+    출력: 각 축 1~5 (5=위험/부담, 1=안정/우호)
+    """
+    vix_score = signals.get("volatility_score", 2)
+    rate_score = signals.get("rate_score", 2)
+    oil_score = signals.get("commodity_pressure_score", 2)
+    stability_score = signals.get("financial_stability_score", 2)
+    sentiment_score = signals.get("sentiment_score", 2)
+
+    # growth_score: 성장 환경 (낮은 금리 + 낮은 VIX = 성장 우호)
+    growth_score = max(1, min(5, round((vix_score + rate_score) / 2)))
+
+    # inflation_score: 원자재 + 금리
+    inflation_score = max(1, min(5, round((oil_score + rate_score) / 2)))
+
+    # liquidity_score: 신용 + 달러 (dollar_score 없으면 stability 사용)
+    dollar_score = 2 if not signals.get("dollar_tightening_signal") else 3
+    liquidity_score = max(1, min(5, round((stability_score + dollar_score) / 2)))
+
+    # risk_score: VIX + 감성
+    risk_score = max(1, min(5, round((vix_score + sentiment_score) / 2)))
+
+    score = {
+        "growth_score": growth_score,
+        "inflation_score": inflation_score,
+        "liquidity_score": liquidity_score,
+        "risk_score": risk_score,
+        "financial_stability_score": stability_score,
+        "commodity_pressure_score": oil_score,
+    }
+    logger.debug(f"[Macro] Market Score: {score}")
+    return score
+
+
+# ──────────────────────────────────────────────────────────────
+# 3. 통합 진입점
+# ──────────────────────────────────────────────────────────────
+
+def run_macro_engine(
+    snapshot: dict,
+    fred_data: dict,
+    news_sentiment: str,
 ) -> dict:
     """
-    ETF 결과 + Regime → Portfolio Risk + Trading Signal + Output Helpers 반환
+    시장 스냅샷 + FRED + 뉴스 감성 → 신호 + Market Score 반환.
+
+    Args:
+        snapshot: collect_market_snapshot() 결과
+        fred_data: collect_macro_data() 결과
+        news_sentiment: "Bullish" / "Neutral" / "Bearish"
+
+    Returns:
+        macro_result dict (signals + market_score)
     """
-    logger.info(f"[RiskEngine] 분석 시작: {regime} / {risk_level}")
+    logger.info("[MacroEngine] 분석 시작")
 
-    vix_state = signals.get("vix_state", "Normal")
-    credit_stress = signals.get("credit_stress_signal", "Low")
+    vix = snapshot.get("vix", 20.0)
+    us10y = snapshot.get("us10y", 4.0)
+    oil = snapshot.get("oil", 75.0)
+    dxy = snapshot.get("dollar_index", 100.0)
+    credit_stress = fred_data.get("credit_stress", "Unknown")
+    yield_curve_inverted = fred_data.get("yield_curve_inverted", False)
 
-    sizing = _compute_position_sizing_multiplier(risk_level, composite_score)
-    crash_alert = _compute_crash_alert(risk_level, vix_state, credit_stress)
-    hedge_intensity = _compute_hedge_intensity(risk_level, crash_alert)
+    # 개별 신호
+    signals = {}
+    signals.update(_score_vix(vix))
+    signals.update(_score_us10y(us10y))
+    signals.update(_score_oil(oil))
+    signals.update(_score_dxy(dxy))
+    signals.update(_score_credit(credit_stress))
+    signals.update(_score_yield_curve(yield_curve_inverted))
+    signals.update(_score_news_sentiment(news_sentiment))
 
-    stance = etf_strategy.get("stance", {})
-    timing = etf_analysis.get("timing_signal", {})
-
-    trading_signal = _determine_trading_signal(risk_level, stance, timing)
-
-    # Top ETF (rank 기준)
-    rank = etf_analysis.get("etf_rank", {})
-    top_etfs = [k for k, _ in sorted(rank.items(), key=lambda x: x[1])][:3]
-
-    summary = _build_one_line_summary(
-        regime, risk_level, trading_signal["trading_signal"], top_etfs
-    )
-
-    # 포트폴리오 리턴 특성
-    overweights = [e for e, s in stance.items() if s == "Overweight"]
-    portfolio_bias = "Defensive" if risk_level in ("MEDIUM", "HIGH") else "Growth"
-
-    portfolio_risk = {
-        "portfolio_return_impact": portfolio_bias,
-        "portfolio_risk_impact": "High" if risk_level == "HIGH" else "Moderate",
-        "diversification_score": max(40, 100 - composite_score),
-        "drawdown_risk": "Elevated" if risk_level == "HIGH" else "Contained",
-        "market_risk_level": risk_level,
-        "crash_alert_level": crash_alert,
-        "position_exposure": "Reduced beta" if sizing < 0.9 else "Full beta",
-        "position_sizing_multiplier": sizing,
-        "hedge_intensity": hedge_intensity,
-    }
-
-    output_helpers = {
-        "one_line_summary": summary,
-        "session_type": session_type,
-        "language_policy": "ko",
-    }
+    # Market Score
+    market_score = compute_market_score(signals)
 
     logger.info(
-        f"[RiskEngine] 완료: Signal={trading_signal['trading_signal']} | "
-        f"Sizing={sizing:.1f}x | Crash={crash_alert}"
+        f"[MacroEngine] VIX={vix:.1f}({signals['vix_state']}) | "
+        f"Rate={signals['rate_environment']} | "
+        f"Oil={signals['oil_state']} | "
+        f"Dollar={signals['dollar_state']}"
     )
 
     return {
-        "portfolio_risk": portfolio_risk,
-        "trading_signal": trading_signal,
-        "output_helpers": output_helpers,
+        "signals": signals,
+        "market_score": market_score,
     }

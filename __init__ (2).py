@@ -1,0 +1,219 @@
+name: Investment OS Auto Publish
+
+on:
+  schedule:
+    - cron: "30 21 * * 0-4"
+    - cron: "30 14 * * 1-5"
+    - cron: "0 22 * * 0-4"
+    - cron: "0 11 * * 4"
+    - cron: "*/10 13-21 * * 1-5"
+    - cron: "30 9 * * 1-5"
+  workflow_dispatch:
+    inputs:
+      session:
+        description: session
+        required: true
+        default: morning
+        type: choice
+        options:
+          - morning
+          - intraday
+          - close
+          - alert
+          - full
+      mode:
+        description: "mode (alert, full 선택 시 무시됨)"
+        required: true
+        default: tweet
+        type: choice
+        options:
+          - tweet
+          - thread
+  push:
+    branches:
+      - main
+  pull_request:
+    branches:
+      - main
+
+env:
+  FRED_API_KEY: ${{ secrets.FRED_API_KEY }}
+  X_API_KEY: ${{ secrets.X_API_KEY }}
+  X_API_SECRET: ${{ secrets.X_API_SECRET }}
+  X_ACCESS_TOKEN: ${{ secrets.X_ACCESS_TOKEN }}
+  X_ACCESS_TOKEN_SECRET: ${{ secrets.X_ACCESS_TOKEN_SECRET }}
+  DRY_RUN: ${{ secrets.DRY_RUN }}
+  LOG_LEVEL: INFO
+
+jobs:
+
+  pilot_test:
+    name: Pilot Test
+    if: github.event_name == 'push' || github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+      - run: pip install -r requirements.txt
+      - run: python main.py test --round all
+        env:
+          DRY_RUN: "true"
+          LOG_LEVEL: WARNING
+
+  morning:
+    name: Morning Brief
+    if: github.event.schedule == '30 21 * * 0-4' || (github.event_name == 'workflow_dispatch' && github.event.inputs.session == 'morning')
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+      - run: pip install -r requirements.txt
+      - run: python main.py run all --session morning --mode tweet
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: morning-${{ github.run_id }}
+          path: |
+            data/outputs/core_data.json
+            data/outputs/validation_result.json
+          retention-days: 7
+
+  intraday:
+    name: Intraday Update
+    if: github.event.schedule == '30 14 * * 1-5' || (github.event_name == 'workflow_dispatch' && github.event.inputs.session == 'intraday')
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+      - run: pip install -r requirements.txt
+      - run: python main.py run all --session intraday --mode tweet
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: intraday-${{ github.run_id }}
+          path: data/outputs/core_data.json
+          retention-days: 3
+
+  close:
+    name: Close Summary
+    if: github.event.schedule == '0 22 * * 0-4' || (github.event_name == 'workflow_dispatch' && github.event.inputs.session == 'close')
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+      - run: pip install -r requirements.txt
+      - run: python main.py run all --session close --mode tweet
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: close-${{ github.run_id }}
+          path: data/outputs/core_data.json
+          retention-days: 3
+
+  weekly_thread:
+    name: Weekly Thread
+    if: github.event.schedule == '0 11 * * 4'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+      - run: pip install -r requirements.txt
+      - run: python main.py run all --session close --mode thread
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: weekly-${{ github.run_id }}
+          path: data/outputs/
+          retention-days: 14
+
+  alert_check:
+    name: Alert Check
+    if: |
+      github.event.schedule == '*/10 13-21 * * 1-5' ||
+      (github.event_name == 'workflow_dispatch' && github.event.inputs.session == 'alert')
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      # Alert 이력 캐시 복원 (등급 변화 감지 핵심)
+      - name: Restore alert history cache
+        uses: actions/cache@v4
+        with:
+          path: data/published/alert_history.json
+          key: alert-history-${{ github.ref }}
+          restore-keys: alert-history-
+
+      - run: pip install -r requirements.txt
+      - run: python main.py alert
+
+      # Alert 이력 캐시 저장 (다음 실행 시 복원)
+      - name: Save alert history cache
+        uses: actions/cache/save@v4
+        if: always()
+        with:
+          path: data/published/alert_history.json
+          key: alert-history-${{ github.ref }}-${{ github.run_id }}
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: alert-${{ github.run_id }}
+          path: data/published/alert_history.json
+          retention-days: 7
+
+  full_dashboard:
+    name: Full Dashboard
+    if: github.event.schedule == '30 9 * * 1-5' || (github.event_name == 'workflow_dispatch' && github.event.inputs.session == 'full')
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+      TELEGRAM_FREE_CHANNEL_ID: ${{ secrets.TELEGRAM_FREE_CHANNEL_ID }}
+      TELEGRAM_PAID_CHANNEL_ID: ${{ secrets.TELEGRAM_PAID_CHANNEL_ID }}
+      FRED_API_KEY: ${{ secrets.FRED_API_KEY }}
+      X_API_KEY: ${{ secrets.X_API_KEY }}
+      X_API_SECRET: ${{ secrets.X_API_SECRET }}
+      X_ACCESS_TOKEN: ${{ secrets.X_ACCESS_TOKEN }}
+      X_ACCESS_TOKEN_SECRET: ${{ secrets.X_ACCESS_TOKEN_SECRET }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+      - run: pip install -r requirements.txt
+      - run: python -m playwright install chromium --with-deps
+      - run: python main.py run all --session full --mode tweet
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: full-${{ github.run_id }}
+          path: |
+            data/outputs/core_data.json
+            data/images/
+          retention-days: 7

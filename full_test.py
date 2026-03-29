@@ -1,192 +1,179 @@
 """
-전수 테스트 스크립트 (v1.7.0)
+publishers/telegram_publisher.py
+==================================
+Telegram Bot API 발행 모듈 — 듀얼 채널 (무료 / 유료)
+
+무료 채널: 시그널 텍스트 요약
+유료 채널: 풀버전 대시보드 이미지 (PNG)
 """
-import os, sys, warnings, subprocess
-warnings.filterwarnings("ignore")
+import logging
+import os
+from typing import Optional
 
-# 환경변수 설정
-for k, v in [("DRY_RUN","true"),("LOG_LEVEL","WARNING"),
-             ("FRED_API_KEY","x"),("X_API_KEY","x"),("X_API_SECRET","x"),
-             ("X_ACCESS_TOKEN","x"),("X_ACCESS_TOKEN_SECRET","x")]:
-    os.environ.setdefault(k, v)
+import requests
 
-PASS = 0
-FAIL = 0
+logger = logging.getLogger(__name__)
 
-def check(label, ok, detail=""):
-    global PASS, FAIL
-    icon = "✅" if ok else "❌"
-    suffix = f" ({detail})" if detail and not ok else ""
-    print(f"  {icon} {label}{suffix}")
-    if ok: PASS += 1
-    else:  FAIL += 1
+# ── 환경변수 ────────────────────────────────────────────────
+BOT_TOKEN    = os.getenv("TELEGRAM_BOT_TOKEN", "")
+FREE_CHAT_ID = os.getenv("TELEGRAM_FREE_CHANNEL_ID", "")
+PAID_CHAT_ID = os.getenv("TELEGRAM_PAID_CHANNEL_ID", "")
+# 텔레그램은 무료 서비스 — DRY_RUN 무관하게 항상 실제 전송
+# X(Twitter)의 DRY_RUN과 독립적으로 동작
+API_BASE     = f"https://api.telegram.org/bot{BOT_TOKEN}"
+TIMEOUT_MSG  = 15   # 텍스트 타임아웃
+TIMEOUT_IMG  = 30   # 이미지 타임아웃
 
 
-print("\n── [1] 파일럿 테스트 (42케이스) ──────────────────────────────")
-result = subprocess.run(
-    [sys.executable, "main.py", "test", "--round", "all"],
-    capture_output=True, text=True, cwd="."
-)
-output = result.stdout
-print("  " + "\n  ".join(output.strip().split("\n")[-5:]))
-check("파일럿 테스트 28/28 PASS", "28/28 PASS" in output)
-check("파일럿 테스트 14/14 PASS", "14/14 PASS" in output)
+# ── 내부 헬퍼 ───────────────────────────────────────────────
+def _chat_ids(channel: str) -> list[str]:
+    """channel 인자를 실제 chat_id 리스트로 변환"""
+    if channel == "both":
+        return [c for c in [FREE_CHAT_ID, PAID_CHAT_ID] if c]
+    if channel == "paid":
+        return [PAID_CHAT_ID] if PAID_CHAT_ID else []
+    return [FREE_CHAT_ID] if FREE_CHAT_ID else []
 
-print("\n── [2] SYSTEM_VERSION + CODENAME ─────────────────────────────")
-import importlib
-import config.settings as _cs_mod
-importlib.reload(_cs_mod)
-SYSTEM_VERSION = _cs_mod.SYSTEM_VERSION
-CODENAME = _cs_mod.CODENAME
-check("SYSTEM_VERSION = v1.9.0", SYSTEM_VERSION == "v1.9.0", SYSTEM_VERSION)
-check("CODENAME = EDT Investment", CODENAME == "EDT Investment", CODENAME)
 
-print("\n── [3] fx_rates 수집 흐름 ─────────────────────────────────────")
-import inspect
-from run_market import run as rm_run
-src = inspect.getsource(rm_run)
-check("collect_fx_rates() 호출", "fx_rates = collect_fx_rates()" in src)
-check("assemble_core_data(fx_rates=fx_rates)", "fx_rates=fx_rates" in src)
+def _is_configured() -> bool:
+    return bool(BOT_TOKEN)
 
-print("\n── [4] json_builder fx_rates 파라미터 ────────────────────────")
-from core.json_builder import assemble_core_data
-params = inspect.signature(assemble_core_data).parameters
-check("fx_rates 파라미터 존재", "fx_rates" in params)
-default_ok = params.get("fx_rates") and params["fx_rates"].default is None
-check("fx_rates default=None", default_ok)
 
-print("\n── [5] x_publisher 메소드 분리 ───────────────────────────────")
-from publishers.x_publisher import publish_tweet, publish_thread, publish_tweet_with_image, upload_media
-r1 = publish_tweet("test")
-r2 = publish_tweet_with_image("test", "/nonexist.png")
-check("publish_tweet (기존 유지)", r1["success"] and r1["dry_run"])
-check("publish_tweet_with_image (신규)", r2["success"] and r2.get("has_image", False))
-check("publish_thread import OK", callable(publish_thread))
-check("upload_media import OK", callable(upload_media))
+# ── 공개 인터페이스 ─────────────────────────────────────────
+def send_message(
+    text: str,
+    channel: str = "free",
+    parse_mode: str = "HTML",
+) -> list[dict]:
+    """
+    텍스트 메시지 발행
 
-print("\n── [6] format_image_tweet 4세션 ──────────────────────────────")
-from publishers.x_formatter import format_image_tweet
-data_fmt = {
-    "market_snapshot": {"sp500":-1.67,"nasdaq":-2.15,"vix":31.05,"us10y":4.44,"oil":99.64,"dollar_index":100.15},
-    "market_regime": {"market_regime":"Risk-Off","market_risk_level":"MEDIUM"},
-    "trading_signal": {"trading_signal":"HOLD","signal_matrix":{}},
-    "output_helpers": {"one_line_summary":"Risk-Off — defensive conditions."}
-}
-for s in ["morning","intraday","close","weekly"]:
-    t = format_image_tweet(data_fmt, s)
-    check(f"format_image_tweet [{s}] ≤280자", len(t) <= 280, f"{len(t)}자")
+    Args:
+        text:       발행할 텍스트 (HTML 태그 허용)
+        channel:    'free' | 'paid' | 'both'
+        parse_mode: 'HTML' | 'Markdown'
 
-print("\n── [7] 대시보드 이미지 4세션 생성 ────────────────────────────")
-from publishers.dashboard_builder import build_dashboard
-from pathlib import Path
-from datetime import datetime, timezone
-data_dash = {
-    "market_snapshot": {"sp500":-1.67,"nasdaq":-2.15,"vix":31.05,"us10y":4.44,"oil":99.64,"dollar_index":100.15},
-    "market_regime": {"market_regime":"Risk-Off","market_risk_level":"MEDIUM","regime_reason":"Fear spreading + risk asset avoidance"},
-    "market_score": {"growth_score":3,"inflation_score":2,"liquidity_score":2,"risk_score":4,"financial_stability_score":2,"commodity_pressure_score":3},
-    "etf_strategy": {"stance":{"QQQM":"Underweight","XLK":"Underweight","SPYM":"Neutral","XLE":"Overweight","ITA":"Overweight","TLT":"Overweight"}},
-    "etf_allocation": {"allocation":{"QQQM":5,"XLK":5,"SPYM":20,"XLE":25,"ITA":25,"TLT":20}},
-    "trading_signal": {"trading_signal":"HOLD","signal_matrix":{"buy_watch":["XLE","TLT"],"hold":["SPYM","ITA"],"reduce":["QQQM","XLK"]}},
-    "output_helpers": {"one_line_summary":"Risk-Off — defensive conditions. Focus on XLE, TLT."},
-    "fx_rates": {"usdkrw":1452.30,"eurusd":1.0812,"usdjpy":149.52}
-}
-dt = datetime(2026,3,29,21,30,tzinfo=timezone.utc)
-for s in ["morning","intraday","close","weekly"]:
-    p = build_dashboard(data_dash, session=s, dt_utc=dt, output_dir=Path(f"/tmp/ftest_{s}"))
-    ok = bool(p and os.path.exists(p))
-    kb = os.path.getsize(p)//1024 if ok else 0
-    check(f"대시보드 [{s}] 생성 ({kb} KB)", ok)
+    Returns:
+        각 채널별 API 응답 리스트
+    """
+    if not _is_configured():
+        logger.warning("[TG] BOT_TOKEN 미설정 — 텔레그램 발행 건너뜀")
+        return []
 
-print("\n── [8] 파일 정리 확인 ─────────────────────────────────────────")
-check("dashboard_builder.py 존재", os.path.exists("publishers/dashboard_builder.py"))
-check("image_generator.py 존재",   os.path.exists("publishers/image_generator.py"))
-check("dashboard_builder_v2.py 제거", not os.path.exists("publishers/dashboard_builder_v2.py"))
+    targets = _chat_ids(channel)
+    if not targets:
+        logger.warning(f"[TG] chat_id 미설정 (channel={channel}) — 건너뜀")
+        return []
 
-print("\n── [9] dashboard_html_builder import + session=full 라우팅 ─────")
-try:
-    from publishers.dashboard_html_builder import build_html_dashboard
-    check("dashboard_html_builder import OK", True)
-except Exception as e:
-    check("dashboard_html_builder import OK", False, str(e))
+    results = []
+    for cid in targets:
+        try:
+            res = requests.post(
+                f"{API_BASE}/sendMessage",
+                json={"chat_id": cid, "text": text, "parse_mode": parse_mode},
+                timeout=TIMEOUT_MSG,
+            )
+            data = res.json()
+            if data.get("ok"):
+                logger.info(f"[TG] 텍스트 발행 완료 → {cid}")
+            else:
+                logger.error(f"[TG] 발행 실패 → {cid}: {data}")
+            results.append(data)
+        except Exception as e:
+            logger.error(f"[TG] 텍스트 발행 예외 → {cid}: {e}")
+            results.append({"ok": False, "error": str(e), "chat_id": cid})
+    return results
 
-try:
-    import inspect
-    from publishers.image_generator import generate_image
-    src = inspect.getsource(generate_image)
-    has_full   = 'session == "full"' in src
-    has_html   = 'build_html_dashboard' in src
-    has_mpl    = 'build_dashboard' in src
-    check("image_generator full 분기", has_full)
-    check("image_generator HTML 라우팅", has_html)
-    check("image_generator matplotlib 유지", has_mpl)
-except Exception as e:
-    check("image_generator full 분기 검증", False, str(e))
 
-try:
-    import inspect
-    import run_view
-    src = inspect.getsource(run_view.run)
-    has_full_branch = 'session_type == "full"' in src
-    check("run_view full 세션 분기", has_full_branch)
-    has_full_label = '"full"' in src and '"Full Brief' in src
-    check("run_view full 레이블 정의", has_full_label)
-except Exception as e:
-    check("run_view full 분기 검증", False, str(e))
+def send_photo(
+    image_path: str,
+    caption: str = "",
+    channel: str = "paid",
+    parse_mode: str = "HTML",
+) -> list[dict]:
+    """
+    이미지 + 캡션 발행
 
-try:
-    from config.settings import SCHEDULE_FULL
-    check("SCHEDULE_FULL = 18:30", SCHEDULE_FULL == "18:30", SCHEDULE_FULL)
-except Exception as e:
-    check("SCHEDULE_FULL 상수", False, str(e))
+    Args:
+        image_path: PNG 파일 경로
+        caption:    이미지 캡션 (1024자 제한)
+        channel:    'free' | 'paid' | 'both'
+        parse_mode: 'HTML' | 'Markdown'
 
-print("\n── [10] 텔레그램 publisher import + 구조 검증 ────────────")
-try:
-    from publishers.telegram_publisher import (
-        send_message, send_photo, format_free_signal
-    )
-    check("telegram_publisher import OK", True)
-except Exception as e:
-    check("telegram_publisher import OK", False, str(e))
+    Returns:
+        각 채널별 API 응답 리스트
+    """
+    if not _is_configured():
+        logger.warning("[TG] BOT_TOKEN 미설정 — 텔레그램 발행 건너뜀")
+        return []
 
-try:
-    import inspect
-    from publishers.telegram_publisher import format_free_signal
-    # 샘플 data로 텍스트 생성 검증
-    sample = {
-        "market_regime": {"market_regime": "Risk-Off", "market_risk_level": "MEDIUM"},
-        "trading_signal": {"trading_signal": "HOLD", "signal_reason": "Moderate risk",
-                           "signal_matrix": {"buy_watch": ["XLE"], "hold": ["SPYM"], "reduce": ["QQQM"]}},
-        "market_snapshot": {"vix": 31.05, "sp500": -1.67},
-        "output_helpers": {"one_line_summary": "Defensive conditions."},
-    }
-    text = format_free_signal(sample)
-    check("format_free_signal 생성 (>50자)", len(text) > 50, f"{len(text)}자")
-    check("format_free_signal HTML 태그 포함", "<b>" in text)
-except Exception as e:
-    check("format_free_signal 검증", False, str(e))
+    targets = _chat_ids(channel)
+    if not targets:
+        logger.warning(f"[TG] chat_id 미설정 (channel={channel}) — 건너뜀")
+        return []
 
-try:
-    import inspect, run_view
-    src = inspect.getsource(run_view.run)
-    check("run_view Step 6-TG 분기 존재", "Step 6-TG" in src)
-    check("run_view send_message 호출", "send_message" in src)
-    check("run_view send_photo 호출", "send_photo" in src)
-except Exception as e:
-    check("run_view TG 분기 검증", False, str(e))
+    results = []
+    for cid in targets:
+        try:
+            with open(image_path, "rb") as f:
+                res = requests.post(
+                    f"{API_BASE}/sendPhoto",
+                    data={"chat_id": cid, "caption": caption[:1024], "parse_mode": parse_mode},
+                    files={"photo": f},
+                    timeout=TIMEOUT_IMG,
+                )
+            data = res.json()
+            if data.get("ok"):
+                logger.info(f"[TG] 이미지 발행 완료 → {cid}")
+            else:
+                logger.error(f"[TG] 이미지 발행 실패 → {cid}: {data}")
+            results.append(data)
+        except Exception as e:
+            logger.error(f"[TG] 이미지 발행 예외 → {cid}: {e}")
+            results.append({"ok": False, "error": str(e), "chat_id": cid})
+    return results
 
-try:
-    from config.settings import SYSTEM_VERSION, TELEGRAM_FREE_CHANNEL, TELEGRAM_PAID_CHANNEL
-    check("SYSTEM_VERSION = v1.9.0", SYSTEM_VERSION == "v1.9.0", SYSTEM_VERSION)
-    check("TELEGRAM_FREE_CHANNEL 상수", TELEGRAM_FREE_CHANNEL == "free")
-    check("TELEGRAM_PAID_CHANNEL 상수", TELEGRAM_PAID_CHANNEL == "paid")
-except Exception as e:
-    check("settings v1.9.0 검증", False, str(e))
 
-print(f"\n{'='*60}")
-print(f"  전수 테스트 결과: {PASS}개 PASS  {FAIL}개 FAIL")
-if FAIL == 0:
-    print(f"  ✅ 전체 PASS")
-else:
-    print(f"  ❌ 실패 항목 있음")
-print(f"{'='*60}")
-sys.exit(FAIL)
+# ── 포맷 헬퍼 ───────────────────────────────────────────────
+def format_free_signal(data: dict) -> str:
+    """무료 채널 발행용 시그널 요약 텍스트 생성"""
+    regime  = data.get("market_regime", {}).get("market_regime", "—")
+    risk    = data.get("market_regime", {}).get("market_risk_level", "—")
+    signal  = data.get("trading_signal", {}).get("trading_signal", "—")
+    reason  = data.get("trading_signal", {}).get("signal_reason", "")
+    buy     = data.get("trading_signal", {}).get("signal_matrix", {}).get("buy_watch", [])
+    hold    = data.get("trading_signal", {}).get("signal_matrix", {}).get("hold", [])
+    reduce  = data.get("trading_signal", {}).get("signal_matrix", {}).get("reduce", [])
+    vix     = data.get("market_snapshot", {}).get("vix", 0)
+    sp500   = data.get("market_snapshot", {}).get("sp500", 0)
+    summary = data.get("output_helpers", {}).get("one_line_summary", "")
+
+    SIGNAL_EMOJI = {"BUY": "🟢", "HOLD": "🟡", "REDUCE": "🔴", "SELL": "🔴"}
+    RISK_EMOJI   = {"LOW": "🟢", "MEDIUM": "🟡", "HIGH": "🔴"}
+
+    sig_e  = SIGNAL_EMOJI.get(signal, "⚪")
+    risk_e = RISK_EMOJI.get(risk, "⚪")
+    sp_sign = "▼" if sp500 < 0 else "▲"
+
+    lines = [
+        "📊 <b>Investment OS — Daily Signal</b>",
+        "",
+        f"{risk_e} Regime: <b>{regime}</b>  |  Risk: <b>{risk}</b>",
+        f"📈 S&P: <b>{sp_sign}{abs(sp500):.2f}%</b>  |  VIX: <b>{vix:.1f}</b>",
+        "",
+        f"{sig_e} Signal: <b>{signal}</b>",
+    ]
+    if buy:
+        lines.append(f"🔍 BUY Watch: <b>{' · '.join(buy)}</b>")
+    if hold:
+        lines.append(f"⏸ Hold: {' · '.join(hold)}")
+    if reduce:
+        lines.append(f"📉 Reduce: {' · '.join(reduce)}")
+    if reason:
+        lines.append(f"\n<i>{reason}</i>")
+    if summary:
+        lines.append(f"<i>{summary}</i>")
+    lines.append("")
+    lines.append("💎 <i>풀버전 대시보드 → 유료 채널</i>")
+
+    return "\n".join(lines)
