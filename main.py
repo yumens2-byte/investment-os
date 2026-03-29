@@ -62,12 +62,12 @@ def cmd_run_market(session: str) -> int:
         return 1
 
 
-def cmd_run_view(mode: str) -> int:
+def cmd_run_view(mode: str, session: str = None) -> int:
     """검증 + X 발행"""
     logger.info(f"[main] ▶ run view (mode={mode})")
     import run_view
     try:
-        result = run_view.run(mode=mode)
+        result = run_view.run(mode=mode, session=session)
         _print_result("run view", result)
         return 0 if result.get("success") else 2
     except Exception as e:
@@ -84,7 +84,7 @@ def cmd_run_all(session: str, mode: str) -> int:
         logger.error(f"[main] run market 실패(rc={rc_market}) — run view 차단")
         return rc_market
 
-    rc_view = cmd_run_view(mode)
+    rc_view = cmd_run_view(mode, session=session)
     return rc_view
 
 

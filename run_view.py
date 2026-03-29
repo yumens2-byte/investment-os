@@ -29,10 +29,11 @@ logging.basicConfig(
 logger = logging.getLogger("run_view")
 
 
-def run(mode: str = "tweet") -> dict:
+def run(mode: str = "tweet", session: str = None) -> dict:
     """
     출력 파이프라인 실행.
-    mode: "tweet" (단일 트윗) or "thread" (X 쓰레드)
+    mode:    "tweet" (단일 트윗) or "thread" (X 쓰레드)
+    session: 외부에서 강제 지정 시 output_helpers보다 우선 (full 세션용)
     """
     logger.info(f"{'='*50}")
     logger.info(f"[run_view] 시작 — mode={mode} | DRY_RUN={DRY_RUN}")
@@ -78,7 +79,9 @@ def run(mode: str = "tweet") -> dict:
     logger.info("[Step 3] 트윗 포맷 생성")
     from publishers.x_formatter import format_market_snapshot_tweet, format_thread_posts, format_image_tweet
 
-    session_type = data.get("output_helpers", {}).get("session_type", "postmarket")
+    # session 인자가 있으면 우선 사용 (full 세션 등 외부 강제 지정)
+    _inner_session = data.get("output_helpers", {}).get("session_type", "postmarket")
+    session_type = session if session else _inner_session
     session_labels = {
         "morning":   "Morning Brief 🌅",
         "intraday":  "Intraday Update 📡",
