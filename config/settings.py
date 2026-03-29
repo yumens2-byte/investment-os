@@ -1,7 +1,7 @@
 """
-Investment OS — Settings (v1.7.0)
+Investment OS — Settings (v1.5.0)
 모든 상수와 설정을 중앙 관리한다.
-v1.7.0 변경: Reddit(유료화) 제거 → 다중 RSS 소스로 대체
+v1.5.0 변경: Reddit(유료화) 제거 → 다중 RSS 소스로 대체
 """
 import os
 from pathlib import Path
@@ -41,7 +41,7 @@ HISTORY_FILE = PUBLISHED_DIR / "history.json"
 
 # ─── 시스템 상수 ──────────────────────────────────────────
 SYSTEM_NAME = "Investment OS"
-SYSTEM_VERSION = "v1.7.3"
+SYSTEM_VERSION = "v1.7.0"
 
 # ─── 시장 임계값 (Market Thresholds) ────────────────────────
 VIX_LOW_THRESHOLD = 20.0
@@ -127,7 +127,7 @@ RSS_SOURCES = [
     {
         "name": "CNBC — Markets",
         "url": "https://www.cnbc.com/id/20910258/device/rss/rss.html",
-        "weight": 1.7,
+        "weight": 1.5,
         "max_items": 10,
         "timeout_sec": 10,
     },
@@ -156,7 +156,7 @@ RSS_SOURCES = [
 
 # RSS 요청 공통 User-Agent (미설정 시 일부 소스 차단)
 RSS_USER_AGENT = (
-    "Mozilla/5.0 (compatible; InvestmentOS/1.7.0; +https://github.com/investment-os)"
+    "Mozilla/5.0 (compatible; InvestmentOS/1.5.0; +https://github.com/investment-os)"
 )
 
 # 감성 판단 임계값
