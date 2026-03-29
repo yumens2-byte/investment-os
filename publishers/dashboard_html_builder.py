@@ -12,6 +12,7 @@ HTML/Playwright 기반 풀버전 대시보드 이미지 생성기 (session=full 
 """
 import asyncio
 import logging
+import math
 import os
 import tempfile
 from datetime import datetime, timezone, timedelta
@@ -121,6 +122,8 @@ def _build_html(data: dict, dt_utc: datetime) -> str:
     # Risk 게이지 바늘 각도
     risk_angle_map = {"LOW": -135, "MEDIUM": -100, "HIGH": -45}
     needle_deg = risk_angle_map.get(risk_level, -100)
+    needle_x2  = int(115 + 95 * math.cos(math.radians(needle_deg)))
+    needle_y2  = int(110 + 95 * math.sin(math.radians(needle_deg)))
 
     # ── ETF 행 생성 ─────────────────────────────
     def etf_rows():
@@ -169,7 +172,27 @@ def _build_html(data: dict, dt_utc: datetime) -> str:
               </div>""")
         return "".join(rows)
 
-    # ── ETF Rank 행 ─────────────────────────────
+    # ── Trading Signals 행 (Python 3.11 호환)
+    def sig_rows():
+        rows = []
+        for e in ETFS:
+            color  = "#11cc77" if e in buy_list else "#ff3a5a" if e in reduce_list else "#f5c432"
+            action = "BUY"    if e in buy_list else "REDUCE"  if e in reduce_list else "HOLD"
+            arrow  = "&#8599;" if e in buy_list else "&#8600;" if e in reduce_list else "&#8594;"
+            reason = strat_r.get(e, "")[:28]
+            mono   = "IBM Plex Mono"
+            row = (
+                "<tr>"
+                + '<td class="tick">' + e + "</td>"
+                + '<td style="font-family:' + mono + ',monospace;font-size:12px;font-weight:800;color:' + color + '">' + action + "</td>"
+                + '<td style="font-size:8px;color:#2a4060">' + arrow + "</td>"
+                + '<td style="font-size:8px;color:#3a5a78">' + reason + "</td>"
+                + "</tr>"
+            )
+            rows.append(row)
+        return "".join(rows)
+
+        # ── ETF Rank 행 ─────────────────────────────
     DOTS = {4: "●●●●", 3: "●●●○", 2: "●●○○", 1: "●○○○"}
 
     def rank_rows():
@@ -437,7 +460,7 @@ body::after{{content:'';position:absolute;inset:0;background:repeating-linear-gr
           <line x1="115" y1="11" x2="115" y2="24"/><line x1="24" y1="60" x2="35" y2="67"/>
           <line x1="206" y1="60" x2="195" y2="67"/><line x1="50" y1="20" x2="57" y2="31"/><line x1="180" y1="20" x2="173" y2="31"/>
         </g>
-        <line x1="115" y1="110" x2="{int(115 + 95 * __import__('math').cos(__import__('math').radians(needle_deg)))}" y2="{int(110 + 95 * __import__('math').sin(__import__('math').radians(needle_deg)))}"
+        <line x1="115" y1="110" x2="{needle_x2}" y2="{needle_y2}"
           stroke="white" stroke-width="2.5" stroke-linecap="round" filter="url(#glow)"/>
         <circle cx="115" cy="110" r="6.5" fill="#0d1824" stroke="white" stroke-width="1.8"/>
         <circle cx="115" cy="110" r="3" fill="white"/>
@@ -515,7 +538,7 @@ body::after{{content:'';position:absolute;inset:0;background:repeating-linear-gr
   <div class="s">
     <div class="sl">Trading Signals</div>
     <table class="etf-tbl">
-      {"".join([f'<tr><td class="tick">{e}</td><td style="font-family:\'IBM Plex Mono\',monospace;font-size:12px;font-weight:800;color:{"#11cc77" if e in buy_list else "#ff3a5a" if e in reduce_list else "#f5c432"}">{("BUY" if e in buy_list else "REDUCE" if e in reduce_list else "HOLD")}</td><td style="font-size:8px;color:#2a4060">{"↗" if e in buy_list else "↘" if e in reduce_list else "→"}</td><td style="font-size:8px;color:#3a5a78">{strat_r.get(e,"")[:28]}</td></tr>' for e in ETFS])}
+      {sig_rows()}
     </table>
   </div>
   <div class="s" style="flex:1">
