@@ -76,7 +76,7 @@ def run(mode: str = "tweet") -> dict:
 
     # ── Step 3: 트윗 텍스트 생성 ───────────────────────────────
     logger.info("[Step 3] 트윗 포맷 생성")
-    from publishers.x_formatter import format_market_snapshot_tweet, format_thread_posts
+    from publishers.x_formatter import format_market_snapshot_tweet, format_thread_posts, format_image_tweet
 
     session_type = data.get("output_helpers", {}).get("session_type", "postmarket")
     session_labels = {
@@ -90,8 +90,10 @@ def run(mode: str = "tweet") -> dict:
     if mode == "thread":
         posts = format_thread_posts(data)
         primary_text = posts[0] if posts else ""
+        image_tweet_text = None
     else:
         primary_text = format_market_snapshot_tweet(data, session_label)
+        image_tweet_text = format_image_tweet(data, session_type)   # 이미지 첨부용 간결 포맷
         posts = [primary_text]
 
     logger.info(f"[Step 3] 생성 완료 ({len(primary_text)}자)")
@@ -114,12 +116,28 @@ def run(mode: str = "tweet") -> dict:
     logger.info("[Step 5] 발행 직전 데이터 확인")
     _log_publish_summary(data, primary_text)
 
+    # ── Step 5.5: 이미지 생성 ───────────────────────────────────
+    logger.info("[Step 5.5] 대시보드 이미지 생성")
+    image_path = None
+    try:
+        from publishers.image_generator import generate_image
+        from datetime import datetime, timezone
+        image_path = generate_image(data=data, session=session_type)
+        if image_path:
+            logger.info(f"[Step 5.5] 이미지 생성 완료: {image_path}")
+        else:
+            logger.warning("[Step 5.5] 이미지 생성 실패 — 텍스트만 발행")
+    except Exception as e:
+        logger.warning(f"[Step 5.5] 이미지 생성 예외 — 텍스트만 발행: {e}")
+
     # ── Step 6: X 발행 ─────────────────────────────────────────
     logger.info(f"[Step 6] X 발행 (mode={mode})")
-    from publishers.x_publisher import publish_tweet, publish_thread
+    from publishers.x_publisher import publish_tweet, publish_tweet_with_image, publish_thread
 
     if mode == "thread":
         pub_result = publish_thread(posts)
+    elif image_path and image_tweet_text:
+        pub_result = publish_tweet_with_image(image_tweet_text, image_path)
     else:
         pub_result = publish_tweet(primary_text)
 

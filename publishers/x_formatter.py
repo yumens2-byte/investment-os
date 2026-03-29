@@ -190,3 +190,71 @@ def format_thread_posts(data: dict) -> list:
         validated.append(post)
 
     return validated
+
+
+# ── 세션별 해시태그 ──────────────────────────────────────────
+SESSION_TAGS = {
+    "morning":  "#아침시장",
+    "intraday": "#장중",
+    "close":    "#마감",
+    "weekly":   "#주간분석",
+}
+REGIME_TAGS = {
+    "Risk-On":          "#RiskOn #성장주",
+    "Risk-Off":         "#RiskOff #방어",
+    "Oil Shock":        "#OilShock #에너지",
+    "Recession Risk":   "#경기침체 #Recession",
+    "Stagflation Risk": "#스태그플레이션",
+    "Liquidity Crisis": "#유동성위기",
+    "Crisis Regime":    "#위기경보 #Crisis",
+    "Transition":       "#전환구간",
+}
+
+
+def format_image_tweet(data: dict, session: str = "morning") -> str:
+    """
+    이미지 첨부 시 간결한 트윗 텍스트 생성 (60~80자).
+    이미지가 상세 정보를 담으므로 텍스트는 핵심만.
+
+    Returns: 트윗 텍스트 (280자 이내)
+    """
+    snap        = data.get("market_snapshot", {})
+    regime      = data.get("market_regime", {})
+    signal_data = data.get("trading_signal", {})
+    helpers     = data.get("output_helpers", {})
+
+    regime_name = regime.get("market_regime", "")
+    risk_level  = regime.get("market_risk_level", "")
+    signal      = signal_data.get("trading_signal", "HOLD")
+    sp500       = snap.get("sp500", 0) or 0
+    vix         = snap.get("vix", 0) or 0
+    oil         = snap.get("oil", 0) or 0
+    summary     = helpers.get("one_line_summary", "")[:50]
+
+    session_labels = {
+        "morning":  "Morning Brief",
+        "intraday": "Intraday Briefing",
+        "close":    "Close Summary",
+        "weekly":   "Weekly Review",
+    }
+    session_lbl = session_labels.get(session, "Market Snapshot")
+
+    # 시그널 이모지
+    sig_emoji = {"BUY": "🟢", "ADD": "🟢", "HOLD": "🟡",
+                 "REDUCE": "🟠", "HEDGE": "🔵", "SELL": "🔴"}.get(signal, "🟡")
+    trend_emoji = "📈" if sp500 >= 0 else "📉"
+
+    # 라인 구성
+    line1 = f"📊 {session_lbl}  |  {regime_name}"
+    line2 = f"{trend_emoji} SPY {sp500:+.2f}%  |  VIX {vix:.1f}  |  WTI ${oil:.1f}"
+    line3 = f"{sig_emoji} SIGNAL: {signal}"
+    line4 = summary
+
+    # 해시태그
+    base_tags    = "#ETF #투자 #미국증시"
+    regime_tag   = REGIME_TAGS.get(regime_name, "")
+    session_tag  = SESSION_TAGS.get(session, "")
+    tags = f"{base_tags} {regime_tag} {session_tag}".strip()
+
+    tweet = f"{line1}\n\n{line2}\n{line3}\n{line4}\n\n{tags}"
+    return tweet[:280]

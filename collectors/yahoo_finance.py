@@ -165,3 +165,36 @@ def collect_etf_prices() -> dict:
         }
     logger.info(f"[YF] ETF 수집 완료: {len(result)}개")
     return result
+
+
+def collect_fx_rates() -> dict:
+    """
+    FX 환율 3종 수집 (yfinance 무료 — 추가 API 비용 없음)
+    - USD/KRW : KRW=X
+    - EUR/USD : EURUSD=X
+    - USD/JPY : JPY=X
+
+    Returns:
+        {"usdkrw": float, "eurusd": float, "usdjpy": float}
+        수집 실패 시 해당 필드 None
+    """
+    logger.info("[YF_FX] FX 환율 수집 시작")
+
+    fx_tickers = {
+        "usdkrw": "KRW=X",
+        "eurusd":  "EURUSD=X",
+        "usdjpy":  "JPY=X",
+    }
+
+    result = {}
+    for key, ticker in fx_tickers.items():
+        val = _fetch(ticker, "price")
+        if val is not None:
+            result[key] = round(float(val), 4)
+            logger.info(f"[YF_FX] {key.upper()} = {result[key]}")
+        else:
+            result[key] = None
+            logger.warning(f"[YF_FX] {key.upper()} 수집 실패 → None")
+
+    logger.info(f"[YF_FX] FX 수집 완료: {result}")
+    return result

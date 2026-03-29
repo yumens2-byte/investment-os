@@ -37,6 +37,7 @@ def assemble_core_data(
     portfolio_risk: dict,
     trading_signal: dict,
     output_helpers: dict,
+    fx_rates: dict = None,
 ) -> dict:
     """
     각 엔진 출력을 단일 data dict로 조립.

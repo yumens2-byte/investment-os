@@ -27,3 +27,5 @@ pytz==2024.2
 
 # 제거됨 (v1.5.0):
 # praw — Reddit API 유료화로 제거
+matplotlib>=3.8.0
+Pillow>=10.0.0

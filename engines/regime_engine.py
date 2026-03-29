@@ -81,15 +81,15 @@ def _detect_shock_regime(signals: dict, market_score: dict) -> Tuple[str, str]:
 
     # Oil Shock: 유가 충격 신호
     if oil_shock and market_score.get("commodity_pressure_score", 1) >= 4:
-        return "Oil Shock", "원자재 충격 — 유가 급등 지속"
+        return "Oil Shock", "Commodity shock — oil surge"
 
     # Liquidity Crisis: 신용 위기 + VIX 극단
     if credit_stress == "High" and vix_state in ("High", "Extreme"):
-        return "Liquidity Crisis", "신용 스프레드 급등 + 극단적 변동성"
+        return "Liquidity Crisis", "Credit spread surge + extreme volatility"
 
     # Recession Risk: 장단기 역전 + 성장 약화
     if recession and market_score.get("growth_score", 1) >= 4:
-        return "Recession Risk", "장단기 금리 역전 + 성장 둔화"
+        return "Recession Risk", "Yield curve inversion + growth slowdown"
 
     return "", ""
 
@@ -114,25 +114,25 @@ def _determine_base_regime(market_score: dict, signals: dict) -> Tuple[str, str]
 
     # Stagflation: 인플레이션 높고 성장 약한 경우
     if inflation >= 4 and growth >= 4:
-        return "Stagflation Risk", "고인플레이션 + 성장 약화 동시 발생"
+        return "Stagflation Risk", "High inflation + weakening growth"
 
     # Risk-Off: 전반적 위험 회피
     if risk >= 4 and sentiment == "Bearish":
-        return "Risk-Off", "공포 심리 확산 + 위험 자산 회피"
+        return "Risk-Off", "Fear spreading + risk asset avoidance"
 
     # Risk-On: 성장 우호적
     if growth <= 2 and liquidity <= 2 and risk <= 2:
-        return "Risk-On", "성장 + 유동성 + 낮은 위험"
+        return "Risk-On", "Growth + liquidity + low risk"
 
     # AI Bubble: 성장 과열 (낮은 점수 = 과열)
     if growth == 1 and risk == 1 and stability == 1:
-        return "AI Bubble", "성장 과열 + 낮은 변동성 + 과도한 낙관"
+        return "AI Bubble", "Overheated growth + low vol + excess optimism"
 
     # 중간 상태
     if risk >= 3 or liquidity >= 3:
-        return "Risk-Off", "유동성 축소 또는 위험 회피 경향"
+        return "Risk-Off", "Liquidity tightening or risk-off tendency"
 
-    return "Transition", "복합 신호 — 방향성 불분명"
+    return "Transition", "Mixed signals — direction unclear"
 
 
 # ──────────────────────────────────────────────────────────────

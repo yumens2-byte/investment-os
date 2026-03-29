@@ -176,3 +176,51 @@ X_HASHTAGS = "#ETF #투자 #미국증시"
 
 # ─── 중복 검사 ────────────────────────────────────────────
 DUPLICATE_CHECK_COUNT = 10
+
+# ─── 이미지 생성 설정 ─────────────────────────────────────
+IMAGES_DIR = DATA_DIR / "images"
+IMAGES_DIR.mkdir(parents=True, exist_ok=True)
+
+# 이미지 크기 (X 권장 정사각형)
+IMAGE_WIDTH  = 1080
+IMAGE_HEIGHT = 1080
+IMAGE_DPI    = 96
+IMAGE_FORMAT = "PNG"
+
+# 대시보드 코드네임 (푸터 표시)
+CODENAME = "EDT"
+
+# 세션별 영문 표시명
+SESSION_LABELS = {
+    "morning":  "Morning Brief",
+    "intraday": "Intraday Briefing",
+    "close":    "Close Summary",
+    "weekly":   "Weekly Review",
+    "postmarket": "Market Snapshot",
+}
+
+# 컬러 팔레트 (다크 테마)
+COLORS = {
+    "bg":          "#0d1117",   # 전체 배경
+    "card":        "#161b22",   # 카드 배경
+    "border":      "#2d3748",   # 구분선
+    "text":        "#e2e8f0",   # 기본 텍스트
+    "text_sub":    "#8892a4",   # 서브 텍스트
+    "red":         "#ef4444",   # 하락/위험/Underweight
+    "green":       "#22c55e",   # 상승/안전/Overweight
+    "yellow":      "#f59e0b",   # 주의/MEDIUM
+    "purple":      "#8b5cf6",   # Signal/HEDGE
+    "blue":        "#3b82f6",   # 강조
+    "orange":      "#f97316",   # OilShock/Warning
+    "regime": {
+        "Risk-On":          "#059669",
+        "Risk-Off":         "#dc2626",
+        "Oil Shock":        "#d97706",
+        "Liquidity Crisis": "#7c3aed",
+        "Recession Risk":   "#9f1239",
+        "Stagflation Risk": "#b45309",
+        "AI Bubble":        "#0369a1",
+        "Transition":       "#4b5563",
+        "Crisis Regime":    "#dc2626",
+    },
+}

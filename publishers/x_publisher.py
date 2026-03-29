@@ -26,6 +26,54 @@ MAX_RETRIES = 3
 RETRY_WAIT_SEC = 30
 
 
+def _get_v1_api():
+    """tweepy v1.1 API 생성 (이미지 업로드용)"""
+    if not _TWEEPY_AVAILABLE:
+        return None
+    if not all([X_API_KEY, X_API_SECRET, X_ACCESS_TOKEN, X_ACCESS_TOKEN_SECRET]):
+        return None
+    try:
+        auth = tweepy.OAuth1UserHandler(
+            X_API_KEY, X_API_SECRET,
+            X_ACCESS_TOKEN, X_ACCESS_TOKEN_SECRET,
+        )
+        return tweepy.API(auth)
+    except Exception as e:
+        logger.error(f"[XPublisher] v1.1 API 생성 실패: {e}")
+        return None
+
+
+def upload_media(image_path: str) -> Optional[str]:
+    """
+    이미지를 X에 업로드하고 media_id 반환.
+    이미지 업로드는 Twitter API v1.1 전용.
+
+    Returns: media_id_string or None
+    """
+    if DRY_RUN:
+        logger.info(f"[XPublisher] [DRY RUN] 이미지 업로드 스킵: {image_path}")
+        return "DRY_RUN_MEDIA_ID"
+
+    import os
+    if not os.path.exists(image_path):
+        logger.error(f"[XPublisher] 이미지 파일 없음: {image_path}")
+        return None
+
+    api = _get_v1_api()
+    if api is None:
+        logger.error("[XPublisher] v1.1 API 초기화 실패 — 이미지 업로드 불가")
+        return None
+
+    try:
+        media = api.media_upload(filename=image_path)
+        media_id = str(media.media_id)
+        logger.info(f"[XPublisher] 이미지 업로드 성공: media_id={media_id}")
+        return media_id
+    except Exception as e:
+        logger.error(f"[XPublisher] 이미지 업로드 실패: {e}")
+        return None
+
+
 def _get_client():
     """tweepy v2 Client 생성"""
     if not _TWEEPY_AVAILABLE:
@@ -86,7 +134,7 @@ def _publish_single(client, text: str, reply_to_id: Optional[str] = None) -> Opt
 
 def publish_tweet(tweet_text: str) -> dict:
     """
-    단일 트윗 발행.
+    단일 트윗 발행 (텍스트만).
 
     DRY_RUN=true → 실제 발행 없이 로그 출력
     DRY_RUN=false → 실제 X 발행
@@ -130,6 +178,46 @@ def publish_tweet(tweet_text: str) -> dict:
         "dry_run": False,
         "text_preview": tweet_text[:80],
     }
+
+
+
+def publish_tweet_with_image(tweet_text: str, image_path: str) -> dict:
+    """
+    이미지 첨부 트윗 발행.
+    이미지 업로드 실패 시 텍스트만 발행 (소프트 폴백).
+    """
+    logger.info(f"[XPublisher] {'[DRY RUN] ' if DRY_RUN else ''}이미지 트윗 발행 ({len(tweet_text)}자, 이미지={image_path})")
+
+    if DRY_RUN:
+        logger.info("[XPublisher] [DRY RUN] 이미지 트윗 스킵")
+        return {"success": True, "tweet_id": "DRY_RUN", "has_image": True, "dry_run": True, "text_preview": tweet_text[:80]}
+
+    media_id = upload_media(image_path)
+    if media_id is None:
+        logger.warning("[XPublisher] 이미지 업로드 실패 — 텍스트만 발행")
+        result = publish_tweet(tweet_text)
+        result["has_image"] = False
+        return result
+
+    client = _get_client()
+    if client is None:
+        return {"success": False, "tweet_id": None, "has_image": False, "dry_run": False}
+
+    for attempt in range(1, MAX_RETRIES + 1):
+        try:
+            response = client.create_tweet(text=tweet_text, media_ids=[media_id])
+            tweet_id = str(response.data["id"])
+            logger.info(f"[XPublisher] 이미지 트윗 성공: tweet_id={tweet_id}")
+            return {"success": True, "tweet_id": tweet_id, "has_image": True, "dry_run": False, "text_preview": tweet_text[:80]}
+        except Exception as e:
+            logger.error(f"[XPublisher] 이미지 트윗 실패 (시도 {attempt}): {e}")
+            if attempt < MAX_RETRIES:
+                time.sleep(10)
+
+    logger.warning("[XPublisher] 이미지 트윗 최종 실패 — 텍스트만 폴백")
+    result = publish_tweet(tweet_text)
+    result["has_image"] = False
+    return result
 
 
 def publish_thread(posts: list) -> dict:

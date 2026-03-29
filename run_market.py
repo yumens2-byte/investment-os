@@ -53,7 +53,7 @@ def run(session: str) -> dict:
     # ── Step 1: 데이터 수집 ────────────────────────────────────
     logger.info("[Step 1] 시장 데이터 수집")
 
-    from collectors.yahoo_finance import collect_market_snapshot, collect_etf_prices
+    from collectors.yahoo_finance import collect_market_snapshot, collect_etf_prices, collect_fx_rates
     from collectors.fred_client import collect_macro_data
     from collectors.news_rss import collect_news_sentiment   # v1.5.0: rss_extended 위임
 
@@ -119,6 +119,7 @@ def run(session: str) -> dict:
     logger.info("[Step 6] JSON Core Data 조립")
     from core.json_builder import assemble_core_data, build_envelope, save_core_data
     data = assemble_core_data(
+        fx_rates=fx_rates,
         snapshot=snapshot,
         market_regime=market_regime,
         market_score=market_score,
