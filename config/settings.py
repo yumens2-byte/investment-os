@@ -41,7 +41,7 @@ HISTORY_FILE = PUBLISHED_DIR / "history.json"
 
 # ─── 시스템 상수 ──────────────────────────────────────────
 SYSTEM_NAME = "Investment OS"
-SYSTEM_VERSION = "v1.8.0"
+SYSTEM_VERSION = "v1.9.0"
 
 # ─── 시장 임계값 (Market Thresholds) ────────────────────────
 VIX_LOW_THRESHOLD = 20.0
@@ -190,6 +190,10 @@ IMAGE_FORMAT = "PNG"
 
 # 대시보드 코드네임 (푸터 표시)
 CODENAME = "EDT Investment"
+
+# ── Telegram ────────────────────────────────────────────
+TELEGRAM_FREE_CHANNEL  = "free"   # 무료 채널 식별자
+TELEGRAM_PAID_CHANNEL  = "paid"   # 유료 채널 식별자
 
 # 세션별 영문 표시명
 SESSION_LABELS = {

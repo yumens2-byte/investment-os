@@ -152,6 +152,28 @@ def run(mode: str = "tweet", session: str = None) -> dict:
 
     tweet_id = pub_result.get("tweet_id") or pub_result.get("tweet_ids", [""])[0]
 
+    # ── Step 6-TG: 텔레그램 발행 (session=full 전용) ────────────
+    if session_type == "full":
+        logger.info("[Step 6-TG] 텔레그램 발행 시작")
+        try:
+            from publishers.telegram_publisher import (
+                send_message, send_photo, format_free_signal
+            )
+            # 무료 채널 — 시그널 텍스트
+            free_text = format_free_signal(data)
+            send_message(free_text, channel="free")
+
+            # 유료 채널 — 풀버전 대시보드 이미지
+            if image_path:
+                send_photo(image_path, caption=free_text, channel="paid")
+            else:
+                logger.warning("[Step 6-TG] 이미지 없음 — 유료 채널 텍스트만 발행")
+                send_message(free_text, channel="paid")
+
+            logger.info("[Step 6-TG] 텔레그램 발행 완료")
+        except Exception as e:
+            logger.warning(f"[Step 6-TG] 텔레그램 발행 예외 (X 발행 영향 없음): {e}")
+
     # ── Step 7: 이력 기록 ──────────────────────────────────────
     if pub_result.get("success"):
         logger.info("[Step 7] 발행 이력 기록")

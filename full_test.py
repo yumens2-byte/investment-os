@@ -38,7 +38,7 @@ import config.settings as _cs_mod
 importlib.reload(_cs_mod)
 SYSTEM_VERSION = _cs_mod.SYSTEM_VERSION
 CODENAME = _cs_mod.CODENAME
-check("SYSTEM_VERSION = v1.8.0", SYSTEM_VERSION == "v1.8.0", SYSTEM_VERSION)
+check("SYSTEM_VERSION = v1.9.0", SYSTEM_VERSION == "v1.9.0", SYSTEM_VERSION)
 check("CODENAME = EDT Investment", CODENAME == "EDT Investment", CODENAME)
 
 print("\n── [3] fx_rates 수집 흐름 ─────────────────────────────────────")
@@ -138,6 +138,49 @@ try:
     check("SCHEDULE_FULL = 18:30", SCHEDULE_FULL == "18:30", SCHEDULE_FULL)
 except Exception as e:
     check("SCHEDULE_FULL 상수", False, str(e))
+
+print("\n── [10] 텔레그램 publisher import + 구조 검증 ────────────")
+try:
+    from publishers.telegram_publisher import (
+        send_message, send_photo, format_free_signal
+    )
+    check("telegram_publisher import OK", True)
+except Exception as e:
+    check("telegram_publisher import OK", False, str(e))
+
+try:
+    import inspect
+    from publishers.telegram_publisher import format_free_signal
+    # 샘플 data로 텍스트 생성 검증
+    sample = {
+        "market_regime": {"market_regime": "Risk-Off", "market_risk_level": "MEDIUM"},
+        "trading_signal": {"trading_signal": "HOLD", "signal_reason": "Moderate risk",
+                           "signal_matrix": {"buy_watch": ["XLE"], "hold": ["SPYM"], "reduce": ["QQQM"]}},
+        "market_snapshot": {"vix": 31.05, "sp500": -1.67},
+        "output_helpers": {"one_line_summary": "Defensive conditions."},
+    }
+    text = format_free_signal(sample)
+    check("format_free_signal 생성 (>50자)", len(text) > 50, f"{len(text)}자")
+    check("format_free_signal HTML 태그 포함", "<b>" in text)
+except Exception as e:
+    check("format_free_signal 검증", False, str(e))
+
+try:
+    import inspect, run_view
+    src = inspect.getsource(run_view.run)
+    check("run_view Step 6-TG 분기 존재", "Step 6-TG" in src)
+    check("run_view send_message 호출", "send_message" in src)
+    check("run_view send_photo 호출", "send_photo" in src)
+except Exception as e:
+    check("run_view TG 분기 검증", False, str(e))
+
+try:
+    from config.settings import SYSTEM_VERSION, TELEGRAM_FREE_CHANNEL, TELEGRAM_PAID_CHANNEL
+    check("SYSTEM_VERSION = v1.9.0", SYSTEM_VERSION == "v1.9.0", SYSTEM_VERSION)
+    check("TELEGRAM_FREE_CHANNEL 상수", TELEGRAM_FREE_CHANNEL == "free")
+    check("TELEGRAM_PAID_CHANNEL 상수", TELEGRAM_PAID_CHANNEL == "paid")
+except Exception as e:
+    check("settings v1.9.0 검증", False, str(e))
 
 print(f"\n{'='*60}")
 print(f"  전수 테스트 결과: {PASS}개 PASS  {FAIL}개 FAIL")
