@@ -279,3 +279,147 @@ def format_free_signal(data: dict, session: str = "morning") -> str:
         lines += ["", "💎 <i>풀버전 대시보드 → 유료 채널</i>", "", tags]
 
     return "\n".join(lines)
+
+
+def format_paid_report(data: dict) -> str:
+    """
+    유료 채널 전용 — ETF 상세 전략 + 포지션 사이징 가이드 텍스트
+    풀버전 대시보드 이미지 이후 텍스트로 전송
+    """
+    regime  = data.get("market_regime", {}).get("market_regime", "—")
+    risk    = data.get("market_regime", {}).get("market_risk_level", "—")
+    signal  = data.get("trading_signal", {}).get("trading_signal", "—")
+    reason  = data.get("trading_signal", {}).get("signal_reason", "")
+    matrix  = data.get("trading_signal", {}).get("signal_matrix", {})
+    stance  = data.get("etf_strategy", {}).get("stance", {})
+    s_reason = data.get("etf_strategy", {}).get("strategy_reason", {})
+    timing  = data.get("etf_analysis", {}).get("timing_signal", {})
+    alloc   = data.get("etf_allocation", {}).get("allocation", {})
+    prisk   = data.get("portfolio_risk", {})
+    sizing  = prisk.get("position_sizing_multiplier", 0.75)
+    crash   = prisk.get("crash_alert_level", "—")
+    hedge   = prisk.get("hedge_intensity", "—")
+    div_sc  = prisk.get("diversification_score", 0)
+
+    SIGNAL_EMOJI = {"BUY": "🟢", "HOLD": "🟡", "REDUCE": "🔴", "SELL": "🔴"}
+    RISK_EMOJI   = {"LOW": "🟢", "MEDIUM": "🟡", "HIGH": "🔴"}
+    STANCE_EMOJI = {"Overweight": "⬆️", "Underweight": "⬇️", "Neutral": "➡️"}
+    TIMING_EMOJI = {
+        "BUY": "🟢", "ADD ON PULLBACK": "🔵",
+        "HOLD": "🟡", "REDUCE": "🔴", "SELL": "🔴"
+    }
+
+    sig_e  = SIGNAL_EMOJI.get(signal, "⚪")
+    risk_e = RISK_EMOJI.get(risk, "⚪")
+
+    ETFS = ["QQQM", "XLK", "SPYM", "XLE", "ITA", "TLT"]
+    buy_list    = matrix.get("buy_watch", [])
+    reduce_list = matrix.get("reduce", [])
+
+    lines = [
+        "💎 <b>Premium Report</b>  |  ETF 상세 전략",
+        "",
+        f"{risk_e} {regime}  |  {sig_e} <b>{signal}</b>",
+        f"<i>{reason}</i>",
+        "",
+        "📋 <b>ETF 상세 전략</b>",
+        "",
+    ]
+
+    # ETF별 상세 전략
+    for etf in ETFS:
+        st  = stance.get(etf, "Neutral")
+        tm  = timing.get(etf, "HOLD")
+        pct = alloc.get(etf, 0)
+        sr  = s_reason.get(etf, "")[:30]
+        se  = STANCE_EMOJI.get(st, "➡️")
+        te  = TIMING_EMOJI.get(tm, "🟡")
+        lines.append(
+            f"{se} <b>{etf}</b>  {pct}%  |  {te} {tm}\n"
+            f"   <i>{sr}</i>"
+        )
+
+    # 포지션 사이징
+    sizing_pct = int(sizing * 100)
+    if sizing >= 1.0:
+        sizing_label = "Full Position"
+        sizing_emoji = "🟢"
+    elif sizing >= 0.75:
+        sizing_label = "Conservative"
+        sizing_emoji = "🟡"
+    elif sizing >= 0.5:
+        sizing_label = "Defensive"
+        sizing_emoji = "🔴"
+    else:
+        sizing_label = "Minimal"
+        sizing_emoji = "🔴"
+
+    lines += [
+        "",
+        "📐 <b>포지션 사이징 가이드</b>",
+        "",
+        f"{sizing_emoji} 권장 포지션: <b>{sizing_label}</b>  ({sizing_pct}%)",
+        f"⚠️ 크래시 경보: <b>{crash}</b>",
+        f"🛡 헤지 강도: <b>{hedge}</b>",
+        f"📊 분산 점수: <b>{div_sc}/100</b>",
+        "",
+        "💡 <b>실전 적용 방법</b>",
+        f"  • 전체 투자금 × {sizing:.2f} = 실제 투자금액",
+        f"  • BUY 집중: {' · '.join(buy_list) if buy_list else '—'}",
+        f"  • REDUCE 대상: {' · '.join(reduce_list) if reduce_list else '—'}",
+        "",
+        "#프리미엄 #ETF전략 #포지션사이징",
+    ]
+
+    return "\n".join(lines)
+
+
+def format_rank_change(change: dict, channel: str = "free") -> str:
+    """
+    ETF 랭킹 변화 알림 포맷
+
+    channel: 'free' → 간결, 'paid' → 상세
+    """
+    top1_changed = change.get("top1_changed", False)
+    old_top1     = change.get("old_top1", "—")
+    new_top1     = change.get("new_top1", "—")
+    moved_up     = change.get("moved_up", [])
+    moved_down   = change.get("moved_down", [])
+    new_rank     = change.get("new_rank", {})
+
+    if channel == "free":
+        # 무료: 핵심 변화만
+        lines = ["🔄 <b>ETF 랭킹 변경</b>", ""]
+        if top1_changed:
+            lines.append(f"👑 1위 변경: <b>{old_top1}</b> → <b>{new_top1}</b>")
+        if moved_up:
+            top = moved_up[0]
+            lines.append(f"📈 상승: <b>{top['etf']}</b> ({top['from']}위 → {top['to']}위)")
+        if moved_down:
+            bot = moved_down[0]
+            lines.append(f"📉 하락: <b>{bot['etf']}</b> ({bot['from']}위 → {bot['to']}위)")
+        lines += ["", "#ETF #랭킹변화 #투자"]
+        return "\n".join(lines)
+
+    else:
+        # 유료: 전체 랭킹 상세
+        lines = ["🔄 <b>[PREMIUM] ETF 랭킹 변경 상세</b>", ""]
+        if top1_changed:
+            lines.append(f"👑 1위 교체: <b>{old_top1}</b> → <b>{new_top1}</b>")
+        lines.append("")
+        lines.append("📊 <b>현재 랭킹</b>")
+        MEDAL = {1: "🥇", 2: "🥈", 3: "🥉"}
+        for etf, pos in sorted(new_rank.items(), key=lambda x: x[1]):
+            medal = MEDAL.get(pos, f"{pos}위")
+            up_tag = " ▲" if any(x["etf"] == etf for x in moved_up) else ""
+            dn_tag = " ▼" if any(x["etf"] == etf for x in moved_down) else ""
+            lines.append(f"{medal} {etf}{up_tag}{dn_tag}")
+        if moved_up or moved_down:
+            lines.append("")
+            lines.append("📌 <b>변동 상세</b>")
+            for x in moved_up:
+                lines.append(f"📈 {x['etf']}: {x['from']}위 → {x['to']}위")
+            for x in moved_down:
+                lines.append(f"📉 {x['etf']}: {x['from']}위 → {x['to']}위")
+        lines += ["", "#ETF #랭킹변화 #프리미엄"]
+        return "\n".join(lines)

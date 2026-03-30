@@ -29,6 +29,9 @@ VIX_L1 = 28.0   # VIX 28 이상 → L1
 VIX_L2 = 35.0   # VIX 35 이상 → L2
 VIX_SURGE_PCT = 15.0  # 전일 대비 15% 급등
 
+# VIX 프리미엄 레벨 (유료 채널 세분화)
+VIX_PREMIUM_LEVELS = [20, 25, 30, 35]
+
 # SPY
 SPY_L1 = -2.5   # SPY -2.5% 이하 → L1
 SPY_L2 = -4.0   # SPY -4.0% 이하 → L2
@@ -309,6 +312,25 @@ def run_alert_engine(
         alerts.append(vix_sig)
     if oil_sig:
         alerts.append(oil_sig)
+
+    # 6. 프리미엄 알람 정보 — AlertSignal에 vix_level, regime_changed 부착
+    vix_now = snapshot.get("vix", 0)
+    vix_before = (prev_snapshot or {}).get("vix", vix_now)
+    # 현재 VIX가 속하는 프리미엄 레벨 판별
+    premium_vix_level = None
+    for lvl in sorted(VIX_PREMIUM_LEVELS, reverse=True):
+        if vix_now >= lvl:
+            premium_vix_level = lvl
+            break
+    # 프리미엄 레벨 돌파 여부 (이전 VIX가 해당 레벨 미만이었는지)
+    premium_triggered = (
+        premium_vix_level is not None and vix_before < premium_vix_level
+    )
+    # 알람 객체에 메타 정보 첨부
+    for a in alerts:
+        a.vix_premium_level  = premium_vix_level
+        a.vix_premium_crossed = premium_triggered
+        a.prev_vix           = vix_before
 
     # 등급 내림차순 정렬 (L3 > L2 > L1)
     level_order = {"L3": 0, "L2": 1, "L1": 2}

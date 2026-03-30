@@ -153,6 +153,23 @@ def run(session: str) -> dict:
     except Exception as e:
         logger.warning(f"[Step 8-W] 주간 기록 실패 (영향 없음): {e}")
 
+    # ── Step 8-R: ETF 랭킹 변화 감지 + 텔레그램 알림 ───────────
+    try:
+        from core.rank_tracker import detect_rank_change
+        etf_rank = envelope.get("data", {}).get("etf_analysis", {}).get("etf_rank", {})
+        if etf_rank:
+            change = detect_rank_change(etf_rank, dt_utc=datetime.now(timezone.utc))
+            if change:
+                from publishers.telegram_publisher import send_message, format_rank_change
+                # 무료 채널 — 핵심 변화
+                send_message(format_rank_change(change, channel="free"), channel="free")
+                # 유료 채널 — 상세 (1위 교체 시에만)
+                if change.get("top1_changed"):
+                    send_message(format_rank_change(change, channel="paid"), channel="paid")
+                logger.info("[Step 8-R] ETF 랭킹 변화 알림 발송 완료")
+    except Exception as e:
+        logger.warning(f"[Step 8-R] 랭킹 변화 감지 실패 (영향 없음): {e}")
+
     summary = {
         "session": session,
         "regime": market_regime["market_regime"],

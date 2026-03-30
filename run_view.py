@@ -167,7 +167,7 @@ def run(mode: str = "tweet", session: str = None) -> dict:
             tg_text  = format_weekly_telegram(summary)
             send_message(tg_text, channel="free")
         elif session_type == "full":
-            # full: 무료 텍스트 + 유료 이미지
+            # full: 무료 텍스트 + 유료 이미지 + 유료 상세 리포트
             free_text = format_free_signal(data, session=session_type)
             send_message(free_text, channel="free")
             if image_path:
@@ -175,6 +175,10 @@ def run(mode: str = "tweet", session: str = None) -> dict:
             else:
                 logger.warning("[Step 6-TG] 이미지 없음 — 유료 채널 텍스트만 발행")
                 send_message(free_text, channel="paid")
+            # 유료 채널 추가 — ETF 상세 전략 + 포지션 사이징 가이드
+            from publishers.telegram_publisher import format_paid_report
+            paid_text = format_paid_report(data)
+            send_message(paid_text, channel="paid")
         else:
             # morning / intraday / close: 무료 채널 텍스트
             free_text = format_free_signal(data, session=session_type)

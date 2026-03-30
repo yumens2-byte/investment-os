@@ -112,6 +112,42 @@ def run() -> dict:
         except Exception as e:
             logger.warning(f"[run_alert] 텔레그램 발송 예외 (X 발행 영향 없음): {e}")
 
+        # 텔레그램 유료 채널 — VIX 레벨 돌파 또는 레짐 전환 시 프리미엄 알람
+        try:
+            vix_crossed = getattr(signal, "vix_premium_crossed", False)
+            vix_level   = getattr(signal, "vix_premium_level", None)
+            prev_vix    = getattr(signal, "prev_vix", 0)
+
+            snap   = data.get("market_snapshot", {})
+            regime = data.get("market_regime", {}).get("market_regime", "—")
+            risk   = data.get("market_regime", {}).get("market_risk_level", "—")
+            matrix = data.get("trading_signal", {}).get("signal_matrix", {})
+            buy    = matrix.get("buy_watch", [])
+            sig_val = data.get("trading_signal", {}).get("trading_signal", "HOLD")
+
+            from publishers.telegram_publisher import send_message as tg_send
+            from publishers.premium_alert_formatter import (
+                format_vix_premium, format_regime_change_premium
+            )
+
+            # VIX 프리미엄 레벨 돌파 알람
+            if vix_crossed and vix_level:
+                vix_now = snap.get("vix", 0)
+                pm_text = format_vix_premium(vix_now, prev_vix, regime, risk)
+                tg_send(pm_text, channel="paid")
+                logger.info(f"[run_alert] 유료 채널 VIX {vix_level} 알람 발송")
+
+            # 레짐 전환 알람 (alert_type이 CRISIS 또는 FED_SHOCK 시)
+            if signal.alert_type in ("CRISIS", "FED_SHOCK"):
+                pm_text = format_regime_change_premium(
+                    "—", regime, sig_val, risk, buy
+                )
+                tg_send(pm_text, channel="paid")
+                logger.info(f"[run_alert] 유료 채널 레짐 전환 알람 발송")
+
+        except Exception as e:
+            logger.warning(f"[run_alert] 유료 채널 알람 예외 (영향 없음): {e}")
+
         results.append({
             "type": signal.alert_type,
             "level": signal.level,

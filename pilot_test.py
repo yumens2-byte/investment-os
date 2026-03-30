@@ -1,5 +1,5 @@
 """
-pilot_test.py (v1.11.0)
+pilot_test.py (v1.12.0)
 =======================
 파일럿 테스트 — 외부 API 없이 픽스처로 전체 파이프라인 검증.
 v1.5.0 변경: Reddit 제거 → 다중 RSS 감성 엔진 테스트 추가
@@ -407,7 +407,7 @@ def run_round2():
     # ── settings 버전 확인 ─────────────────────────────────────
     print("\n[설정 검증]")
     from config.settings import SYSTEM_VERSION, RSS_SOURCES
-    t.check("시스템 버전 v1.11.0", SYSTEM_VERSION == "v1.11.0")
+    t.check("시스템 버전 v1.13.0", SYSTEM_VERSION == "v1.13.0")
     t.check("RSS 소스 5개 이상", len(RSS_SOURCES) >= 5, f"{len(RSS_SOURCES)}개")
 
     # ── 미리보기 ───────────────────────────────────────────────
@@ -424,7 +424,7 @@ def run_round2():
 
 def print_final_report(r1: dict, r2: dict):
     print("\n" + "=" * 60)
-    print("  파일럿 테스트 최종 결과 (v1.11.0 — 주간 성적표 텔레그램 발송)")
+    print("  파일럿 테스트 최종 결과 (v1.13.0 — ETF 랭킹 변화 알림)")
     print("=" * 60)
     for r in [r1, r2]:
         icon = "✅" if r["success"] else "❌"
@@ -435,7 +435,7 @@ def print_final_report(r1: dict, r2: dict):
     print()
     if all_ok:
         print("  🎉 파일럿 테스트 2회 완료 — 특이사항 없음")
-        print("  → v1.11.0 변경사항: 주간 성적표 (weekly_tracker + weekly_formatter)")
+        print("  → v1.13.0 변경사항: ETF 랭킹 변화 감지 + 무료/유료 채널 알림")
         print("  → Git 업로드 진행 가능")
     else:
         for r in [r1, r2]:
@@ -445,7 +445,7 @@ def print_final_report(r1: dict, r2: dict):
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Investment OS Pilot Test v1.11.0")
+    parser = argparse.ArgumentParser(description="Investment OS Pilot Test v1.12.0")
     parser.add_argument("--round", choices=["1", "2", "all"], default="all")
     args = parser.parse_args()
 

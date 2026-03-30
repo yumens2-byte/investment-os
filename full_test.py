@@ -38,7 +38,7 @@ import config.settings as _cs_mod
 importlib.reload(_cs_mod)
 SYSTEM_VERSION = _cs_mod.SYSTEM_VERSION
 CODENAME = _cs_mod.CODENAME
-check("SYSTEM_VERSION = v1.11.0", SYSTEM_VERSION == "v1.11.0", SYSTEM_VERSION)
+check("SYSTEM_VERSION = v1.13.0", SYSTEM_VERSION == "v1.13.0", SYSTEM_VERSION)
 check("CODENAME = EDT Investment", CODENAME == "EDT Investment", CODENAME)
 
 print("\n── [3] fx_rates 수집 흐름 ─────────────────────────────────────")
@@ -176,7 +176,7 @@ except Exception as e:
 
 try:
     from config.settings import SYSTEM_VERSION, TELEGRAM_FREE_CHANNEL, TELEGRAM_PAID_CHANNEL
-    check("SYSTEM_VERSION = v1.11.0", SYSTEM_VERSION == "v1.11.0", SYSTEM_VERSION)
+    check("SYSTEM_VERSION = v1.13.0", SYSTEM_VERSION == "v1.13.0", SYSTEM_VERSION)
     check("TELEGRAM_FREE_CHANNEL 상수", TELEGRAM_FREE_CHANNEL == "free")
     check("TELEGRAM_PAID_CHANNEL 상수", TELEGRAM_PAID_CHANNEL == "paid")
 except Exception as e:
@@ -247,6 +247,129 @@ try:
     check("run_market record_daily 호출", "record_daily" in src)
 except Exception as e:
     check("run_market weekly_tracker 검증", False, str(e))
+
+print("\n── [12] 유료 채널 리포트 포맷 검증 ────────────────────────")
+try:
+    from publishers.telegram_publisher import format_paid_report
+    check("format_paid_report import OK", True)
+except Exception as e:
+    check("format_paid_report import OK", False, str(e))
+
+try:
+    sample = {
+        "market_regime": {"market_regime": "Risk-Off", "market_risk_level": "MEDIUM"},
+        "trading_signal": {"trading_signal": "HOLD", "signal_reason": "Moderate risk",
+                           "signal_matrix": {"buy_watch": ["XLE","TLT"], "hold": ["SPYM"], "reduce": ["QQQM"]}},
+        "etf_strategy": {
+            "stance": {"QQQM":"Underweight","XLK":"Underweight","SPYM":"Neutral","XLE":"Overweight","ITA":"Neutral","TLT":"Overweight"},
+            "strategy_reason": {"QQQM":"Weak","XLK":"Weak","SPYM":"Neutral","XLE":"Top ranked","ITA":"Neutral","TLT":"Top ranked"},
+        },
+        "etf_analysis": {"timing_signal": {"XLE":"BUY","TLT":"ADD ON PULLBACK","SPYM":"HOLD","ITA":"HOLD","QQQM":"REDUCE","XLK":"REDUCE"}},
+        "etf_allocation": {"allocation": {"QQQM":5,"XLK":5,"SPYM":20,"XLE":25,"ITA":25,"TLT":20}},
+        "portfolio_risk": {"position_sizing_multiplier": 0.75, "crash_alert_level": "MEDIUM",
+                           "hedge_intensity": "Medium", "diversification_score": 45},
+    }
+    text = format_paid_report(sample)
+    check("format_paid_report 생성 (>200자)", len(text) > 200, f"{len(text)}자")
+    check("format_paid_report ETF 포함", "XLE" in text and "TLT" in text)
+    check("format_paid_report 포지션사이징 포함", "포지션" in text)
+    check("format_paid_report HTML 태그", "<b>" in text)
+except Exception as e:
+    check("format_paid_report 통합 검증", False, str(e))
+
+try:
+    import inspect, run_view
+    src = inspect.getsource(run_view.run)
+    check("run_view format_paid_report 호출", "format_paid_report" in src)
+    check("run_view 유료 채널 추가 발송", "paid_text" in src)
+except Exception as e:
+    check("run_view 유료 리포트 검증", False, str(e))
+
+print("\n── [13] 프리미엄 알람 검증 ─────────────────────────────")
+try:
+    from publishers.premium_alert_formatter import (
+        format_vix_premium, format_regime_change_premium, VIX_LEVELS
+    )
+    check("premium_alert_formatter import OK", True)
+    check("VIX_LEVELS 4단계", len(VIX_LEVELS) == 4)
+
+    txt = format_vix_premium(31.5, 28.0, "Risk-Off", "HIGH")
+    check("format_vix_premium 생성", len(txt) > 30)
+    check("format_vix_premium HTML", "<b>" in txt)
+
+    txt2 = format_regime_change_premium("Risk-On", "Risk-Off", "REDUCE", "HIGH", ["TLT"])
+    check("format_regime_change_premium 생성", len(txt2) > 30)
+    check("format_regime_change_premium 전환 표시", "→" in txt2)
+except Exception as e:
+    check("premium_alert_formatter 검증", False, str(e))
+
+try:
+    import inspect, run_alert
+    src = inspect.getsource(run_alert.run)
+    check('run_alert 유료 채널 분기 존재', 'channel="paid"' in src)
+    check("run_alert premium_alert_formatter 호출", "premium_alert_formatter" in src)
+except Exception as e:
+    check("run_alert 유료 채널 검증", False, str(e))
+
+try:
+    from engines.alert_engine import VIX_PREMIUM_LEVELS
+    check("VIX_PREMIUM_LEVELS 상수 존재", len(VIX_PREMIUM_LEVELS) == 4)
+    check("VIX_PREMIUM_LEVELS 값 확인", 20 in VIX_PREMIUM_LEVELS and 35 in VIX_PREMIUM_LEVELS)
+except Exception as e:
+    check("VIX_PREMIUM_LEVELS 검증", False, str(e))
+
+print("\n── [14] ETF 랭킹 변화 알림 검증 ──────────────────────────")
+try:
+    from core.rank_tracker import detect_rank_change
+    check("rank_tracker import OK", True)
+except Exception as e:
+    check("rank_tracker import OK", False, str(e))
+
+try:
+    from publishers.telegram_publisher import format_rank_change
+    check("format_rank_change import OK", True)
+    sample_change = {
+        "top1_changed": True, "old_top1": "XLE", "new_top1": "TLT",
+        "moved_up":   [{"etf": "TLT", "from": 2, "to": 1}],
+        "moved_down": [{"etf": "XLE", "from": 1, "to": 2}],
+        "new_rank": {"XLE": 2, "TLT": 1, "SPYM": 3, "ITA": 4, "QQQM": 5, "XLK": 6},
+    }
+    free_txt = format_rank_change(sample_change, channel="free")
+    paid_txt = format_rank_change(sample_change, channel="paid")
+    check("format_rank_change free 생성", len(free_txt) > 20)
+    check("format_rank_change paid 생성", len(paid_txt) > 20)
+    check("format_rank_change paid 상세", "🥇" in paid_txt)
+except Exception as e:
+    check("format_rank_change 검증", False, str(e))
+
+try:
+    import tempfile
+    from pathlib import Path
+    from datetime import datetime, timezone, timedelta
+    import core.rank_tracker as rt
+    orig_path = rt.RANK_HISTORY_PATH
+    with tempfile.TemporaryDirectory() as tmpdir:
+        rt.RANK_HISTORY_PATH = Path(tmpdir) / "rank_history.json"
+        # 첫 실행 — None 반환
+        r1 = detect_rank_change({"XLE":1,"TLT":2,"SPYM":3,"ITA":4,"QQQM":5,"XLK":6},
+                                  dt_utc=datetime(2026,3,28,tzinfo=timezone.utc))
+        check("첫 실행 변화 없음 (None)", r1 is None)
+        # 랭킹 변경 — 변화 감지
+        r2 = detect_rank_change({"TLT":1,"XLE":2,"SPYM":3,"ITA":4,"QQQM":5,"XLK":6},
+                                  dt_utc=datetime(2026,3,29,tzinfo=timezone.utc))
+        check("랭킹 변화 감지", r2 is not None)
+        check("1위 변경 감지", r2.get("top1_changed") == True if r2 else False)
+        rt.RANK_HISTORY_PATH = orig_path
+except Exception as e:
+    check("rank_tracker 통합 검증", False, str(e))
+
+try:
+    import inspect, run_market
+    src = inspect.getsource(run_market.run)
+    check("run_market Step 8-R 존재", "Step 8-R" in src)
+    check("run_market detect_rank_change 호출", "detect_rank_change" in src)
+except Exception as e:
+    check("run_market rank_tracker 검증", False, str(e))
 
 print(f"\n{'='*60}")
 print(f"  전수 테스트 결과: {PASS}개 PASS  {FAIL}개 FAIL")
