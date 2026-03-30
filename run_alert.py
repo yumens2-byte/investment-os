@@ -103,6 +103,15 @@ def run() -> dict:
         else:
             logger.error(f"[run_alert] 발행 실패: {signal.alert_type}/{signal.level}")
 
+        # 텔레그램 무료 채널 — Alert 즉시 발송 (DRY_RUN 무관)
+        try:
+            from publishers.telegram_publisher import send_message
+            tg_text = f"🚨 <b>Investment OS Alert</b>\n\n{tweet}"
+            send_message(tg_text, channel="free")
+            logger.info(f"[run_alert] 텔레그램 무료 채널 발송 완료: {signal.alert_type}/{signal.level}")
+        except Exception as e:
+            logger.warning(f"[run_alert] 텔레그램 발송 예외 (X 발행 영향 없음): {e}")
+
         results.append({
             "type": signal.alert_type,
             "level": signal.level,

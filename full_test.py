@@ -38,7 +38,7 @@ import config.settings as _cs_mod
 importlib.reload(_cs_mod)
 SYSTEM_VERSION = _cs_mod.SYSTEM_VERSION
 CODENAME = _cs_mod.CODENAME
-check("SYSTEM_VERSION = v1.9.0", SYSTEM_VERSION == "v1.9.0", SYSTEM_VERSION)
+check("SYSTEM_VERSION = v1.11.0", SYSTEM_VERSION == "v1.11.0", SYSTEM_VERSION)
 check("CODENAME = EDT Investment", CODENAME == "EDT Investment", CODENAME)
 
 print("\n── [3] fx_rates 수집 흐름 ─────────────────────────────────────")
@@ -176,11 +176,77 @@ except Exception as e:
 
 try:
     from config.settings import SYSTEM_VERSION, TELEGRAM_FREE_CHANNEL, TELEGRAM_PAID_CHANNEL
-    check("SYSTEM_VERSION = v1.9.0", SYSTEM_VERSION == "v1.9.0", SYSTEM_VERSION)
+    check("SYSTEM_VERSION = v1.11.0", SYSTEM_VERSION == "v1.11.0", SYSTEM_VERSION)
     check("TELEGRAM_FREE_CHANNEL 상수", TELEGRAM_FREE_CHANNEL == "free")
     check("TELEGRAM_PAID_CHANNEL 상수", TELEGRAM_PAID_CHANNEL == "paid")
 except Exception as e:
     check("settings v1.9.0 검증", False, str(e))
+
+print("\n── [11] 주간 성적표 모듈 검증 ────────────────────────────")
+try:
+    from core.weekly_tracker import record_daily, get_weekly_summary
+    check("weekly_tracker import OK", True)
+except Exception as e:
+    check("weekly_tracker import OK", False, str(e))
+
+try:
+    from publishers.weekly_formatter import format_weekly_thread, format_weekly_telegram
+    check("weekly_formatter import OK", True)
+except Exception as e:
+    check("weekly_formatter import OK", False, str(e))
+
+try:
+    from core.weekly_tracker import record_daily, get_weekly_summary
+    from publishers.weekly_formatter import format_weekly_thread, format_weekly_telegram
+    import tempfile, os
+    from pathlib import Path
+    from datetime import datetime, timezone
+
+    # 임시 파일로 기록 테스트
+    with tempfile.TemporaryDirectory() as tmpdir:
+        import core.weekly_tracker as wt
+        orig = wt.WEEKLY_LOG_PATH
+        wt.WEEKLY_LOG_PATH = Path(tmpdir) / "weekly_log.json"
+
+        sample_data = {
+            "market_regime": {"market_regime": "Risk-Off", "market_risk_level": "MEDIUM"},
+            "trading_signal": {"trading_signal": "HOLD", "signal_reason": "Moderate risk",
+                               "signal_matrix": {"buy_watch": ["XLE","TLT"], "hold": ["SPYM"], "reduce": ["QQQM"]}},
+        }
+        record_daily(sample_data, dt_utc=datetime(2026,3,28,tzinfo=timezone.utc))
+        record_daily(sample_data, dt_utc=datetime(2026,3,27,tzinfo=timezone.utc))
+
+        summary = get_weekly_summary()
+        check("weekly_tracker 기록 정상", summary.get("days", 0) >= 1, f"{summary.get('days')}일")
+
+        thread = format_weekly_thread(summary)
+        check("weekly_thread 포스트 생성", len(thread) >= 2, f"{len(thread)}개")
+        check("weekly_thread 280자 이내", all(len(p) <= 280 for p in thread),
+              f"max={max(len(p) for p in thread)}자")
+
+        tg_text = format_weekly_telegram(summary)
+        check("weekly_telegram 텍스트 생성", len(tg_text) > 50, f"{len(tg_text)}자")
+        check("weekly_telegram HTML 태그 포함", "<b>" in tg_text)
+
+        wt.WEEKLY_LOG_PATH = orig
+except Exception as e:
+    check("주간 성적표 통합 검증", False, str(e))
+
+try:
+    import inspect, run_view
+    src = inspect.getsource(run_view.run)
+    check('run_view weekly 분기 존재', 'session_type == "weekly"' in src)
+    check("run_view weekly_formatter 호출", "weekly_formatter" in src)
+except Exception as e:
+    check("run_view weekly 분기 검증", False, str(e))
+
+try:
+    import inspect, run_market
+    src = inspect.getsource(run_market.run)
+    check("run_market Step 8-W 존재", "Step 8-W" in src)
+    check("run_market record_daily 호출", "record_daily" in src)
+except Exception as e:
+    check("run_market weekly_tracker 검증", False, str(e))
 
 print(f"\n{'='*60}")
 print(f"  전수 테스트 결과: {PASS}개 PASS  {FAIL}개 FAIL")

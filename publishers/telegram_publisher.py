@@ -135,8 +135,56 @@ def send_photo(
 
 
 # ── 포맷 헬퍼 ───────────────────────────────────────────────
-def format_free_signal(data: dict) -> str:
-    """무료 채널 발행용 시그널 요약 텍스트 생성"""
+def _build_hashtags(regime: str, risk: str, signal: str, session: str) -> str:
+    """세션 + 시장 상황별 동적 해시태그 생성 (3~5개)"""
+    tags = ["#ETF", "#미국증시"]
+
+    # 레짐별
+    if regime == "Risk-Off":
+        tags.append("#RiskOff")
+    elif regime == "Risk-On":
+        tags.append("#RiskOn")
+    elif "Oil" in regime:
+        tags.append("#오일쇼크")
+
+    # 리스크 레벨별
+    if risk == "HIGH":
+        tags.append("#공포구간")
+    elif risk == "LOW":
+        tags.append("#강세장")
+
+    # 시그널별
+    if signal == "BUY":
+        tags.append("#매수")
+    elif signal == "REDUCE":
+        tags.append("#매도")
+
+    # 세션별
+    SESSION_TAGS = {
+        "morning":  "#모닝브리프",
+        "intraday": "#장중업데이트",
+        "close":    "#마감요약",
+        "full":     "#풀브리프",
+        "weekly":   "#주간분석",
+    }
+    if session in SESSION_TAGS:
+        tags.append(SESSION_TAGS[session])
+
+    return " ".join(tags[:5])  # 최대 5개
+
+
+def format_free_signal(data: dict, session: str = "morning") -> str:
+    """
+    무료 채널 발행용 텔레그램 텍스트 생성 — 세션별 포맷 분리
+
+    session:
+        morning  → 전략 중심 (오늘 어떻게 대응할지)
+        close    → 결과 중심 (어제 어떻게 됐는지)
+        intraday → 장중 업데이트
+        full     → 종합 요약
+        weekly   → 주간 분석
+    """
+    # ── 공통 데이터 추출 ─────────────────────────────
     regime  = data.get("market_regime", {}).get("market_regime", "—")
     risk    = data.get("market_regime", {}).get("market_risk_level", "—")
     signal  = data.get("trading_signal", {}).get("trading_signal", "—")
@@ -146,34 +194,88 @@ def format_free_signal(data: dict) -> str:
     reduce  = data.get("trading_signal", {}).get("signal_matrix", {}).get("reduce", [])
     vix     = data.get("market_snapshot", {}).get("vix", 0)
     sp500   = data.get("market_snapshot", {}).get("sp500", 0)
+    us10y   = data.get("market_snapshot", {}).get("us10y", 0)
+    oil     = data.get("market_snapshot", {}).get("oil", 0)
     summary = data.get("output_helpers", {}).get("one_line_summary", "")
 
     SIGNAL_EMOJI = {"BUY": "🟢", "HOLD": "🟡", "REDUCE": "🔴", "SELL": "🔴"}
     RISK_EMOJI   = {"LOW": "🟢", "MEDIUM": "🟡", "HIGH": "🔴"}
-
-    sig_e  = SIGNAL_EMOJI.get(signal, "⚪")
-    risk_e = RISK_EMOJI.get(risk, "⚪")
+    sig_e   = SIGNAL_EMOJI.get(signal, "⚪")
+    risk_e  = RISK_EMOJI.get(risk, "⚪")
     sp_sign = "▼" if sp500 < 0 else "▲"
+    sp_col  = "📉" if sp500 < 0 else "📈"
+    tags    = _build_hashtags(regime, risk, signal, session)
 
-    lines = [
-        "📊 <b>Investment OS — Daily Signal</b>",
-        "",
-        f"{risk_e} Regime: <b>{regime}</b>  |  Risk: <b>{risk}</b>",
-        f"📈 S&P: <b>{sp_sign}{abs(sp500):.2f}%</b>  |  VIX: <b>{vix:.1f}</b>",
-        "",
-        f"{sig_e} Signal: <b>{signal}</b>",
-    ]
-    if buy:
-        lines.append(f"🔍 BUY Watch: <b>{' · '.join(buy)}</b>")
-    if hold:
-        lines.append(f"⏸ Hold: {' · '.join(hold)}")
-    if reduce:
-        lines.append(f"📉 Reduce: {' · '.join(reduce)}")
-    if reason:
-        lines.append(f"\n<i>{reason}</i>")
-    if summary:
-        lines.append(f"<i>{summary}</i>")
-    lines.append("")
-    lines.append("💎 <i>풀버전 대시보드 → 유료 채널</i>")
+    # ── Morning Brief — 전략 중심 ────────────────────
+    if session == "morning":
+        lines = [
+            "🌅 <b>Morning Brief</b>",
+            "",
+            f"{risk_e} {regime}  |  Risk <b>{risk}</b>",
+            "",
+            "📋 <b>오늘의 전략</b>",
+            f"{sig_e} SIGNAL: <b>{signal}</b>",
+        ]
+        if buy:
+            lines.append(f"🔍 Watch: <b>{' · '.join(buy)}</b>")
+        if hold:
+            lines.append(f"⏸ Hold: {' · '.join(hold)}")
+        if reduce:
+            lines.append(f"📉 Reduce: {' · '.join(reduce)}")
+        if reason:
+            lines.append(f"\n💡 <i>{reason}</i>")
+        lines += ["", tags]
+
+    # ── Close Summary — 결과 중심 ────────────────────
+    elif session == "close":
+        lines = [
+            "🔔 <b>Close Summary</b>  |  미국 장 마감",
+            "",
+            "📊 <b>오늘 결과</b>",
+            f"{sp_col} SPY <b>{sp_sign}{abs(sp500):.2f}%</b>  |  VIX <b>{vix:.1f}</b>",
+            f"💵 WTI <b>${oil:.1f}</b>  |  US10Y <b>{us10y:.2f}%</b>",
+            "",
+            f"✅ 레짐 유지: <b>{regime}</b>  {risk_e}",
+            f"📌 내일 전략: <b>{signal}</b> 유지",
+        ]
+        if summary:
+            lines.append(f"\n<i>{summary}</i>")
+        lines += ["", tags]
+
+    # ── Intraday Update — 장중 업데이트 ─────────────
+    elif session == "intraday":
+        lines = [
+            "📡 <b>Intraday Update</b>",
+            "",
+            f"{sp_col} SPY <b>{sp_sign}{abs(sp500):.2f}%</b>  |  VIX <b>{vix:.1f}</b>",
+            f"{risk_e} Regime: <b>{regime}</b>  |  {sig_e} Signal: <b>{signal}</b>",
+        ]
+        if buy:
+            lines.append(f"🔍 Watch: <b>{' · '.join(buy)}</b>")
+        if reason:
+            lines.append(f"\n<i>{reason}</i>")
+        lines += ["", tags]
+
+    # ── Full / Weekly / 기타 — 종합 요약 ────────────
+    else:
+        lines = [
+            "📊 <b>Investment OS — Signal</b>",
+            "",
+            f"{risk_e} {regime}  |  Risk <b>{risk}</b>",
+            f"{sp_col} SPY <b>{sp_sign}{abs(sp500):.2f}%</b>  |  VIX <b>{vix:.1f}</b>",
+            "",
+            f"{sig_e} Signal: <b>{signal}</b>",
+        ]
+        if buy:
+            lines.append(f"🔍 BUY Watch: <b>{' · '.join(buy)}</b>")
+        if hold:
+            lines.append(f"⏸ Hold: {' · '.join(hold)}")
+        if reduce:
+            lines.append(f"📉 Reduce: {' · '.join(reduce)}")
+        if reason:
+            lines.append(f"\n<i>{reason}</i>")
+        if summary:
+            lines.append(f"<i>{summary}</i>")
+        lines += ["", "💎 <i>풀버전 대시보드 → 유료 채널</i>", "", tags]
 
     return "\n".join(lines)

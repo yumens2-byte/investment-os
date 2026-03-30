@@ -152,27 +152,37 @@ def run(mode: str = "tweet", session: str = None) -> dict:
 
     tweet_id = pub_result.get("tweet_id") or pub_result.get("tweet_ids", [""])[0]
 
-    # ── Step 6-TG: 텔레그램 발행 (session=full 전용) ────────────
-    if session_type == "full":
-        logger.info("[Step 6-TG] 텔레그램 발행 시작")
-        try:
-            from publishers.telegram_publisher import (
-                send_message, send_photo, format_free_signal
-            )
-            # 무료 채널 — 시그널 텍스트
-            free_text = format_free_signal(data)
-            send_message(free_text, channel="free")
+    # ── Step 6-TG: 텔레그램 발행 (전체 세션) ─────────────────────
+    logger.info(f"[Step 6-TG] 텔레그램 발행 시작 (session={session_type})")
+    try:
+        from publishers.telegram_publisher import (
+            send_message, send_photo, format_free_signal
+        )
 
-            # 유료 채널 — 풀버전 대시보드 이미지
+        if session_type == "weekly":
+            # weekly: 주간 성적표 포맷으로 텔레그램 발송
+            from core.weekly_tracker import get_weekly_summary
+            from publishers.weekly_formatter import format_weekly_telegram
+            summary  = get_weekly_summary()
+            tg_text  = format_weekly_telegram(summary)
+            send_message(tg_text, channel="free")
+        elif session_type == "full":
+            # full: 무료 텍스트 + 유료 이미지
+            free_text = format_free_signal(data, session=session_type)
+            send_message(free_text, channel="free")
             if image_path:
                 send_photo(image_path, caption=free_text, channel="paid")
             else:
                 logger.warning("[Step 6-TG] 이미지 없음 — 유료 채널 텍스트만 발행")
                 send_message(free_text, channel="paid")
+        else:
+            # morning / intraday / close: 무료 채널 텍스트
+            free_text = format_free_signal(data, session=session_type)
+            send_message(free_text, channel="free")
 
-            logger.info("[Step 6-TG] 텔레그램 발행 완료")
-        except Exception as e:
-            logger.warning(f"[Step 6-TG] 텔레그램 발행 예외 (X 발행 영향 없음): {e}")
+        logger.info("[Step 6-TG] 텔레그램 발행 완료")
+    except Exception as e:
+        logger.warning(f"[Step 6-TG] 텔레그램 발행 예외 (X 발행 영향 없음): {e}")
 
     # ── Step 7: 이력 기록 ──────────────────────────────────────
     if pub_result.get("success"):

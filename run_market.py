@@ -146,6 +146,13 @@ def run(session: str) -> dict:
     logger.info("[Step 8] core_data.json 저장")
     save_core_data(envelope, data_validation, output_validation)
 
+    # ── Step 8-W: 주간 성적표 누적 기록 ────────────────────────
+    try:
+        from core.weekly_tracker import record_daily
+        record_daily(envelope.get("data", {}), dt_utc=datetime.now(timezone.utc))
+    except Exception as e:
+        logger.warning(f"[Step 8-W] 주간 기록 실패 (영향 없음): {e}")
+
     summary = {
         "session": session,
         "regime": market_regime["market_regime"],
