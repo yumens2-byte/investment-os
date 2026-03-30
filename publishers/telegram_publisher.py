@@ -259,12 +259,17 @@ def format_free_signal(data: dict, session: str = "morning") -> str:
     if session == "morning":
         # Fear & Greed 추출
         fg = data.get("fear_greed", {})
-        fg_val   = fg.get("value")
-        fg_label = fg.get("label", "")
-        fg_emoji = fg.get("emoji", "😐")
+        fg_val    = fg.get("value")
+        fg_label  = fg.get("label", "")
+        fg_emoji  = fg.get("emoji", "😐")
         fg_change = fg.get("change", 0)
 
-        # 뉴스 헤드라인 추출 (RSS 수집 결과에서 상위 3개)
+        # BTC/ETH 추출
+        crypto   = data.get("crypto", {})
+        btc      = crypto.get("btc_usd")
+        btc_chg  = crypto.get("btc_change_pct", 0)
+
+        # 뉴스 헤드라인 추출
         headlines = data.get("output_helpers", {}).get("top_headlines", [])
 
         lines = [
@@ -283,6 +288,14 @@ def format_free_signal(data: dict, session: str = "morning") -> str:
             lines.append(f"📉 Reduce: {' · '.join(reduce)}")
         if reason:
             lines.append(f"\n💡 <i>{reason}</i>")
+
+        # BTC 추가
+        if btc:
+            btc_sign = "▲" if btc_chg >= 0 else "▼"
+            lines += [
+                "",
+                f"₿ BTC: <b>${btc:,.0f}</b>  {btc_sign}{abs(btc_chg):.1f}%",
+            ]
 
         # Fear & Greed 추가
         if fg_val is not None:
@@ -333,11 +346,20 @@ def format_free_signal(data: dict, session: str = "morning") -> str:
 
     # ── Full / Weekly / 기타 — 종합 요약 ────────────
     else:
+        crypto  = data.get("crypto", {})
+        btc     = crypto.get("btc_usd")
+        btc_chg = crypto.get("btc_change_pct", 0)
+
         lines = [
             "📊 <b>Investment OS — Signal</b>",
             "",
             f"{risk_e} {regime}  |  Risk <b>{risk}</b>",
             f"{sp_col} SPY <b>{sp_sign}{abs(sp500):.2f}%</b>  |  VIX <b>{vix:.1f}</b>",
+        ]
+        if btc:
+            btc_sign = "▲" if btc_chg >= 0 else "▼"
+            lines.append(f"₿ BTC <b>${btc:,.0f}</b>  {btc_sign}{abs(btc_chg):.1f}%")
+        lines += [
             "",
             f"{sig_e} Signal: <b>{signal}</b>",
         ]

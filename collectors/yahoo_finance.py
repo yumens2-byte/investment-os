@@ -198,3 +198,64 @@ def collect_fx_rates() -> dict:
 
     logger.info(f"[YF_FX] FX 수집 완료: {result}")
     return result
+
+
+def collect_crypto_prices() -> dict:
+    """
+    BTC/ETH 실시간 가격 수집 (yfinance)
+
+    Returns:
+        {
+          "btc_usd": 85000.0,
+          "eth_usd": 3200.0,
+          "btc_change_pct": -1.2,   # 24h 등락률
+          "eth_change_pct": 0.8,
+        }
+    """
+    TICKERS = {
+        "btc_usd": "BTC-USD",
+        "eth_usd": "ETH-USD",
+    }
+    result = {}
+
+    for key, ticker in TICKERS.items():
+        try:
+            price, change = _fetch_price_and_change(ticker)
+            coin = key.split("_")[0]
+            result[key] = price
+            result[f"{coin}_change_pct"] = change
+        except Exception as e:
+            logger.warning(f"[YF_CRYPTO] {ticker} 수집 실패: {e}")
+            result[key] = None
+            coin = key.split("_")[0]
+            result[f"{coin}_change_pct"] = 0.0
+
+    if result.get("btc_usd"):
+        logger.info(
+            f"[YF_CRYPTO] BTC=${result.get('btc_usd',0):,.0f} "
+            f"({result.get('btc_change_pct',0):+.2f}%) | "
+            f"ETH=${result.get('eth_usd',0):,.0f} "
+            f"({result.get('eth_change_pct',0):+.2f}%)"
+        )
+    return result
+
+
+def _fetch_price_and_change(ticker: str):
+    """yfinance fallback 방식으로 가격 + 24h 등락률 수집"""
+    import requests as req
+    url = f"https://query1.finance.yahoo.com/v8/finance/chart/{ticker}?interval=1d&range=2d"
+    headers = {"User-Agent": "Mozilla/5.0"}
+    try:
+        r = req.get(url, headers=headers, timeout=10)
+        data = r.json()
+        closes = data["chart"]["result"][0]["indicators"]["quote"][0]["close"]
+        closes = [c for c in closes if c is not None]
+        if len(closes) >= 2:
+            prev, curr = closes[-2], closes[-1]
+            change = round((curr - prev) / prev * 100, 2)
+            return round(curr, 2), change
+        elif len(closes) == 1:
+            return round(closes[-1], 2), 0.0
+    except Exception as e:
+        logger.warning(f"[YF_CRYPTO] {ticker} fallback 실패: {e}")
+    return None, 0.0

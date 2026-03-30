@@ -79,6 +79,15 @@ def run(session: str) -> dict:
     except Exception as e:
         logger.warning(f"[Step 1-FG] Fear & Greed 수집 실패 (영향 없음): {e}")
 
+    # BTC/ETH 가격 수집
+    crypto = {}
+    try:
+        from collectors.yahoo_finance import collect_crypto_prices
+        crypto = collect_crypto_prices()
+        logger.info(f"[Step 1-CR] 크립토 수집 완료: {crypto}")
+    except Exception as e:
+        logger.warning(f"[Step 1-CR] 크립토 수집 실패 (영향 없음): {e}")
+
     # 뉴스 헤드라인 3줄 요약 (Claude API, 미설정 시 스킵)
     news_summary = None
     try:
@@ -145,6 +154,7 @@ def run(session: str) -> dict:
     data = assemble_core_data(
         fx_rates=fx_rates,
         fear_greed=fear_greed,
+        crypto=crypto,
         news_summary=news_summary,
         snapshot=snapshot,
         market_regime=market_regime,

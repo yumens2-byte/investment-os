@@ -38,7 +38,7 @@ import config.settings as _cs_mod
 importlib.reload(_cs_mod)
 SYSTEM_VERSION = _cs_mod.SYSTEM_VERSION
 CODENAME = _cs_mod.CODENAME
-check("SYSTEM_VERSION = v1.19.0", SYSTEM_VERSION == "v1.19.0", SYSTEM_VERSION)
+check("SYSTEM_VERSION = v1.20.0", SYSTEM_VERSION == "v1.20.0", SYSTEM_VERSION)
 check("CODENAME = EDT Investment", CODENAME == "EDT Investment", CODENAME)
 
 print("\n── [3] fx_rates 수집 흐름 ─────────────────────────────────────")
@@ -176,7 +176,7 @@ except Exception as e:
 
 try:
     from config.settings import SYSTEM_VERSION, TELEGRAM_FREE_CHANNEL, TELEGRAM_PAID_CHANNEL
-    check("SYSTEM_VERSION = v1.19.0", SYSTEM_VERSION == "v1.19.0", SYSTEM_VERSION)
+    check("SYSTEM_VERSION = v1.20.0", SYSTEM_VERSION == "v1.20.0", SYSTEM_VERSION)
     check("TELEGRAM_FREE_CHANNEL 상수", TELEGRAM_FREE_CHANNEL == "free")
     check("TELEGRAM_PAID_CHANNEL 상수", TELEGRAM_PAID_CHANNEL == "paid")
 except Exception as e:
@@ -676,6 +676,48 @@ try:
     check("run_view AI 성적표 X 발행", "format_ai_scorecard_tweet" in src)
 except Exception as e:
     check("run_view AI 성적표 검증", False, str(e))
+
+print("\n── [21] BTC/ETH 가격 연동 검증 ───────────────────────────")
+try:
+    from collectors.yahoo_finance import collect_crypto_prices
+    check("collect_crypto_prices import OK", True)
+except Exception as e:
+    check("collect_crypto_prices import OK", False, str(e))
+
+try:
+    import inspect, core.json_builder as jb
+    sig = inspect.getsource(jb.assemble_core_data)
+    check("json_builder crypto 파라미터", "crypto" in sig)
+    check("json_builder crypto 반환", '"crypto"' in sig)
+except Exception as e:
+    check("json_builder crypto 검증", False, str(e))
+
+try:
+    import inspect, run_market
+    src = inspect.getsource(run_market.run)
+    check("run_market crypto 수집", "collect_crypto_prices" in src)
+    check("run_market crypto core_data 주입", "crypto=crypto" in src)
+except Exception as e:
+    check("run_market crypto 검증", False, str(e))
+
+try:
+    from publishers.telegram_publisher import format_free_signal
+    sample = {
+        "market_regime": {"market_regime": "Risk-Off", "market_risk_level": "MEDIUM"},
+        "trading_signal": {"trading_signal": "HOLD", "signal_reason": "test",
+                           "signal_matrix": {"buy_watch": ["XLE"], "hold": [], "reduce": []}},
+        "market_snapshot": {"vix": 25.0, "sp500": -1.0, "us10y": 4.4, "oil": 90.0},
+        "output_helpers": {"one_line_summary": "test"},
+        "fear_greed": {},
+        "crypto": {"btc_usd": 85000.0, "btc_change_pct": -1.2,
+                   "eth_usd": 3200.0, "eth_change_pct": 0.8},
+    }
+    txt = format_free_signal(sample, session="morning")
+    check("morning 포맷 BTC 포함", "85,000" in txt or "BTC" in txt)
+    txt_full = format_free_signal(sample, session="full")
+    check("full 포맷 BTC 포함", "85,000" in txt_full or "BTC" in txt_full)
+except Exception as e:
+    check("telegram BTC 포맷 검증", False, str(e))
 
 print(f"\n{'='*60}")
 print(f"  전수 테스트 결과: {PASS}개 PASS  {FAIL}개 FAIL")

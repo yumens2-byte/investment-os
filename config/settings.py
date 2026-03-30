@@ -41,7 +41,7 @@ HISTORY_FILE = PUBLISHED_DIR / "history.json"
 
 # ─── 시스템 상수 ──────────────────────────────────────────
 SYSTEM_NAME = "Investment OS"
-SYSTEM_VERSION = "v1.19.0"
+SYSTEM_VERSION = "v1.20.0"
 
 # ─── 시장 임계값 (Market Thresholds) ────────────────────────
 VIX_LOW_THRESHOLD = 20.0

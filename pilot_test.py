@@ -407,7 +407,7 @@ def run_round2():
     # ── settings 버전 확인 ─────────────────────────────────────
     print("\n[설정 검증]")
     from config.settings import SYSTEM_VERSION, RSS_SOURCES
-    t.check("시스템 버전 v1.19.0", SYSTEM_VERSION == "v1.19.0")
+    t.check("시스템 버전 v1.20.0", SYSTEM_VERSION == "v1.20.0")
     t.check("RSS 소스 5개 이상", len(RSS_SOURCES) >= 5, f"{len(RSS_SOURCES)}개")
 
     # ── 미리보기 ───────────────────────────────────────────────
@@ -424,7 +424,7 @@ def run_round2():
 
 def print_final_report(r1: dict, r2: dict):
     print("\n" + "=" * 60)
-    print("  파일럿 테스트 최종 결과 (v1.19.0 — AI 성적표 주간 결산)")
+    print("  파일럿 테스트 최종 결과 (v1.20.0 — BTC/ETH 가격 연동)")
     print("=" * 60)
     for r in [r1, r2]:
         icon = "✅" if r["success"] else "❌"
@@ -435,7 +435,7 @@ def print_final_report(r1: dict, r2: dict):
     print()
     if all_ok:
         print("  🎉 파일럿 테스트 2회 완료 — 특이사항 없음")
-        print("  → v1.19.0 변경사항: AI 성적표 포맷 + weekly session 통합")
+        print("  → v1.20.0 변경사항: BTC/ETH 수집 + morning/full 포맷 추가")
         print("  → Git 업로드 진행 가능")
     else:
         for r in [r1, r2]:

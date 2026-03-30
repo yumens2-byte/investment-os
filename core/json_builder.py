@@ -39,6 +39,7 @@ def assemble_core_data(
     output_helpers: dict,
     fx_rates: dict = None,
     fear_greed: dict = None,
+    crypto: dict = None,
     news_summary: dict = None,
 ) -> dict:
     """
@@ -48,6 +49,7 @@ def assemble_core_data(
     return {
         "fx_rates":       fx_rates or {},
         "fear_greed":     fear_greed or {},
+        "crypto":         crypto or {},
         "news_summary":   news_summary or {},
         "market_snapshot": snapshot,
         "market_regime":  market_regime,
