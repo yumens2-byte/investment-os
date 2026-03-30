@@ -38,7 +38,7 @@ import config.settings as _cs_mod
 importlib.reload(_cs_mod)
 SYSTEM_VERSION = _cs_mod.SYSTEM_VERSION
 CODENAME = _cs_mod.CODENAME
-check("SYSTEM_VERSION = v1.13.0", SYSTEM_VERSION == "v1.13.0", SYSTEM_VERSION)
+check("SYSTEM_VERSION = v1.14.0", SYSTEM_VERSION == "v1.14.0", SYSTEM_VERSION)
 check("CODENAME = EDT Investment", CODENAME == "EDT Investment", CODENAME)
 
 print("\n── [3] fx_rates 수집 흐름 ─────────────────────────────────────")
@@ -176,7 +176,7 @@ except Exception as e:
 
 try:
     from config.settings import SYSTEM_VERSION, TELEGRAM_FREE_CHANNEL, TELEGRAM_PAID_CHANNEL
-    check("SYSTEM_VERSION = v1.13.0", SYSTEM_VERSION == "v1.13.0", SYSTEM_VERSION)
+    check("SYSTEM_VERSION = v1.14.0", SYSTEM_VERSION == "v1.14.0", SYSTEM_VERSION)
     check("TELEGRAM_FREE_CHANNEL 상수", TELEGRAM_FREE_CHANNEL == "free")
     check("TELEGRAM_PAID_CHANNEL 상수", TELEGRAM_PAID_CHANNEL == "paid")
 except Exception as e:
@@ -370,6 +370,56 @@ try:
     check("run_market detect_rank_change 호출", "detect_rank_change" in src)
 except Exception as e:
     check("run_market rank_tracker 검증", False, str(e))
+
+print("\n── [15] 유료 ETF 상세전략 + 포지션사이징 리포트 검증 ──────")
+try:
+    from publishers.paid_report_formatter import format_paid_report
+    check("paid_report_formatter import OK", True)
+except Exception as e:
+    check("paid_report_formatter import OK", False, str(e))
+
+try:
+    from publishers.paid_report_formatter import format_paid_report
+    sample = {
+        "market_regime": {"market_regime": "Risk-Off", "market_risk_level": "HIGH"},
+        "trading_signal": {
+            "trading_signal": "REDUCE",
+            "signal_reason": "High risk environment",
+            "signal_matrix": {
+                "buy_watch": ["TLT"], "hold": ["SPYM"], "reduce": ["QQQM","XLK"]
+            }
+        },
+        "etf_strategy": {
+            "stance": {"QQQM":"Underweight","XLK":"Underweight","SPYM":"Neutral","XLE":"Overweight","ITA":"Neutral","TLT":"Overweight"},
+            "strategy_reason": {"XLE":"Oil hedge","TLT":"Safe haven"}
+        },
+        "etf_allocation": {"allocation": {"QQQM":5,"XLK":5,"SPYM":20,"XLE":25,"ITA":25,"TLT":20}},
+        "etf_analysis": {
+            "timing_signal": {"QQQM":"REDUCE","XLK":"REDUCE","SPYM":"HOLD","XLE":"ADD ON PULLBACK","ITA":"HOLD","TLT":"BUY"},
+            "etf_rank": {"QQQM":6,"XLK":5,"SPYM":3,"XLE":1,"ITA":4,"TLT":2}
+        },
+        "portfolio_risk": {
+            "position_sizing_multiplier": 0.75,
+            "hedge_intensity": "HIGH",
+            "position_exposure": "Defensive",
+            "crash_alert_level": "MEDIUM"
+        }
+    }
+    txt = format_paid_report(sample)
+    check("format_paid_report 생성 (>200자)", len(txt) > 200, f"{len(txt)}자")
+    check("format_paid_report ETF 포함", "XLE" in txt and "TLT" in txt)
+    check("format_paid_report 포지션사이징 포함", "0.75" in txt)
+    check("format_paid_report HTML 태그", "<b>" in txt)
+except Exception as e:
+    check("format_paid_report 통합 검증", False, str(e))
+
+try:
+    import inspect, run_view
+    src = inspect.getsource(run_view.run)
+    check("run_view format_paid_report 호출", "paid_report_formatter" in src)
+    check("run_view 유료 채널 추가 발송", "paid_text" in src)
+except Exception as e:
+    check("run_view paid_report 검증", False, str(e))
 
 print(f"\n{'='*60}")
 print(f"  전수 테스트 결과: {PASS}개 PASS  {FAIL}개 FAIL")
