@@ -94,6 +94,12 @@ jobs:
           key: weekly-log-${{ github.ref }}
           restore-keys: weekly-log-
       - run: python main.py run all --session morning --mode tweet
+      - name: Restore rank history cache
+        uses: actions/cache@v4
+        with:
+          path: data/published/rank_history.json
+          key: rank-history-${{ github.ref }}
+          restore-keys: rank-history-
       - name: Save weekly log cache
         uses: actions/cache/save@v4
         if: always()
@@ -136,6 +142,12 @@ jobs:
           key: weekly-log-${{ github.ref }}
           restore-keys: weekly-log-
       - run: python main.py run all --session intraday --mode tweet
+      - name: Restore rank history cache
+        uses: actions/cache@v4
+        with:
+          path: data/published/rank_history.json
+          key: rank-history-${{ github.ref }}
+          restore-keys: rank-history-
       - name: Save weekly log cache
         uses: actions/cache/save@v4
         if: always()
@@ -176,6 +188,12 @@ jobs:
           key: weekly-log-${{ github.ref }}
           restore-keys: weekly-log-
       - run: python main.py run all --session close --mode tweet
+      - name: Restore rank history cache
+        uses: actions/cache@v4
+        with:
+          path: data/published/rank_history.json
+          key: rank-history-${{ github.ref }}
+          restore-keys: rank-history-
       - name: Save weekly log cache
         uses: actions/cache/save@v4
         if: always()
@@ -216,6 +234,12 @@ jobs:
           key: weekly-log-${{ github.ref }}
           restore-keys: weekly-log-
       - run: python main.py run all --session weekly --mode thread
+      - name: Restore rank history cache
+        uses: actions/cache@v4
+        with:
+          path: data/published/rank_history.json
+          key: rank-history-${{ github.ref }}
+          restore-keys: rank-history-
       - uses: actions/upload-artifact@v4
         if: always()
         with:
