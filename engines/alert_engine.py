@@ -32,6 +32,9 @@ VIX_SURGE_PCT = 15.0  # 전일 대비 15% 급등
 # VIX 프리미엄 레벨 (유료 채널 세분화)
 VIX_PREMIUM_LEVELS = [20, 25, 30, 35]
 
+# VIX 카운트다운 레벨 (하루 1회, 공포구간 진입 전 단계별 경고)
+VIX_COUNTDOWN_LEVELS = [25, 27, 29]
+
 # SPY
 SPY_L1 = -2.5   # SPY -2.5% 이하 → L1
 SPY_L2 = -4.0   # SPY -4.0% 이하 → L2
@@ -267,6 +270,47 @@ def _crisis_alert(snapshot: dict) -> Optional[AlertSignal]:
     return None
 
 
+def _vix_countdown_alert(
+    snapshot: dict,
+    prev_snapshot: Optional[dict] = None,
+) -> Optional[AlertSignal]:
+    """
+    VIX 카운트다운 — 25/27/29 도달 시 경고 (하루 1회 제한은 alert_history에서 처리)
+    공포구간(VIX 30) 진입 전 단계별 사전 경고
+    """
+    vix = snapshot.get("vix", 0)
+    if vix <= 0:
+        return None
+
+    # 현재 VIX가 속하는 카운트다운 레벨 확인
+    triggered_level = None
+    for lvl in sorted(VIX_COUNTDOWN_LEVELS, reverse=True):
+        if vix >= lvl:
+            triggered_level = lvl
+            break
+
+    if triggered_level is None:
+        return None
+
+    # 이전 VIX가 해당 레벨 미만이었는지 확인 (신규 돌파 여부)
+    prev_vix = (prev_snapshot or {}).get("vix", 0)
+    if prev_vix >= triggered_level:
+        return None  # 이미 이 레벨 이상이었음 — 신규 돌파 아님
+
+    distance = 30 - vix  # VIX 30까지 남은 거리
+    reason = (
+        f"VIX {vix:.1f} — {triggered_level} 돌파 "
+        f"(공포구간까지 {distance:.1f}pt)"
+    )
+
+    return AlertSignal(
+        alert_type="VIX_COUNTDOWN",
+        level="L1",
+        reason=reason,
+        snapshot=snapshot,
+    )
+
+
 def run_alert_engine(
     snapshot: dict,
     news_result: dict,
@@ -312,6 +356,11 @@ def run_alert_engine(
         alerts.append(vix_sig)
     if oil_sig:
         alerts.append(oil_sig)
+
+    # 6-A. VIX 카운트다운 (하루 1회, 25/27/29 단계별 사전 경고)
+    countdown_sig = _vix_countdown_alert(snapshot, prev_snapshot)
+    if countdown_sig:
+        alerts.append(countdown_sig)
 
     # 6. 프리미엄 알람 정보 — AlertSignal에 vix_level, regime_changed 부착
     vix_now = snapshot.get("vix", 0)

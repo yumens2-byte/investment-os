@@ -113,6 +113,52 @@ def record_alert(alert_type: str, level: str, tweet_id: str, preview: str) -> No
     logger.info(f"[AlertHistory] 기록: {alert_type}/{level} tweet_id={tweet_id}")
 
 
+def should_send_countdown(vix_level: int) -> tuple:
+    """
+    VIX 카운트다운 발송 여부 판단 — 레벨별 하루 1회 제한
+
+    규칙:
+      - 동일 레벨(25/27/29)은 오늘(KST 기준) 이미 발행됐으면 차단
+      - 상위 레벨(25→27→29)은 신규 발행 허용
+    """
+    history = _load()
+    now_kst = datetime.now(timezone.utc) + timedelta(hours=9)
+    today   = now_kst.strftime("%Y-%m-%d")
+    type_key = f"VIX_COUNTDOWN_{vix_level}"
+
+    for record in reversed(history):
+        if record.get("alert_type") != "VIX_COUNTDOWN":
+            continue
+        rec_level = record.get("vix_level", 0)
+        if rec_level != vix_level:
+            continue
+        # 오늘(KST) 이미 이 레벨 발행됨
+        ts_str = record.get("timestamp", "")
+        try:
+            ts_kst = datetime.fromisoformat(ts_str) + timedelta(hours=9)
+            if ts_kst.strftime("%Y-%m-%d") == today:
+                return False, f"VIX {vix_level} 오늘 이미 발행됨 ({ts_kst.strftime('%H:%M')} KST)"
+        except Exception:
+            pass
+
+    return True, f"VIX {vix_level} 오늘 첫 발행"
+
+
+def record_countdown(vix_level: int, tweet_id: str) -> None:
+    """VIX 카운트다운 발송 이력 기록"""
+    history = _load()
+    history.append({
+        "timestamp":  datetime.now(timezone.utc).isoformat(),
+        "alert_type": "VIX_COUNTDOWN",
+        "vix_level":  vix_level,
+        "level":      "L1",
+        "tweet_id":   tweet_id,
+        "preview":    f"VIX {vix_level} 카운트다운",
+    })
+    _save(history)
+    logger.info(f"[AlertHistory] VIX 카운트다운 기록: level={vix_level}")
+
+
 # 하위 호환성 유지
 def is_cooldown(alert_type: str, level: str) -> bool:
     send, reason = should_send(alert_type, level)

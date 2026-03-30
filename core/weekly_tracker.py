@@ -196,3 +196,63 @@ def get_weekly_summary() -> dict:
         "etf_week_return":  etf_week_return,
         "entries":          entries,
     }
+
+
+def get_ai_scorecard(summary: dict) -> dict:
+    """
+    AI 예측 vs 실제 수익률 비교 성적표 생성
+
+    Returns:
+        {
+          "correct":   [{"etf": "XLE", "signal": "BUY", "return": 3.2}],
+          "incorrect": [{"etf": "QQQM", "signal": "REDUCE", "return": 1.1, "reason": "관세완화 미반영"}],
+          "hit_rate":  0.67,    # 적중률
+          "total":     3,
+        }
+    """
+    returns  = summary.get("etf_week_return", {})
+    buy_c    = summary.get("buy_count", {})
+    reduce_c = summary.get("reduce_count", {})
+
+    correct   = []
+    incorrect = []
+
+    # BUY 시그널 — 수익률 양수면 적중
+    for etf, days in buy_c.items():
+        ret = returns.get(etf)
+        if ret is None:
+            continue
+        if ret > 0:
+            correct.append({"etf": etf, "signal": "BUY", "return": ret, "days": days})
+        else:
+            incorrect.append({
+                "etf": etf, "signal": "BUY", "return": ret, "days": days,
+                "reason": "예상과 달리 하락"
+            })
+
+    # REDUCE 시그널 — 수익률 음수면 적중
+    for etf, days in reduce_c.items():
+        ret = returns.get(etf)
+        if ret is None:
+            continue
+        if ret < 0:
+            correct.append({"etf": etf, "signal": "REDUCE", "return": ret, "days": days})
+        else:
+            incorrect.append({
+                "etf": etf, "signal": "REDUCE", "return": ret, "days": days,
+                "reason": "예상과 달리 상승"
+            })
+
+    total    = len(correct) + len(incorrect)
+    hit_rate = round(len(correct) / total, 2) if total > 0 else 0.0
+
+    # 수익률 기준 정렬
+    correct   = sorted(correct,   key=lambda x: -abs(x["return"]))
+    incorrect = sorted(incorrect, key=lambda x:  abs(x["return"]))
+
+    return {
+        "correct":   correct,
+        "incorrect": incorrect,
+        "hit_rate":  hit_rate,
+        "total":     total,
+    }

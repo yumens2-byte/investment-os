@@ -250,11 +250,28 @@ def format_image_tweet(data: dict, session: str = "morning") -> str:
     line3 = f"{sig_emoji} SIGNAL: {signal}"
     line4 = summary
 
+    # Fear & Greed (morning 세션만 추가)
+    fg_line = ""
+    if session == "morning":
+        fg = data.get("fear_greed", {})
+        if fg and fg.get("value"):
+            fg_emoji = fg.get("emoji", "😐")
+            fg_val   = fg.get("value", 0)
+            fg_lbl   = fg.get("label", "")
+            fg_chg   = fg.get("change", 0)
+            chg_str  = f" ({fg_chg:+d})" if fg_chg else ""
+            fg_line  = f"{fg_emoji} F&G: {fg_val}/100 {fg_lbl}{chg_str}"
+
     # 해시태그
     base_tags    = "#ETF #투자 #미국증시"
     regime_tag   = REGIME_TAGS.get(regime_name, "")
     session_tag  = SESSION_TAGS.get(session, "")
     tags = f"{base_tags} {regime_tag} {session_tag}".strip()
 
-    tweet = f"{line1}\n\n{line2}\n{line3}\n{line4}\n\n{tags}"
+    body = f"{line1}\n\n{line2}\n{line3}"
+    if fg_line:
+        body += f"\n{fg_line}"
+    if line4:
+        body += f"\n{line4}"
+    tweet = f"{body}\n\n{tags}"
     return tweet[:280]

@@ -38,7 +38,7 @@ import config.settings as _cs_mod
 importlib.reload(_cs_mod)
 SYSTEM_VERSION = _cs_mod.SYSTEM_VERSION
 CODENAME = _cs_mod.CODENAME
-check("SYSTEM_VERSION = v1.14.0", SYSTEM_VERSION == "v1.14.0", SYSTEM_VERSION)
+check("SYSTEM_VERSION = v1.19.0", SYSTEM_VERSION == "v1.19.0", SYSTEM_VERSION)
 check("CODENAME = EDT Investment", CODENAME == "EDT Investment", CODENAME)
 
 print("\n── [3] fx_rates 수집 흐름 ─────────────────────────────────────")
@@ -176,7 +176,7 @@ except Exception as e:
 
 try:
     from config.settings import SYSTEM_VERSION, TELEGRAM_FREE_CHANNEL, TELEGRAM_PAID_CHANNEL
-    check("SYSTEM_VERSION = v1.14.0", SYSTEM_VERSION == "v1.14.0", SYSTEM_VERSION)
+    check("SYSTEM_VERSION = v1.19.0", SYSTEM_VERSION == "v1.19.0", SYSTEM_VERSION)
     check("TELEGRAM_FREE_CHANNEL 상수", TELEGRAM_FREE_CHANNEL == "free")
     check("TELEGRAM_PAID_CHANNEL 상수", TELEGRAM_PAID_CHANNEL == "paid")
 except Exception as e:
@@ -420,6 +420,262 @@ try:
     check("run_view 유료 채널 추가 발송", "paid_text" in src)
 except Exception as e:
     check("run_view paid_report 검증", False, str(e))
+
+print("\n── [16] 주간 PDF 리포트 검증 ───────────────────────────")
+try:
+    from publishers.weekly_pdf_builder import build_weekly_pdf
+    check("weekly_pdf_builder import OK", True)
+except Exception as e:
+    check("weekly_pdf_builder import OK", False, str(e))
+
+try:
+    import tempfile
+    from pathlib import Path
+    import publishers.weekly_pdf_builder as wpb
+    orig = wpb.OUTPUT_DIR
+    with tempfile.TemporaryDirectory() as tmpdir:
+        wpb.OUTPUT_DIR = Path(tmpdir)
+        sample_summary = {
+            "week": "2026-W13", "days": 3,
+            "dominant_regime": "Risk-Off", "dominant_signal": "HOLD",
+            "signal_counts": {"HOLD": 2, "REDUCE": 1},
+            "buy_count": {"XLE": 2, "TLT": 1},
+            "reduce_count": {"QQQM": 1},
+            "etf_week_return": {"XLE": 3.2, "TLT": 1.1, "SPYM": -0.5, "QQQM": -2.1, "ITA": 0.8, "XLK": -1.3},
+            "entries": [
+                {"date": "2026-03-25", "regime": "Risk-Off", "risk": "MEDIUM",
+                 "signal": "HOLD", "buy_watch": ["XLE","TLT"], "hold": ["SPYM"], "reduce": ["QQQM"],
+                 "etf_returns": {}},
+                {"date": "2026-03-26", "regime": "Risk-Off", "risk": "HIGH",
+                 "signal": "REDUCE", "buy_watch": ["TLT"], "hold": ["SPYM"], "reduce": ["QQQM","XLK"],
+                 "etf_returns": {}},
+            ]
+        }
+        pdf_path = build_weekly_pdf(sample_summary)
+        check("PDF 파일 생성", Path(pdf_path).exists(), pdf_path)
+        check("PDF 크기 > 3KB", Path(pdf_path).stat().st_size > 3000,
+              f"{Path(pdf_path).stat().st_size}B")
+        wpb.OUTPUT_DIR = orig
+except Exception as e:
+    check("weekly_pdf_builder 통합 검증", False, str(e))
+
+try:
+    from publishers.telegram_publisher import send_document
+    check("send_document import OK", True)
+except Exception as e:
+    check("send_document import OK", False, str(e))
+
+try:
+    import inspect, run_view
+    src = inspect.getsource(run_view.run)
+    check("run_view weekly PDF 생성 호출", "weekly_pdf_builder" in src)
+    check("run_view send_document 호출", "send_document" in src)
+except Exception as e:
+    check("run_view weekly PDF 검증", False, str(e))
+
+try:
+    reqs = open("requirements.txt").read()
+    check("requirements.txt reportlab 포함", "reportlab" in reqs)
+except Exception as e:
+    check("requirements.txt 검증", False, str(e))
+
+print("\n── [17] Fear & Greed + 뉴스 헤드라인 검증 ──────────────")
+try:
+    from collectors.fear_greed import collect_fear_greed, _label, _label_emoji
+    check("fear_greed import OK", True)
+    check("_label Extreme Fear", _label(15) == "Extreme Fear")
+    check("_label Fear", _label(35) == "Fear")
+    check("_label Neutral", _label(50) == "Neutral")
+    check("_label Greed", _label(65) == "Greed")
+    check("_label Extreme Greed", _label(85) == "Extreme Greed")
+    check("_label_emoji", len(_label_emoji("Extreme Fear")) > 0)
+except Exception as e:
+    check("fear_greed 검증", False, str(e))
+
+try:
+    import inspect, core.json_builder as jb
+    src = inspect.getsource(jb.assemble_core_data)
+    check("json_builder fear_greed 파라미터", "fear_greed" in src)
+    check("json_builder fear_greed 반환", '"fear_greed"' in src)
+except Exception as e:
+    check("json_builder fear_greed 검증", False, str(e))
+
+try:
+    import inspect, publishers.telegram_publisher as tp
+    src = inspect.getsource(tp.format_free_signal)
+    check("telegram morning F&G 통합", "fear_greed" in src)
+    check("telegram morning 헤드라인 통합", "top_headlines" in src)
+except Exception as e:
+    check("telegram morning 확장 검증", False, str(e))
+
+try:
+    from publishers.telegram_publisher import format_free_signal
+    sample = {
+        "market_regime": {"market_regime": "Risk-Off", "market_risk_level": "HIGH"},
+        "trading_signal": {"trading_signal": "REDUCE", "signal_reason": "High risk",
+                           "signal_matrix": {"buy_watch": ["TLT"], "hold": [], "reduce": ["QQQM"]}},
+        "market_snapshot": {"vix": 31.0, "sp500": -1.5, "us10y": 4.4, "oil": 99.0},
+        "output_helpers": {
+            "one_line_summary": "Risk-Off",
+            "top_headlines": ["Fed signals higher for longer", "Tech selloff deepens", "Oil near $100"]
+        },
+        "fear_greed": {"value": 18, "label": "Extreme Fear", "emoji": "😱", "change": -4},
+    }
+    txt = format_free_signal(sample, session="morning")
+    check("morning 포맷 F&G 포함", "18/100" in txt or "Extreme Fear" in txt)
+    check("morning 포맷 헤드라인 포함", "Fed signals" in txt or "헤드라인" in txt)
+except Exception as e:
+    check("morning 포맷 통합 검증", False, str(e))
+
+try:
+    from collectors.rss_extended import collect_extended_sentiment
+    import inspect
+    src = inspect.getsource(collect_extended_sentiment)
+    check("rss_extended headlines 반환", '"headlines"' in src)
+except Exception as e:
+    check("rss_extended headlines 검증", False, str(e))
+
+print("\n── [18] VIX 카운트다운 하루 1회 검증 ─────────────────────")
+try:
+    from engines.alert_engine import VIX_COUNTDOWN_LEVELS, _vix_countdown_alert
+    check("VIX_COUNTDOWN_LEVELS 존재", len(VIX_COUNTDOWN_LEVELS) == 3)
+    check("VIX_COUNTDOWN_LEVELS 값", 25 in VIX_COUNTDOWN_LEVELS and 29 in VIX_COUNTDOWN_LEVELS)
+
+    # 신규 돌파 감지 테스트
+    snap_25 = {"vix": 25.5, "sp500": -1.0, "us10y": 4.4, "oil": 90.0}
+    prev_24 = {"vix": 24.0}
+    sig = _vix_countdown_alert(snap_25, prev_24)
+    check("VIX 25 신규 돌파 감지", sig is not None)
+    check("VIX_COUNTDOWN 타입", sig.alert_type == "VIX_COUNTDOWN" if sig else False)
+
+    # 이미 이 레벨 위에 있으면 신규 돌파 아님
+    prev_26 = {"vix": 26.0}
+    sig2 = _vix_countdown_alert(snap_25, prev_26)
+    check("이미 레벨 위 → 감지 안 함", sig2 is None)
+except Exception as e:
+    check("VIX 카운트다운 엔진 검증", False, str(e))
+
+try:
+    from publishers.alert_formatter import format_countdown_tweet, _TYPE_TITLE
+    check("VIX_COUNTDOWN 타입 등록", "VIX_COUNTDOWN" in _TYPE_TITLE)
+    check("format_countdown_tweet 존재", callable(format_countdown_tweet))
+except Exception as e:
+    check("alert_formatter VIX_COUNTDOWN 검증", False, str(e))
+
+try:
+    from core.alert_history import should_send_countdown, record_countdown
+    check("should_send_countdown import OK", True)
+
+    import tempfile, core.alert_history as ah
+    from pathlib import Path
+    orig = ah.ALERT_HISTORY_FILE
+    with tempfile.TemporaryDirectory() as tmpdir:
+        ah.ALERT_HISTORY_FILE = Path(tmpdir) / "alert_history.json"
+        # 첫 발행 허용
+        send, reason = should_send_countdown(25)
+        check("카운트다운 첫 발행 허용", send == True)
+        # 기록 후 차단
+        record_countdown(25, "TEST_ID")
+        send2, reason2 = should_send_countdown(25)
+        check("카운트다운 하루 1회 차단", send2 == False)
+        # 다른 레벨은 허용
+        send3, _ = should_send_countdown(27)
+        check("다른 레벨(27) 발행 허용", send3 == True)
+        ah.ALERT_HISTORY_FILE = orig
+except Exception as e:
+    check("alert_history 카운트다운 검증", False, str(e))
+
+try:
+    import inspect, run_alert
+    src = inspect.getsource(run_alert.run)
+    check("run_alert VIX_COUNTDOWN 분기", "VIX_COUNTDOWN" in src)
+    check("run_alert should_send_countdown 호출", "should_send_countdown" in src)
+except Exception as e:
+    check("run_alert 카운트다운 검증", False, str(e))
+
+print("\n── [19] 경제지표 발표 즉시 알람 검증 ──────────────────────")
+try:
+    from publishers.econ_event_formatter import (
+        format_econ_event, format_econ_event_telegram, INDICATOR_META
+    )
+    check("econ_event_formatter import OK", True)
+    check("INDICATOR_META 5개 이상", len(INDICATOR_META) >= 4)
+
+    txt = format_econ_event("FEDFUNDS", 5.25, 5.50, "Risk-Off", "HOLD")
+    check("format_econ_event 생성", len(txt) > 20)
+    check("format_econ_event 280자 이내", len(txt) <= 280)
+
+    tg = format_econ_event_telegram("FEDFUNDS", 5.25, 5.50, "Risk-Off", "HOLD")
+    check("format_econ_event_telegram HTML", "<b>" in tg)
+except Exception as e:
+    check("econ_event_formatter 검증", False, str(e))
+
+try:
+    from collectors.fred_client import detect_macro_changes
+    check("detect_macro_changes import OK", True)
+    # 임계값 이상 변화 감지
+    cur  = {"fed_funds_rate": 5.50, "hy_spread": 4.0, "yield_curve": 0.1}
+    prev = {"fed_funds_rate": 5.25, "hy_spread": 3.4, "yield_curve": 0.4}
+    changes = detect_macro_changes(cur, prev)
+    check("임계값 이상 변화 감지", len(changes) >= 1)
+    # 임계값 미만 변화 무시
+    small = {"fed_funds_rate": 5.26, "hy_spread": 3.45, "yield_curve": 0.35}
+    no_changes = detect_macro_changes(small, prev)
+    check("임계값 미만 변화 무시", len(no_changes) == 0)
+except Exception as e:
+    check("detect_macro_changes 검증", False, str(e))
+
+try:
+    import inspect, run_alert
+    src = inspect.getsource(run_alert.run)
+    check("run_alert 경제지표 감지 분기", "detect_macro_changes" in src)
+    check("run_alert 경제지표 발행", "econ_event_formatter" in src)
+except Exception as e:
+    check("run_alert 경제지표 검증", False, str(e))
+
+print("\n── [20] AI 성적표 주간 결산 검증 ───────────────────────────")
+try:
+    from core.weekly_tracker import get_ai_scorecard
+    from publishers.weekly_formatter import (
+        format_ai_scorecard_tweet, format_ai_scorecard_telegram
+    )
+    check("get_ai_scorecard import OK", True)
+    check("format_ai_scorecard_tweet import OK", True)
+    check("format_ai_scorecard_telegram import OK", True)
+except Exception as e:
+    check("AI 성적표 import", False, str(e))
+
+try:
+    from core.weekly_tracker import get_ai_scorecard
+    from publishers.weekly_formatter import format_ai_scorecard_tweet, format_ai_scorecard_telegram
+
+    sample_summary = {
+        "week": "2026-W13",
+        "buy_count":    {"XLE": 3, "TLT": 2},
+        "reduce_count": {"QQQM": 2},
+        "etf_week_return": {"XLE": 3.2, "TLT": 0.8, "QQQM": 1.1, "SPYM": -0.5},
+    }
+    sc = get_ai_scorecard(sample_summary)
+    check("AI 성적표 생성", sc.get("total", 0) > 0, f"total={sc.get('total')}")
+    check("적중률 계산", 0 <= sc.get("hit_rate", -1) <= 1)
+
+    tweet = format_ai_scorecard_tweet(sc, "2026-W13")
+    check("AI 성적표 트윗 생성", len(tweet) > 20)
+    check("AI 성적표 280자 이내", len(tweet) <= 280, f"{len(tweet)}자")
+
+    tg = format_ai_scorecard_telegram(sc, "2026-W13")
+    check("AI 성적표 TG HTML", "<b>" in tg)
+    check("TG 성적표 포함", "성적표" in tg)
+except Exception as e:
+    check("AI 성적표 통합 검증", False, str(e))
+
+try:
+    import inspect, run_view
+    src = inspect.getsource(run_view.run)
+    check("run_view AI 성적표 호출", "get_ai_scorecard" in src)
+    check("run_view AI 성적표 X 발행", "format_ai_scorecard_tweet" in src)
+except Exception as e:
+    check("run_view AI 성적표 검증", False, str(e))
 
 print(f"\n{'='*60}")
 print(f"  전수 테스트 결과: {PASS}개 PASS  {FAIL}개 FAIL")

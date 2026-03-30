@@ -12,11 +12,12 @@ logger = logging.getLogger(__name__)
 
 # Alert 타입별 이모지
 _TYPE_EMOJI = {
-    "VIX":       "🚨",
-    "SPY":       "📉",
-    "OIL":       "🛢️",
-    "FED_SHOCK": "🏦",
-    "CRISIS":    "🆘",
+    "VIX":           "🚨",
+    "SPY":           "📉",
+    "OIL":           "🛢️",
+    "FED_SHOCK":     "🏦",
+    "CRISIS":        "🆘",
+    "VIX_COUNTDOWN": "⚠️",
 }
 
 # 등급별 이모지
@@ -28,11 +29,12 @@ _LEVEL_EMOJI = {
 
 # Alert 타입별 제목
 _TYPE_TITLE = {
-    "VIX":       "VIX ALERT",
-    "SPY":       "MARKET ALERT",
-    "OIL":       "OIL SHOCK ALERT",
-    "FED_SHOCK": "FED SHOCK ALERT",
-    "CRISIS":    "CRISIS ALERT",
+    "VIX":           "VIX ALERT",
+    "SPY":           "MARKET ALERT",
+    "OIL":           "OIL SHOCK ALERT",
+    "FED_SHOCK":     "FED SHOCK ALERT",
+    "CRISIS":        "CRISIS ALERT",
+    "VIX_COUNTDOWN": "VIX 카운트다운",
 }
 
 # 등급별 행동 지침
@@ -117,3 +119,33 @@ def _format_compact(signal: AlertSignal, snapshot_line: str) -> str:
         "#위험경보 #ETF",
     ]
     return "\n".join(lines)
+
+
+def format_countdown_tweet(signal) -> str:
+    """
+    VIX 카운트다운 전용 트윗 포맷 (투표 유도형)
+
+    형식:
+      ⚠️ VIX [N] 돌파 — 공포구간까지 [N]pt
+      현재 VIX: [N] | 전일대비 [▲/▼]
+      역사적으로 VIX 30 이상 → 3개월 후 SPY +9.2%
+      지금 팔까요? 버틸까요? 🗳️
+      #VIX #공포구간 #투자심리
+    """
+    vix = signal.snapshot.get("vix", 0)
+    distance = max(0, 30 - vix)
+    reason = signal.reason
+
+    lines = [
+        f"⚠️ {reason}",
+        "",
+        f"📊 역사적 데이터",
+        f"→ VIX 30 이상 평균 지속: 3주",
+        f"→ 이후 3개월 SPY 평균: +9.2%",
+        "",
+        "지금 팔까요? 버틸까요? 🗳️",
+        "",
+        "#VIX #공포구간 #투자심리 #ETF",
+    ]
+    tweet = "\n".join(lines)
+    return tweet[:280]

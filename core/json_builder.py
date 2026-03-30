@@ -38,18 +38,22 @@ def assemble_core_data(
     trading_signal: dict,
     output_helpers: dict,
     fx_rates: dict = None,
+    fear_greed: dict = None,
+    news_summary: dict = None,
 ) -> dict:
     """
     각 엔진 출력을 단일 data dict로 조립.
     모든 Output 엔진(run_view 등)은 이 dict만 참조한다.
     """
     return {
-        "fx_rates": fx_rates or {},
+        "fx_rates":       fx_rates or {},
+        "fear_greed":     fear_greed or {},
+        "news_summary":   news_summary or {},
         "market_snapshot": snapshot,
-        "market_regime": market_regime,
-        "market_score": market_score,
-        "etf_analysis": etf_analysis,
-        "etf_strategy": etf_strategy,
+        "market_regime":  market_regime,
+        "market_score":   market_score,
+        "etf_analysis":   etf_analysis,
+        "etf_strategy":   etf_strategy,
         "etf_allocation": etf_allocation,
         "portfolio_risk": portfolio_risk,
         "trading_signal": trading_signal,

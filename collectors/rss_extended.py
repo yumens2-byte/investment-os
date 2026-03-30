@@ -354,6 +354,8 @@ def collect_extended_sentiment() -> dict:
             "sources_ok": 0,
             "sources_fail": len(RSS_SOURCES),
             "source_detail": [],
+            "headlines": [],
         }
 
+    sentiment_result["headlines"] = unique_headlines[:10]  # 상위 10개 보관
     return sentiment_result

@@ -5,22 +5,22 @@ FRED API에서 거시경제 지표를 수집한다.
 """
 import logging
 from typing import Optional
-from fredapi import Fred
 from config.settings import FRED_API_KEY, FRED_SERIES
 
 logger = logging.getLogger(__name__)
 
-_fred_client: Optional[Fred] = None
+_fred_client = None
 
 
-def _get_client() -> Optional[Fred]:
-    """FRED 클라이언트 싱글턴"""
+def _get_client():
+    """FRED 클라이언트 싱글톤 (lazy import)"""
     global _fred_client
     if _fred_client is None:
         if not FRED_API_KEY:
             logger.warning("[FRED] API 키 미설정. FRED 수집 건너뜀.")
             return None
         try:
+            from fredapi import Fred
             _fred_client = Fred(api_key=FRED_API_KEY)
         except Exception as e:
             logger.error(f"[FRED] 클라이언트 초기화 실패: {e}")
@@ -84,3 +84,55 @@ def _classify_credit_stress(hy_spread: Optional[float]) -> str:
         return "Moderate"
     else:
         return "High"
+
+
+def detect_macro_changes(
+    current: dict,
+    prev: dict,
+    thresholds: dict = None,
+) -> list:
+    """
+    현재 vs 이전 FRED 데이터 비교 → 유의미한 변화 감지
+
+    Args:
+        current:    최신 collect_macro_data() 결과
+        prev:       직전 저장된 FRED 데이터
+        thresholds: 변화 감지 임계값 (기본값 내장)
+
+    Returns:
+        변화 감지된 항목 리스트
+        [{"indicator_id": str, "prev": float, "new": float, "change": float}]
+    """
+    if not prev:
+        return []
+
+    DEFAULTS = {
+        "fed_funds_rate": 0.25,   # 0.25% 이상 변화
+        "hy_spread":      0.5,    # 0.5% 이상 변화
+        "yield_curve":    0.3,    # 0.3% 이상 변화
+    }
+    # FRED 필드명 → indicator_id 매핑
+    FIELD_TO_ID = {
+        "fed_funds_rate": "FEDFUNDS",
+        "hy_spread":      "BAMLH0A0HYM2",
+        "yield_curve":    "T10Y2Y",
+    }
+    thresholds = thresholds or DEFAULTS
+    changes = []
+
+    for field, indicator_id in FIELD_TO_ID.items():
+        cur_val  = current.get(field)
+        prev_val = prev.get(field)
+        if cur_val is None or prev_val is None:
+            continue
+        threshold = thresholds.get(field, 0.25)
+        change = abs(cur_val - prev_val)
+        if change >= threshold:
+            changes.append({
+                "indicator_id": indicator_id,
+                "prev":  round(prev_val, 4),
+                "new":   round(cur_val, 4),
+                "change": round(cur_val - prev_val, 4),
+            })
+
+    return changes

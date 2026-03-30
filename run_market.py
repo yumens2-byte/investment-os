@@ -71,6 +71,26 @@ def run(session: str) -> dict:
     fx_rates = collect_fx_rates()
     logger.info(f"[Step 1-FX] FX 환율 수집 완료: {fx_rates}")
 
+    # Fear & Greed Index 수집
+    fear_greed = None
+    try:
+        from collectors.fear_greed import collect_fear_greed
+        fear_greed = collect_fear_greed()
+    except Exception as e:
+        logger.warning(f"[Step 1-FG] Fear & Greed 수집 실패 (영향 없음): {e}")
+
+    # 뉴스 헤드라인 3줄 요약 (Claude API, 미설정 시 스킵)
+    news_summary = None
+    try:
+        from collectors.news_summarizer import summarize_headlines
+        headlines = news_result.get("headlines", [])
+        if headlines:
+            news_summary = summarize_headlines(headlines)
+            if news_summary:
+                logger.info(f"[Step 1-NS] 뉴스 요약 완료: {len(news_summary.get('summary', []))}줄")
+    except Exception as e:
+        logger.warning(f"[Step 1-NS] 뉴스 요약 실패 (영향 없음): {e}")
+
     logger.info(
         f"[Step 1] 완료 — 감성={combined_sentiment} | "
         f"RSS소스 {sources_ok}성공/{sources_fail}실패"
@@ -124,6 +144,8 @@ def run(session: str) -> dict:
     from core.json_builder import assemble_core_data, build_envelope, save_core_data
     data = assemble_core_data(
         fx_rates=fx_rates,
+        fear_greed=fear_greed,
+        news_summary=news_summary,
         snapshot=snapshot,
         market_regime=market_regime,
         market_score=market_score,
@@ -135,6 +157,14 @@ def run(session: str) -> dict:
         output_helpers=risk_result["output_helpers"],
     )
     envelope = build_envelope(f"run market ({session})", data)
+
+    # top_headlines 주입 — output_helpers에 RSS 상위 헤드라인 추가
+    try:
+        headlines = news_result.get("headlines", [])
+        if headlines:
+            data["output_helpers"]["top_headlines"] = headlines[:3]
+    except Exception:
+        pass
 
     # ── Step 7: Validation ─────────────────────────────────────
     logger.info("[Step 7] Validation 실행")

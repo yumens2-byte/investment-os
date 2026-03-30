@@ -145,3 +145,74 @@ def format_weekly_telegram(summary: dict) -> str:
     ]
 
     return "\n".join(lines)
+
+
+def format_ai_scorecard_tweet(scorecard: dict, week: str = "") -> str:
+    """
+    'AI가 틀렸습니다' X 트윗 포맷 (280자 이내)
+    """
+    correct   = scorecard.get("correct", [])
+    incorrect = scorecard.get("incorrect", [])
+    hit_rate  = scorecard.get("hit_rate", 0)
+    total     = scorecard.get("total", 0)
+
+    pct = int(hit_rate * 100)
+    lines = [f"🤖 이번 주 AI 성적표 {week}", ""]
+
+    if correct:
+        lines.append("✅ 맞춘 것")
+        for c in correct[:2]:
+            sign = "+" if c["return"] >= 0 else ""
+            lines.append(f"→ {c['etf']} {c['signal']} → {sign}{c['return']:.1f}% ✓")
+
+    if incorrect:
+        lines.append("")
+        lines.append("❌ 틀린 것")
+        for w in incorrect[:2]:
+            sign = "+" if w["return"] >= 0 else ""
+            lines.append(f"→ {w['etf']} {w['signal']} 권고 but {sign}{w['return']:.1f}%")
+            lines.append(f"   ({w.get('reason', '')})")
+
+    lines += [
+        "",
+        f"📊 이번 주 적중률: {pct}% ({len(correct)}/{total})",
+        "",
+        "#AI투자 #성적표 #ETF #반성",
+    ]
+    tweet = "\n".join(lines)
+    return tweet[:280]
+
+
+def format_ai_scorecard_telegram(scorecard: dict, week: str = "") -> str:
+    """
+    'AI가 틀렸습니다' 텔레그램 HTML 포맷
+    """
+    correct   = scorecard.get("correct", [])
+    incorrect = scorecard.get("incorrect", [])
+    hit_rate  = scorecard.get("hit_rate", 0)
+    total     = scorecard.get("total", 0)
+
+    pct = int(hit_rate * 100)
+    lines = [f"🤖 <b>이번 주 AI 성적표</b>  {week}", ""]
+
+    if correct:
+        lines.append("✅ <b>맞춘 것</b>")
+        for c in correct[:3]:
+            sign = "+" if c["return"] >= 0 else ""
+            lines.append(f"→ <b>{c['etf']}</b> {c['signal']} → {sign}{c['return']:.1f}% ✓")
+
+    if incorrect:
+        lines.append("")
+        lines.append("❌ <b>틀린 것</b>")
+        for w in incorrect[:3]:
+            sign = "+" if w["return"] >= 0 else ""
+            lines.append(f"→ <b>{w['etf']}</b> {w['signal']} 권고 but {sign}{w['return']:.1f}%")
+            lines.append(f"   <i>({w.get('reason', '')})</i>")
+
+    lines += [
+        "",
+        f"📊 이번 주 적중률: <b>{pct}%</b> ({len(correct)}/{total})",
+        "",
+        "#AI투자 #성적표 #ETF #반성",
+    ]
+    return "\n".join(lines)

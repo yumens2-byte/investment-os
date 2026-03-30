@@ -134,6 +134,55 @@ def send_photo(
     return results
 
 
+def send_document(
+    file_path: str,
+    caption: str = "",
+    channel: str = "paid",
+    parse_mode: str = "HTML",
+) -> list[dict]:
+    """
+    PDF 등 문서 파일 발행
+
+    Args:
+        file_path: 파일 경로 (PDF 등)
+        caption:   문서 캡션 (1024자 제한)
+        channel:   'free' | 'paid' | 'both'
+        parse_mode: 'HTML' | 'Markdown'
+
+    Returns:
+        각 채널별 API 응답 리스트
+    """
+    if not _is_configured():
+        logger.warning("[TG] BOT_TOKEN 미설정 — 텔레그램 발행 건너뜀")
+        return []
+
+    targets = _chat_ids(channel)
+    if not targets:
+        logger.warning(f"[TG] chat_id 미설정 (channel={channel}) — 건너뜀")
+        return []
+
+    results = []
+    for cid in targets:
+        try:
+            with open(file_path, "rb") as f:
+                res = requests.post(
+                    f"{API_BASE}/sendDocument",
+                    data={"chat_id": cid, "caption": caption[:1024], "parse_mode": parse_mode},
+                    files={"document": f},
+                    timeout=TIMEOUT_IMG,
+                )
+            data = res.json()
+            if data.get("ok"):
+                logger.info(f"[TG] 문서 발행 완료 → {cid}")
+            else:
+                logger.error(f"[TG] 문서 발행 실패 → {cid}: {data}")
+            results.append(data)
+        except Exception as e:
+            logger.error(f"[TG] 문서 발행 예외 → {cid}: {e}")
+            results.append({"ok": False, "error": str(e), "chat_id": cid})
+    return results
+
+
 # ── 포맷 헬퍼 ───────────────────────────────────────────────
 def _build_hashtags(regime: str, risk: str, signal: str, session: str) -> str:
     """세션 + 시장 상황별 동적 해시태그 생성 (3~5개)"""
@@ -206,8 +255,18 @@ def format_free_signal(data: dict, session: str = "morning") -> str:
     sp_col  = "📉" if sp500 < 0 else "📈"
     tags    = _build_hashtags(regime, risk, signal, session)
 
-    # ── Morning Brief — 전략 중심 ────────────────────
+    # ── Morning Brief — 전략 중심 + 뉴스 요약 + Fear & Greed ──
     if session == "morning":
+        # Fear & Greed 추출
+        fg = data.get("fear_greed", {})
+        fg_val   = fg.get("value")
+        fg_label = fg.get("label", "")
+        fg_emoji = fg.get("emoji", "😐")
+        fg_change = fg.get("change", 0)
+
+        # 뉴스 헤드라인 추출 (RSS 수집 결과에서 상위 3개)
+        headlines = data.get("output_helpers", {}).get("top_headlines", [])
+
         lines = [
             "🌅 <b>Morning Brief</b>",
             "",
@@ -224,6 +283,22 @@ def format_free_signal(data: dict, session: str = "morning") -> str:
             lines.append(f"📉 Reduce: {' · '.join(reduce)}")
         if reason:
             lines.append(f"\n💡 <i>{reason}</i>")
+
+        # Fear & Greed 추가
+        if fg_val is not None:
+            change_str = f"({'▲' if fg_change > 0 else '▼'}{abs(fg_change)}pt)" if fg_change != 0 else ""
+            lines += [
+                "",
+                f"{fg_emoji} 시장심리: <b>{fg_val}/100 {fg_label}</b> {change_str}",
+            ]
+
+        # 뉴스 헤드라인 추가
+        if headlines:
+            lines.append("")
+            lines.append("📰 <b>오늘의 헤드라인</b>")
+            for i, h in enumerate(headlines[:3], 1):
+                lines.append(f"{i}️⃣ {h[:40]}")
+
         lines += ["", tags]
 
     # ── Close Summary — 결과 중심 ────────────────────

@@ -156,16 +156,43 @@ def run(mode: str = "tweet", session: str = None) -> dict:
     logger.info(f"[Step 6-TG] 텔레그램 발행 시작 (session={session_type})")
     try:
         from publishers.telegram_publisher import (
-            send_message, send_photo, format_free_signal
+            send_message, send_photo, format_free_signal, send_document
         )
 
         if session_type == "weekly":
-            # weekly: 주간 성적표 포맷으로 텔레그램 발송
-            from core.weekly_tracker import get_weekly_summary
-            from publishers.weekly_formatter import format_weekly_telegram
-            summary  = get_weekly_summary()
-            tg_text  = format_weekly_telegram(summary)
+            # weekly: 주간 성적표 + AI 성적표 텔레그램 발송 + PDF 유료 채널 발송
+            from core.weekly_tracker import get_weekly_summary, get_ai_scorecard
+            from publishers.weekly_formatter import (
+                format_weekly_telegram,
+                format_ai_scorecard_tweet,
+                format_ai_scorecard_telegram,
+            )
+            summary   = get_weekly_summary()
+            tg_text   = format_weekly_telegram(summary)
             send_message(tg_text, channel="free")
+
+            # AI 성적표 — X 트윗 + 텔레그램 무료
+            try:
+                from publishers.x_publisher import publish_tweet
+                scorecard = get_ai_scorecard(summary)
+                if scorecard.get("total", 0) > 0:
+                    sc_tweet = format_ai_scorecard_tweet(scorecard, summary.get("week",""))
+                    sc_tg    = format_ai_scorecard_telegram(scorecard, summary.get("week",""))
+                    publish_tweet(sc_tweet)
+                    send_message(sc_tg, channel="free")
+                    logger.info("[Step 6-TG] AI 성적표 발행 완료")
+            except Exception as e:
+                logger.warning(f"[Step 6-TG] AI 성적표 발행 실패 (영향 없음): {e}")
+
+            # 유료 채널 — 주간 PDF 리포트
+            try:
+                from publishers.weekly_pdf_builder import build_weekly_pdf
+                pdf_path = build_weekly_pdf(summary)
+                pdf_caption = f"📄 Investment OS Weekly Report\n{summary.get('week','')}"
+                send_document(pdf_path, caption=pdf_caption, channel="paid")
+                logger.info(f"[Step 6-TG] 주간 PDF 유료 채널 발송 완료: {pdf_path}")
+            except Exception as e:
+                logger.warning(f"[Step 6-TG] 주간 PDF 생성/발송 실패 (영향 없음): {e}")
         elif session_type == "full":
             # full: 무료 텍스트 + 유료 이미지 + 유료 상세 리포트
             free_text = format_free_signal(data, session=session_type)
