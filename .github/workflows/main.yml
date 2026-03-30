@@ -4,7 +4,7 @@ on:
   schedule:
     - cron: "30 21 * * 0-4"
     - cron: "30 14 * * 1-5"
-    - cron: "0 22 * * 0-4"
+    - cron: "30 20 * * 1-5"
     - cron: "0 11 * * 4"
     - cron: "*/10 13-21 * * 1-5"
     - cron: "30 9 * * 1-5"
@@ -44,6 +44,9 @@ env:
   X_ACCESS_TOKEN_SECRET: ${{ secrets.X_ACCESS_TOKEN_SECRET }}
   DRY_RUN: ${{ secrets.DRY_RUN }}
   LOG_LEVEL: INFO
+  TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+  TELEGRAM_FREE_CHANNEL_ID: ${{ secrets.TELEGRAM_FREE_CHANNEL_ID }}
+  TELEGRAM_PAID_CHANNEL_ID: ${{ secrets.TELEGRAM_PAID_CHANNEL_ID }}
 
 jobs:
 
@@ -69,6 +72,14 @@ jobs:
     if: github.event.schedule == '30 21 * * 0-4' || (github.event_name == 'workflow_dispatch' && github.event.inputs.session == 'morning')
     runs-on: ubuntu-latest
     timeout-minutes: 15
+    env:
+      TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+      TELEGRAM_FREE_CHANNEL_ID: ${{ secrets.TELEGRAM_FREE_CHANNEL_ID }}
+      FRED_API_KEY: ${{ secrets.FRED_API_KEY }}
+      X_API_KEY: ${{ secrets.X_API_KEY }}
+      X_API_SECRET: ${{ secrets.X_API_SECRET }}
+      X_ACCESS_TOKEN: ${{ secrets.X_ACCESS_TOKEN }}
+      X_ACCESS_TOKEN_SECRET: ${{ secrets.X_ACCESS_TOKEN_SECRET }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -76,7 +87,19 @@ jobs:
           python-version: "3.11"
           cache: pip
       - run: pip install -r requirements.txt
+      - name: Restore weekly log cache
+        uses: actions/cache@v4
+        with:
+          path: data/published/weekly_log.json
+          key: weekly-log-${{ github.ref }}
+          restore-keys: weekly-log-
       - run: python main.py run all --session morning --mode tweet
+      - name: Save weekly log cache
+        uses: actions/cache/save@v4
+        if: always()
+        with:
+          path: data/published/weekly_log.json
+          key: weekly-log-${{ github.ref }}-${{ github.run_id }}
       - uses: actions/upload-artifact@v4
         if: always()
         with:
@@ -91,6 +114,14 @@ jobs:
     if: github.event.schedule == '30 14 * * 1-5' || (github.event_name == 'workflow_dispatch' && github.event.inputs.session == 'intraday')
     runs-on: ubuntu-latest
     timeout-minutes: 15
+    env:
+      TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+      TELEGRAM_FREE_CHANNEL_ID: ${{ secrets.TELEGRAM_FREE_CHANNEL_ID }}
+      FRED_API_KEY: ${{ secrets.FRED_API_KEY }}
+      X_API_KEY: ${{ secrets.X_API_KEY }}
+      X_API_SECRET: ${{ secrets.X_API_SECRET }}
+      X_ACCESS_TOKEN: ${{ secrets.X_ACCESS_TOKEN }}
+      X_ACCESS_TOKEN_SECRET: ${{ secrets.X_ACCESS_TOKEN_SECRET }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -98,7 +129,19 @@ jobs:
           python-version: "3.11"
           cache: pip
       - run: pip install -r requirements.txt
+      - name: Restore weekly log cache
+        uses: actions/cache@v4
+        with:
+          path: data/published/weekly_log.json
+          key: weekly-log-${{ github.ref }}
+          restore-keys: weekly-log-
       - run: python main.py run all --session intraday --mode tweet
+      - name: Save weekly log cache
+        uses: actions/cache/save@v4
+        if: always()
+        with:
+          path: data/published/weekly_log.json
+          key: weekly-log-${{ github.ref }}-${{ github.run_id }}
       - uses: actions/upload-artifact@v4
         if: always()
         with:
@@ -108,9 +151,17 @@ jobs:
 
   close:
     name: Close Summary
-    if: github.event.schedule == '0 22 * * 0-4' || (github.event_name == 'workflow_dispatch' && github.event.inputs.session == 'close')
+    if: github.event.schedule == '30 20 * * 1-5' || (github.event_name == 'workflow_dispatch' && github.event.inputs.session == 'close')
     runs-on: ubuntu-latest
     timeout-minutes: 15
+    env:
+      TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+      TELEGRAM_FREE_CHANNEL_ID: ${{ secrets.TELEGRAM_FREE_CHANNEL_ID }}
+      FRED_API_KEY: ${{ secrets.FRED_API_KEY }}
+      X_API_KEY: ${{ secrets.X_API_KEY }}
+      X_API_SECRET: ${{ secrets.X_API_SECRET }}
+      X_ACCESS_TOKEN: ${{ secrets.X_ACCESS_TOKEN }}
+      X_ACCESS_TOKEN_SECRET: ${{ secrets.X_ACCESS_TOKEN_SECRET }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -118,7 +169,19 @@ jobs:
           python-version: "3.11"
           cache: pip
       - run: pip install -r requirements.txt
+      - name: Restore weekly log cache
+        uses: actions/cache@v4
+        with:
+          path: data/published/weekly_log.json
+          key: weekly-log-${{ github.ref }}
+          restore-keys: weekly-log-
       - run: python main.py run all --session close --mode tweet
+      - name: Save weekly log cache
+        uses: actions/cache/save@v4
+        if: always()
+        with:
+          path: data/published/weekly_log.json
+          key: weekly-log-${{ github.ref }}-${{ github.run_id }}
       - uses: actions/upload-artifact@v4
         if: always()
         with:
@@ -128,9 +191,17 @@ jobs:
 
   weekly_thread:
     name: Weekly Thread
-    if: github.event.schedule == '0 11 * * 4'
+    if: github.event.schedule == '0 11 * * 4' || (github.event_name == 'workflow_dispatch' && github.event.inputs.session == 'weekly')
     runs-on: ubuntu-latest
     timeout-minutes: 20
+    env:
+      TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+      TELEGRAM_FREE_CHANNEL_ID: ${{ secrets.TELEGRAM_FREE_CHANNEL_ID }}
+      FRED_API_KEY: ${{ secrets.FRED_API_KEY }}
+      X_API_KEY: ${{ secrets.X_API_KEY }}
+      X_API_SECRET: ${{ secrets.X_API_SECRET }}
+      X_ACCESS_TOKEN: ${{ secrets.X_ACCESS_TOKEN }}
+      X_ACCESS_TOKEN_SECRET: ${{ secrets.X_ACCESS_TOKEN_SECRET }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -138,7 +209,13 @@ jobs:
           python-version: "3.11"
           cache: pip
       - run: pip install -r requirements.txt
-      - run: python main.py run all --session close --mode thread
+      - name: Restore weekly log cache
+        uses: actions/cache@v4
+        with:
+          path: data/published/weekly_log.json
+          key: weekly-log-${{ github.ref }}
+          restore-keys: weekly-log-
+      - run: python main.py run all --session weekly --mode thread
       - uses: actions/upload-artifact@v4
         if: always()
         with:
@@ -153,6 +230,14 @@ jobs:
       (github.event_name == 'workflow_dispatch' && github.event.inputs.session == 'alert')
     runs-on: ubuntu-latest
     timeout-minutes: 10
+    env:
+      TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+      TELEGRAM_FREE_CHANNEL_ID: ${{ secrets.TELEGRAM_FREE_CHANNEL_ID }}
+      FRED_API_KEY: ${{ secrets.FRED_API_KEY }}
+      X_API_KEY: ${{ secrets.X_API_KEY }}
+      X_API_SECRET: ${{ secrets.X_API_SECRET }}
+      X_ACCESS_TOKEN: ${{ secrets.X_ACCESS_TOKEN }}
+      X_ACCESS_TOKEN_SECRET: ${{ secrets.X_ACCESS_TOKEN_SECRET }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -208,7 +293,19 @@ jobs:
           cache: pip
       - run: pip install -r requirements.txt
       - run: python -m playwright install chromium --with-deps
+      - name: Restore weekly log cache
+        uses: actions/cache@v4
+        with:
+          path: data/published/weekly_log.json
+          key: weekly-log-${{ github.ref }}
+          restore-keys: weekly-log-
       - run: python main.py run all --session full --mode tweet
+      - name: Save weekly log cache
+        uses: actions/cache/save@v4
+        if: always()
+        with:
+          path: data/published/weekly_log.json
+          key: weekly-log-${{ github.ref }}-${{ github.run_id }}
       - uses: actions/upload-artifact@v4
         if: always()
         with:
