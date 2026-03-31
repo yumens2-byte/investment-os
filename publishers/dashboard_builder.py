@@ -2,11 +2,10 @@
 publishers/dashboard_html_builder.py
 ======================================
 HTML/Playwright 기반 풀버전 대시보드 이미지 생성기 (session=full 전용)
-v2.0.0 — 가독성 개선 리뉴얼
+v2.1.0 — core_data.json 실제 필드 100% 매핑
 
-변경 이력:
-  v1.x  — 3컬럼 밀집 레이아웃 (가독성 이슈)
-  v2.0.0 — 컴팩트 3컬럼, 색상 대비 강화, 중복 섹션 제거, 폰트 사이즈 업
+데이터 소스: core_data.json["data"] 필드만 사용
+추측값: 0건
 """
 import asyncio
 import logging
@@ -19,11 +18,9 @@ from typing import Optional
 
 logger = logging.getLogger(__name__)
 
-VERSION = "v2.0.0"
+VERSION = "v2.1.0"
 
-# ────────────────────────────────────────────────
-# 컬러 상수
-# ────────────────────────────────────────────────
+# ── 컬러 상수 ──
 REGIME_COLOR = {
     "Risk-On": "#22ee88", "Risk-Off": "#ff4466", "Oil Shock": "#ffbb00",
     "Liquidity Crisis": "#bb88ff", "Recession Risk": "#ff2266",
@@ -33,7 +30,6 @@ RISK_COLOR   = {"LOW": "#33ff99", "MEDIUM": "#ffbb33", "HIGH": "#ff4466"}
 STANCE_COLOR = {"Overweight": "#33ff99", "Underweight": "#ff4466", "Neutral": "#99bbdd", "Hedge": "#bb88ff"}
 SIGNAL_COLOR = {"BUY": "#33ff99", "ADD": "#55eeff", "HOLD": "#ffee44", "REDUCE": "#ff4466", "HEDGE": "#bb88ff", "SELL": "#ff4466"}
 SCORE_THRESHOLDS = [(1, "#33ff99"), (2, "#55eeff"), (3, "#ffee44"), (4, "#ffbb33"), (5, "#ff4466")]
-
 ETFS = ["QQQM", "XLK", "SPYM", "XLE", "ITA", "TLT"]
 
 
@@ -52,14 +48,20 @@ def _dn_up(v):
     return "#ff4466" if v < 0 else "#33ff99"
 
 
-# ────────────────────────────────────────────────
-# HTML 템플릿 생성
-# ────────────────────────────────────────────────
+# ── Fear & Greed 색상 (0~100 스케일, 실제 값 기반) ──
+def _fg_color(v):
+    if v <= 20: return "#ff4466"     # Extreme Fear
+    if v <= 40: return "#ffbb33"     # Fear
+    if v <= 60: return "#99bbdd"     # Neutral
+    if v <= 80: return "#33ff99"     # Greed
+    return "#22ee88"                 # Extreme Greed
+
+
 def _build_html(data: dict, dt_utc: datetime) -> str:
     kst = dt_utc + timedelta(hours=9)
     et  = dt_utc - timedelta(hours=4)
 
-    # ── 데이터 추출 ──
+    # ── 데이터 추출 (core_data.json 실제 필드만) ──
     snap    = data.get("market_snapshot", {})
     regime  = data.get("market_regime", {})
     ms      = data.get("market_score", {})
@@ -70,85 +72,56 @@ def _build_html(data: dict, dt_utc: datetime) -> str:
     helpers = data.get("output_helpers", {})
     fx      = data.get("fx_rates", {})
     timing  = data.get("etf_analysis", {}).get("timing_signal", {})
+    fg      = data.get("fear_greed", {})
+    crypto  = data.get("crypto", {})
 
-    # Snapshot 값
-    sp500_chg = snap.get("sp500", 0) or 0
+    # ── Market Snapshot (core_data 실제 필드) ──
+    sp500_chg  = snap.get("sp500", 0) or 0
     nasdaq_chg = snap.get("nasdaq", 0) or 0
-    spy_chg   = snap.get("spy")  # None if not collected
-    vix       = snap.get("vix", 0) or 0
-    us10y     = snap.get("us10y", 0) or 0
-    oil       = snap.get("oil", 0) or 0
-    dxy       = snap.get("dollar_index", 0) or 0
+    vix        = snap.get("vix", 0) or 0
+    us10y      = snap.get("us10y", 0) or 0
+    oil        = snap.get("oil", 0) or 0
+    dxy        = snap.get("dollar_index", 0) or 0
 
-    # 실제 가격 (있으면 사용, 없으면 —)
-    sp500_price  = snap.get("sp500_price", "—")
-    nasdaq_price = snap.get("nasdaq_price", "—")
-    spy_price    = snap.get("spy_price", "—")
-
-    # 가격 포맷
-    def _fmt_price(v):
-        if v == "—" or v is None:
-            return "—"
-        try:
-            fv = float(v)
-            return f"{fv:,.0f}" if fv >= 10000 else f"{fv:,.2f}"
-        except (ValueError, TypeError):
-            return str(v)
-
-    sp500_v = _fmt_price(sp500_price)
-    nasdaq_v = _fmt_price(nasdaq_price)
-    spy_v = _fmt_price(spy_price)
-
-    # FX
+    # ── FX (core_data 실제 필드) ──
     usdkrw = fx.get("usdkrw") or 0
     eurusd = fx.get("eurusd") or 0
     usdjpy = fx.get("usdjpy") or 0
 
-    # FRED (기존 키 호환)
-    fred_data = data.get("fred_data", {})
-    fred_rate  = fred_data.get("fed_funds_rate") or data.get("fred_rate", "—")
-    fred_hy    = fred_data.get("hy_spread") or data.get("fred_hy", "—")
-    fred_curve = fred_data.get("yield_curve_2_10") or data.get("fred_curve", "—")
+    # ── Fear & Greed (core_data 실제 필드) ──
+    fg_value = fg.get("value", 0) or 0
+    fg_label = fg.get("label", "—")
+    fg_prev  = fg.get("prev_value", 0) or 0
+    fg_chg   = fg.get("change", 0) or 0
+    fg_emoji = fg.get("emoji", "")
+    fg_c     = _fg_color(fg_value)
 
-    def _fmt_fred(v):
-        if v == "—" or v is None:
-            return "—"
-        try:
-            return f"{float(v):.2f}%"
-        except (ValueError, TypeError):
-            return str(v)
+    # ── Crypto (core_data 실제 필드) ──
+    btc_usd = crypto.get("btc_usd", 0) or 0
+    btc_chg = crypto.get("btc_change_pct", 0) or 0
+    eth_usd = crypto.get("eth_usd", 0) or 0
+    eth_chg = crypto.get("eth_change_pct", 0) or 0
 
-    def _fred_dot_color(key, val):
-        """FRED 도트: 양수/음수 기준만 적용 (임의 임계값 없음)"""
-        try:
-            v = float(str(val).replace("%", ""))
-        except (ValueError, TypeError):
-            return "#99bbdd"
-        if key == "curve":
-            # Yield curve: 양수=정상, 음수=역전 (경제학 표준)
-            return "#33ff99" if v > 0 else "#ff4466"
-        # rate, hy: 단순 표시용 (중립 색상)
-        return "#99bbdd"
-
-    # Regime / Risk
+    # ── Regime / Risk ──
     regime_name = regime.get("market_regime", "Transition")
     risk_level  = regime.get("market_risk_level", "MEDIUM")
-    rc = REGIME_COLOR.get(regime_name, "#668899")
+    rc  = REGIME_COLOR.get(regime_name, "#668899")
     rkc = RISK_COLOR.get(risk_level, "#ffbb33")
 
-    # Risk gauge 바늘 각도
+    # Risk gauge 바늘
     risk_angle_map = {"LOW": -145, "MEDIUM": -100, "HIGH": -45}
     needle_deg = risk_angle_map.get(risk_level, -100)
     nx2 = int(100 + 62 * math.cos(math.radians(needle_deg)))
     ny2 = int(95  + 62 * math.sin(math.radians(needle_deg)))
 
-    # Portfolio Risk
-    pr_return  = prisk.get("portfolio_return_impact", "—")
-    pr_risk    = prisk.get("portfolio_risk_impact", "—")
-    pr_dd      = prisk.get("drawdown_risk", "—")
-    pr_crash   = prisk.get("crash_alert_level", "—")
-    pr_hedge   = prisk.get("hedge_intensity", "—")
-    pr_beta    = prisk.get("position_exposure", "—")
+    # ── Portfolio Risk (core_data 실제 필드) ──
+    pr_return = prisk.get("portfolio_return_impact", "—")
+    pr_risk   = prisk.get("portfolio_risk_impact", "—")
+    pr_dd     = prisk.get("drawdown_risk", "—")
+    pr_crash  = prisk.get("crash_alert_level", "—")
+    pr_hedge  = prisk.get("hedge_intensity", "—")
+    pr_beta   = prisk.get("position_exposure", "—")
+    pr_divscore = prisk.get("diversification_score", 0)
 
     def _pr_color(val):
         v = str(val).lower()
@@ -160,43 +133,30 @@ def _build_html(data: dict, dt_utc: datetime) -> str:
             return "#ff4466"
         return "#bbddee"
 
-    # Portfolio Score (data에 없으면 0 표시 — 임의값 사용 안 함)
-    pscore = data.get("portfolio_score", helpers.get("portfolio_score", {}))
-    ps_div = pscore.get("diversification", 0)
-    ps_fit = pscore.get("regime_fit", 0)
-    ps_sig = pscore.get("signal_strength", 0)
+    # ── Market Brief (core_data 실제 필드) ──
+    brief_text = helpers.get("one_line_summary", "—")
 
-    # Market Brief
-    brief_list = helpers.get("market_brief", [])
-    if not brief_list:
-        summary = helpers.get("one_line_summary", "—")
-        brief_list = [summary] if summary != "—" else ["데이터 로딩 중..."]
-
-    brief_html = "<br>".join(brief_list[:5])
-
-    # Scores
+    # ── Scores (core_data 실제 필드) ──
     scores = [
-        ("Growth",    ms.get("growth_score", 2)),
-        ("Risk",      ms.get("risk_score", 2)),
-        ("Inflation", ms.get("inflation_score", 2)),
-        ("Liquidity", ms.get("liquidity_score", 2)),
-        ("Commodity", ms.get("commodity_pressure_score", 3)),
-        ("Stability", ms.get("financial_stability_score", 2)),
+        ("Growth",    ms.get("growth_score", 0)),
+        ("Risk",      ms.get("risk_score", 0)),
+        ("Inflation", ms.get("inflation_score", 0)),
+        ("Liquidity", ms.get("liquidity_score", 0)),
+        ("Commodity", ms.get("commodity_pressure_score", 0)),
+        ("Stability", ms.get("financial_stability_score", 0)),
     ]
 
-    # ETF 행
+    # ── ETF 행 ──
     max_alloc = max(alloc.values()) if alloc else 30
 
     def _etf_rows():
         rows = []
         for etf in ETFS:
-            s  = strat.get(etf, "Neutral")
-            sc = STANCE_COLOR.get(s, "#99bbdd")
-            t  = timing.get(etf, tsig.get("signal_matrix", {}).get("buy_watch", []))
-            # timing_signal에서 가져오기
-            sig = timing.get(etf, "HOLD")
+            s    = strat.get(etf, "Neutral")
+            sc   = STANCE_COLOR.get(s, "#99bbdd")
+            sig  = timing.get(etf, "HOLD")
             sigc = SIGNAL_COLOR.get(sig, "#ffee44")
-            pct = alloc.get(etf, 0)
+            pct  = alloc.get(etf, 0)
             bar_w = int(pct / max_alloc * 100) if max_alloc > 0 else 0
             rows.append(f"""<div class="etf-row">
               <div class="etf-tick">{etf}</div>
@@ -211,7 +171,6 @@ def _build_html(data: dict, dt_utc: datetime) -> str:
             </div>""")
         return "\n".join(rows)
 
-    # Score 행
     def _score_rows():
         rows = []
         for label, val in scores:
@@ -224,49 +183,26 @@ def _build_html(data: dict, dt_utc: datetime) -> str:
             </div>""")
         return "\n".join(rows)
 
-    # Portfolio Score 행
-    def _pscore_rows():
-        rows = []
-        for label, val, color in [("Diversification", ps_div, "#ffbb33"), ("Regime Fit", ps_fit, "#33ff99"), ("Signal Strength", ps_sig, "#55bbff")]:
-            rows.append(f"""<div class="ps-row">
-              <div class="ps-lbl">{label}</div>
-              <div class="ps-bar"><div class="ps-fill" style="width:{val}%;background:{color}"></div></div>
-              <div class="ps-val" style="color:{color}">{val}/100</div>
-            </div>""")
-        return "\n".join(rows)
-
-    # % 변동 데이터 (collector에서 제공해야 함, 없으면 — 표시)
-    vix_chg = snap.get("vix_chg")   # 일간 % 변동
-    oil_chg = snap.get("oil_chg")   # 일간 % 변동
-
-    def _safe_sign(v):
-        if v is None:
-            return "—"
-        return _sign(v)
-
-    def _safe_color(v):
-        if v is None:
-            return "#bbddee"
-        return _dn_up(v)
-
-    # Snapshot 행 — 모든 값은 data dict에서만 가져옴, 추측 없음
+    # ── Snapshot 행 (core_data 실제 필드만, 추측 0건) ──
+    # sp500/nasdaq: % 변동만 존재 → % 값을 메인으로 표시
+    # vix/us10y/oil/dxy: 절대값만 존재 → 절대값 표시
     snap_rows_data = [
-        ("S&P 500", sp500_v, _safe_sign(sp500_chg), _safe_color(sp500_chg), ""),
-        ("Nasdaq",  nasdaq_v, _safe_sign(nasdaq_chg), _safe_color(nasdaq_chg), ""),
-        ("SPY",     spy_v if spy_v != "—" else "—", _safe_sign(spy_chg), _safe_color(spy_chg), ""),
-        ("VIX",     f"{vix:.2f}" if vix else "—", _safe_sign(vix_chg), "#ff4466" if vix >= 25 else ("#ffbb33" if vix >= 20 else "#33ff99"), f'<div class="dot" style="background:#ff4466;box-shadow:0 0 6px #ff446688"></div>' if vix >= 25 else ""),
-        ("US 10Y",  f"{us10y:.2f}%" if us10y else "—", "", "#bbddee", ""),
-        ("WTI",     f"{oil:.2f}" if oil else "—", _safe_sign(oil_chg), "#ffbb33" if oil >= 90 else "#bbddee", f'<div class="dot" style="background:#ffbb33;box-shadow:0 0 6px #ffbb3388"></div>' if oil >= 90 else ""),
-        ("DXY",     f"{dxy:.2f}" if dxy else "—", "", "#bbddee", ""),
+        ("S&P 500", f"{sp500_chg:+.2f}%", _dn_up(sp500_chg), ""),
+        ("Nasdaq",  f"{nasdaq_chg:+.2f}%", _dn_up(nasdaq_chg), ""),
+        ("VIX",     f"{vix:.2f}", "#ff4466" if vix >= 25 else ("#ffbb33" if vix >= 20 else "#33ff99"),
+         f'<div class="dot" style="background:#ff4466;box-shadow:0 0 6px #ff446688"></div>' if vix >= 25 else ""),
+        ("US 10Y",  f"{us10y:.2f}%", "#bbddee", ""),
+        ("WTI",     f"${oil:.2f}", "#ffbb33" if oil >= 90 else "#bbddee",
+         f'<div class="dot" style="background:#ffbb33;box-shadow:0 0 6px #ffbb3388"></div>' if oil >= 90 else ""),
+        ("DXY",     f"{dxy:.2f}", "#bbddee", ""),
     ]
 
     def _snap_rows():
         rows = []
-        for name, val, chg, color, dot_html in snap_rows_data:
+        for name, val, color, dot_html in snap_rows_data:
             rows.append(f"""<div class="snap-row">
               <div class="snap-n">{name}{dot_html}</div>
               <div class="snap-v" style="color:{color}">{val}</div>
-              <div class="snap-c" style="color:{color}">{chg}</div>
             </div>""")
         return "\n".join(rows)
 
@@ -287,8 +223,6 @@ def _build_html(data: dict, dt_utc: datetime) -> str:
 body{{width:1080px;height:1080px;overflow:hidden;background:#070b11;font-family:'Barlow',sans-serif;color:#eef6ff;}}
 .root{{height:100%;display:flex;flex-direction:column;}}
 .rb{{height:3px;background:linear-gradient(90deg,#ff1010,#ff5500,#ff9900,#ffcc00,#aaee00,#11cc55,#00cccc,#0088ff,#7700ff,#ff0099);flex-shrink:0;}}
-
-/* Header */
 .hdr{{background:#0c1420;border-bottom:1px solid #2e4868;padding:7px 16px;display:flex;align-items:center;flex-shrink:0;}}
 .hdr-left{{display:flex;align-items:center;gap:7px;}}
 .hdr-dot{{width:7px;height:7px;border-radius:50%;background:#33ff99;box-shadow:0 0 8px #33ff99;}}
@@ -302,8 +236,6 @@ body{{width:1080px;height:1080px;overflow:hidden;background:#070b11;font-family:
 .hdr-time{{font-family:'IBM Plex Mono',monospace;font-size:22px;font-weight:700;color:#f0f8ff;}}
 .hdr-tz{{font-family:'IBM Plex Mono',monospace;font-size:12px;font-weight:600;color:#99bbdd;}}
 .hdr-date{{font-family:'IBM Plex Mono',monospace;font-size:11px;color:#99bbdd;margin-left:6px;}}
-
-/* 3-Column Grid */
 .main{{flex:1;display:grid;grid-template-columns:1fr 1fr 1fr;}}
 .col{{display:flex;flex-direction:column;}}
 .col+.col{{border-left:1px solid #1e3048;}}
@@ -311,47 +243,35 @@ body{{width:1080px;height:1080px;overflow:hidden;background:#070b11;font-family:
 .sec:last-child{{border-bottom:none;}}
 .sl{{font-family:'IBM Plex Mono',monospace;font-size:10px;letter-spacing:2px;color:#7799bb;text-transform:uppercase;margin-bottom:4px;display:flex;align-items:center;gap:6px;}}
 .sl::after{{content:'';flex:1;height:1px;background:#1e3048;}}
-
-/* Snapshot */
-.snap-row{{display:flex;align-items:center;padding:3px 7px;background:rgba(255,255,255,.03);border:1px solid #1e3048;border-radius:4px;margin-bottom:2px;}}
-.snap-n{{flex:1;font-size:12px;font-weight:500;display:flex;align-items:center;gap:5px;}}
-.snap-v{{font-family:'IBM Plex Mono',monospace;font-size:16px;font-weight:700;}}
-.snap-c{{font-family:'IBM Plex Mono',monospace;font-size:10px;font-weight:600;margin-left:5px;}}
+.snap-row{{display:flex;align-items:center;padding:4px 7px;background:rgba(255,255,255,.03);border:1px solid #1e3048;border-radius:4px;margin-bottom:2px;}}
+.snap-n{{flex:1;font-size:13px;font-weight:500;display:flex;align-items:center;gap:5px;}}
+.snap-v{{font-family:'IBM Plex Mono',monospace;font-size:17px;font-weight:700;}}
 .dot{{width:7px;height:7px;border-radius:50%;flex-shrink:0;}}
-
-/* FX */
 .fx3{{display:grid;grid-template-columns:1fr 1fr 1fr;gap:3px;}}
 .fxi{{background:rgba(68,238,255,.08);border:1px solid rgba(68,238,255,.25);border-radius:4px;padding:4px 5px;text-align:center;}}
 .fxl{{font-family:'IBM Plex Mono',monospace;font-size:11px;font-weight:600;color:#aaeeff;margin-bottom:2px;}}
 .fxv{{font-family:'IBM Plex Mono',monospace;font-size:13px;font-weight:700;color:#55eeff;}}
-
-/* FRED */
-.fred-row{{display:flex;align-items:center;padding:3px 7px;background:rgba(255,255,255,.025);border:1px solid #1e3048;border-radius:4px;margin-bottom:2px;}}
-.fred-n{{flex:1;font-size:13px;font-weight:500;color:#eef6ff;}}
-.fred-v{{font-family:'IBM Plex Mono',monospace;font-size:16px;font-weight:700;margin-right:6px;}}
-
-/* Gauge */
+.fg-box{{display:flex;align-items:center;gap:10px;padding:6px 8px;background:rgba(255,255,255,.03);border:1px solid #1e3048;border-radius:5px;}}
+.fg-val{{font-family:'IBM Plex Mono',monospace;font-size:28px;font-weight:800;line-height:1;}}
+.fg-label{{font-size:12px;font-weight:600;}}
+.fg-sub{{font-family:'IBM Plex Mono',monospace;font-size:10px;color:#7799bb;margin-top:2px;}}
+.crypto-row{{display:flex;align-items:center;padding:4px 8px;background:rgba(255,255,255,.03);border:1px solid #1e3048;border-radius:4px;margin-bottom:2px;}}
+.crypto-n{{flex:1;font-size:13px;font-weight:600;color:#eef6ff;}}
+.crypto-v{{font-family:'IBM Plex Mono',monospace;font-size:15px;font-weight:700;color:#ffbb33;}}
+.crypto-c{{font-family:'IBM Plex Mono',monospace;font-size:10px;font-weight:600;margin-left:6px;}}
 .gauge-c{{text-align:center;}}
 .gauge-lbl{{font-family:'Barlow',sans-serif;font-size:22px;font-weight:900;letter-spacing:4px;margin-top:-4px;}}
-
-/* Regime badge */
 .reg-badge{{padding:7px 10px;border-radius:5px;text-align:center;}}
 .reg-val{{font-family:'Barlow',sans-serif;font-size:18px;font-weight:900;letter-spacing:3px;}}
-
-/* Score */
 .sc-row{{display:flex;align-items:center;gap:6px;margin-bottom:3px;}}
 .sc-lbl{{width:70px;font-size:11px;color:#99bbdd;}}
 .sc-bar{{flex:1;height:5px;background:#1e3048;border-radius:3px;overflow:hidden;}}
 .sc-fill{{height:100%;border-radius:3px;}}
 .sc-val{{font-family:'IBM Plex Mono',monospace;font-size:12px;font-weight:700;width:28px;text-align:right;}}
-
-/* Portfolio Risk */
 .pr-grid{{display:grid;grid-template-columns:1fr 1fr;gap:3px;}}
 .pri{{background:rgba(255,255,255,.035);border:1px solid #1e3048;border-radius:4px;padding:4px 7px;}}
 .pr-label{{font-family:'IBM Plex Mono',monospace;font-size:11px;font-weight:600;color:#99bbdd;margin-bottom:2px;}}
 .pr-val{{font-family:'IBM Plex Mono',monospace;font-size:12px;font-weight:700;}}
-
-/* ETF */
 .etf-row{{display:flex;align-items:center;padding:4px 7px;background:rgba(255,255,255,.03);border:1px solid #1e3048;border-radius:4px;margin-bottom:2px;}}
 .etf-tick{{font-family:'IBM Plex Mono',monospace;font-size:14px;font-weight:800;color:#eef6ff;width:46px;}}
 .etf-mid{{display:flex;flex-direction:column;width:80px;}}
@@ -361,18 +281,7 @@ body{{width:1080px;height:1080px;overflow:hidden;background:#070b11;font-family:
 .etf-bar-bg{{flex:1;height:5px;background:#1e3048;border-radius:3px;overflow:hidden;}}
 .etf-bar-fill{{height:100%;border-radius:3px;}}
 .etf-pct{{font-family:'IBM Plex Mono',monospace;font-size:12px;font-weight:700;color:#eef6ff;width:28px;text-align:right;}}
-
-/* Portfolio Score */
-.ps-row{{display:flex;align-items:center;gap:6px;margin-bottom:3px;}}
-.ps-lbl{{font-size:11px;color:#eef6ff;width:82px;flex-shrink:0;}}
-.ps-bar{{flex:1;height:5px;background:#1e3048;border-radius:3px;overflow:hidden;}}
-.ps-fill{{height:100%;border-radius:3px;}}
-.ps-val{{font-family:'IBM Plex Mono',monospace;font-size:11px;font-weight:700;width:40px;text-align:right;}}
-
-/* Brief */
-.brief{{font-size:11px;color:#99bbdd;line-height:1.8;}}
-
-/* Footer */
+.brief{{font-size:12px;color:#99bbdd;line-height:1.8;}}
 .ftr{{background:#050a10;border-top:1px solid #1e3048;padding:4px 16px;display:flex;align-items:center;gap:8px;flex-shrink:0;}}
 .ftr-l{{font-family:'IBM Plex Mono',monospace;font-size:9px;color:#7799bb;letter-spacing:2px;}}
 .ftag{{font-family:'IBM Plex Mono',monospace;font-size:8px;padding:1px 5px;border-radius:2px;border:1px solid #1e3048;color:#557799;}}
@@ -382,8 +291,6 @@ body{{width:1080px;height:1080px;overflow:hidden;background:#070b11;font-family:
 <body>
 <div class="root">
 <div class="rb"></div>
-
-<!-- HEADER -->
 <div class="hdr">
   <div class="hdr-left">
     <div class="hdr-dot"></div>
@@ -391,9 +298,7 @@ body{{width:1080px;height:1080px;overflow:hidden;background:#070b11;font-family:
     <span class="hdr-sep">·</span>
     <span class="hdr-sub">INVESTMENT OS</span>
   </div>
-  <div class="hdr-center">
-    <span class="hdr-title">Full <em>Brief</em></span>
-  </div>
+  <div class="hdr-center"><span class="hdr-title">Full <em>Brief</em></span></div>
   <div class="hdr-right">
     <span class="hdr-time">{kst.strftime('%H:%M')}</span>
     <span class="hdr-tz">KST</span>
@@ -401,10 +306,8 @@ body{{width:1080px;height:1080px;overflow:hidden;background:#070b11;font-family:
   </div>
 </div>
 
-<!-- 3 COLUMNS -->
 <div class="main">
-
-<!-- COL 1 -->
+<!-- COL 1: Snapshot + FX + Fear&Greed + Crypto -->
 <div class="col">
   <div class="sec">
     <div class="sl">Market Snapshot</div>
@@ -419,14 +322,31 @@ body{{width:1080px;height:1080px;overflow:hidden;background:#070b11;font-family:
     </div>
   </div>
   <div class="sec">
-    <div class="sl">FRED Macro</div>
-    <div class="fred-row"><div class="fred-n">Fed Funds Rate</div><div class="fred-v" style="color:{_fred_dot_color('rate', fred_rate)}">{_fmt_fred(fred_rate)}</div><div class="dot" style="background:{_fred_dot_color('rate', fred_rate)};box-shadow:0 0 6px {_fred_dot_color('rate', fred_rate)}88"></div></div>
-    <div class="fred-row"><div class="fred-n">HY Spread</div><div class="fred-v" style="color:{_fred_dot_color('hy', fred_hy)}">{_fmt_fred(fred_hy)}</div><div class="dot" style="background:{_fred_dot_color('hy', fred_hy)};box-shadow:0 0 6px {_fred_dot_color('hy', fred_hy)}88"></div></div>
-    <div class="fred-row"><div class="fred-n">Curve 2-10</div><div class="fred-v" style="color:{_fred_dot_color('curve', fred_curve)}">{_fmt_fred(fred_curve)}</div><div class="dot" style="background:{_fred_dot_color('curve', fred_curve)};box-shadow:0 0 6px {_fred_dot_color('curve', fred_curve)}88"></div></div>
+    <div class="sl">Fear & Greed Index</div>
+    <div class="fg-box">
+      <div class="fg-val" style="color:{fg_c}">{fg_value}</div>
+      <div>
+        <div class="fg-label" style="color:{fg_c}">{fg_emoji} {fg_label}</div>
+        <div class="fg-sub">prev {fg_prev} · chg {fg_chg:+d}</div>
+      </div>
+    </div>
+  </div>
+  <div class="sec">
+    <div class="sl">Crypto</div>
+    <div class="crypto-row">
+      <div class="crypto-n">BTC</div>
+      <div class="crypto-v">${btc_usd:,.0f}</div>
+      <div class="crypto-c" style="color:{_dn_up(btc_chg)}">{_sign(btc_chg)}</div>
+    </div>
+    <div class="crypto-row">
+      <div class="crypto-n">ETH</div>
+      <div class="crypto-v">${eth_usd:,.0f}</div>
+      <div class="crypto-c" style="color:{_dn_up(eth_chg)}">{_sign(eth_chg)}</div>
+    </div>
   </div>
 </div>
 
-<!-- COL 2 -->
+<!-- COL 2: Risk + Regime + Score + PRisk -->
 <div class="col">
   <div class="sec">
     <div class="sl">Market Risk Level</div>
@@ -472,40 +392,31 @@ body{{width:1080px;height:1080px;overflow:hidden;background:#070b11;font-family:
   </div>
 </div>
 
-<!-- COL 3 -->
+<!-- COL 3: ETF + Brief -->
 <div class="col">
   <div class="sec">
     <div class="sl">ETF Strategy · Signal · Allocation</div>
     {_etf_rows()}
   </div>
   <div class="sec">
-    <div class="sl">Portfolio Score</div>
-    {_pscore_rows()}
-  </div>
-  <div class="sec">
     <div class="sl">Market Brief</div>
-    <div class="brief">{brief_html}</div>
+    <div class="brief">{brief_text}</div>
   </div>
 </div>
-
 </div>
 
-<!-- FOOTER -->
 <div class="ftr">
   <span class="ftr-l">{CODENAME} · {SYSTEM_VERSION}</span>
-  <span class="ftag">FRED·YAHOO·RSS</span>
+  <span class="ftag">YAHOO·RSS·API</span>
   <span class="ftag">NOT FINANCIAL ADVICE</span>
   <span class="ftr-r">{kst.strftime('%b %d, %Y')} · {kst.strftime('%H:%M')} KST</span>
 </div>
-
 </div>
 </body>
 </html>"""
 
 
-# ────────────────────────────────────────────────
-# 렌더링 함수 (Playwright) — 기존 유지
-# ────────────────────────────────────────────────
+# ── Playwright 렌더링 (기존 유지) ──
 async def _render_async(url: str, out_path: str) -> bool:
     try:
         from playwright.async_api import async_playwright
@@ -535,39 +446,21 @@ def _render(url: str, out_path: str) -> bool:
             return future.result()
 
 
-# ────────────────────────────────────────────────
-# 공개 인터페이스 — 기존 시그니처 100% 호환
-# ────────────────────────────────────────────────
 def build_html_dashboard(
     data: dict,
     session: str = "full",
     dt_utc: Optional[datetime] = None,
     output_dir: Optional[Path] = None,
 ) -> Optional[str]:
-    """
-    HTML/Playwright 기반 풀버전 대시보드 PNG 생성.
-
-    Args:
-        data:       core_data.json data 필드
-        session:    세션 이름 (full 고정)
-        dt_utc:     기준 시각 (None=현재)
-        output_dir: 저장 디렉토리
-
-    Returns:
-        str:  PNG 파일 경로 (성공)
-        None: 실패 (Fallback → 텍스트 발행)
-    """
     try:
         if dt_utc is None:
             dt_utc = datetime.now(timezone.utc)
-
         if output_dir is None:
             try:
                 from config.settings import IMAGES_DIR
                 output_dir = Path(IMAGES_DIR)
             except Exception:
                 output_dir = Path("data/images")
-
         output_dir = Path(output_dir)
         output_dir.mkdir(parents=True, exist_ok=True)
 
@@ -597,7 +490,6 @@ def build_html_dashboard(
         else:
             logger.error("[HtmlDash] 렌더링 실패 — PNG 미생성")
             return None
-
     except Exception as e:
         logger.error(f"[HtmlDash] 예외 발생: {e}", exc_info=True)
         return None
