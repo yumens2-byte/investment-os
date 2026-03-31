@@ -74,7 +74,7 @@ def _build_html(data: dict, dt_utc: datetime) -> str:
     # Snapshot 값
     sp500_chg = snap.get("sp500", 0) or 0
     nasdaq_chg = snap.get("nasdaq", 0) or 0
-    spy_chg   = snap.get("spy", sp500_chg) or sp500_chg
+    spy_chg   = snap.get("spy")  # None if not collected
     vix       = snap.get("vix", 0) or 0
     us10y     = snap.get("us10y", 0) or 0
     oil       = snap.get("oil", 0) or 0
@@ -119,16 +119,15 @@ def _build_html(data: dict, dt_utc: datetime) -> str:
             return str(v)
 
     def _fred_dot_color(key, val):
+        """FRED 도트: 양수/음수 기준만 적용 (임의 임계값 없음)"""
         try:
             v = float(str(val).replace("%", ""))
         except (ValueError, TypeError):
             return "#99bbdd"
-        if key == "rate":
-            return "#ffbb33" if v > 3.0 else "#33ff99"
-        if key == "hy":
-            return "#ff4466" if v > 5.0 else "#99bbdd" if v > 3.0 else "#33ff99"
         if key == "curve":
+            # Yield curve: 양수=정상, 음수=역전 (경제학 표준)
             return "#33ff99" if v > 0 else "#ff4466"
+        # rate, hy: 단순 표시용 (중립 색상)
         return "#99bbdd"
 
     # Regime / Risk
@@ -161,11 +160,11 @@ def _build_html(data: dict, dt_utc: datetime) -> str:
             return "#ff4466"
         return "#bbddee"
 
-    # Portfolio Score (fallback)
+    # Portfolio Score (data에 없으면 0 표시 — 임의값 사용 안 함)
     pscore = data.get("portfolio_score", helpers.get("portfolio_score", {}))
-    ps_div = pscore.get("diversification", 50)
-    ps_fit = pscore.get("regime_fit", 70)
-    ps_sig = pscore.get("signal_strength", 60)
+    ps_div = pscore.get("diversification", 0)
+    ps_fit = pscore.get("regime_fit", 0)
+    ps_sig = pscore.get("signal_strength", 0)
 
     # Market Brief
     brief_list = helpers.get("market_brief", [])
@@ -236,15 +235,29 @@ def _build_html(data: dict, dt_utc: datetime) -> str:
             </div>""")
         return "\n".join(rows)
 
-    # Snapshot 행
+    # % 변동 데이터 (collector에서 제공해야 함, 없으면 — 표시)
+    vix_chg = snap.get("vix_chg")   # 일간 % 변동
+    oil_chg = snap.get("oil_chg")   # 일간 % 변동
+
+    def _safe_sign(v):
+        if v is None:
+            return "—"
+        return _sign(v)
+
+    def _safe_color(v):
+        if v is None:
+            return "#bbddee"
+        return _dn_up(v)
+
+    # Snapshot 행 — 모든 값은 data dict에서만 가져옴, 추측 없음
     snap_rows_data = [
-        ("S&P 500", sp500_v, _sign(sp500_chg), _dn_up(sp500_chg), ""),
-        ("Nasdaq",  nasdaq_v, _sign(nasdaq_chg), _dn_up(nasdaq_chg), ""),
-        ("SPY",     spy_v, _sign(spy_chg), _dn_up(spy_chg), ""),
-        ("VIX",     f"{vix:.2f}", _sign(38.7) if vix > 25 else f"{vix:.1f}", "#ff4466" if vix >= 20 else "#33ff99", f'<div class="dot" style="background:#ff4466;box-shadow:0 0 6px #ff446688"></div>' if vix >= 25 else ""),
-        ("US 10Y",  f"{us10y:.2f}%", f"▲{us10y:.2f}" if us10y > 0 else f"{us10y:.2f}", "#bbddee", ""),
-        ("WTI",     f"{oil:.2f}", f"▲{((oil/100-1)*100):.1f}%" if oil > 0 else "—", "#ffbb33" if oil >= 80 else "#bbddee", f'<div class="dot" style="background:#ffbb33;box-shadow:0 0 6px #ffbb3388"></div>' if oil >= 90 else ""),
-        ("DXY",     f"{dxy:.2f}", "MOD" if 95 <= dxy <= 105 else ("HIGH" if dxy > 105 else "LOW"), "#bbddee", ""),
+        ("S&P 500", sp500_v, _safe_sign(sp500_chg), _safe_color(sp500_chg), ""),
+        ("Nasdaq",  nasdaq_v, _safe_sign(nasdaq_chg), _safe_color(nasdaq_chg), ""),
+        ("SPY",     spy_v if spy_v != "—" else "—", _safe_sign(spy_chg), _safe_color(spy_chg), ""),
+        ("VIX",     f"{vix:.2f}" if vix else "—", _safe_sign(vix_chg), "#ff4466" if vix >= 25 else ("#ffbb33" if vix >= 20 else "#33ff99"), f'<div class="dot" style="background:#ff4466;box-shadow:0 0 6px #ff446688"></div>' if vix >= 25 else ""),
+        ("US 10Y",  f"{us10y:.2f}%" if us10y else "—", "", "#bbddee", ""),
+        ("WTI",     f"{oil:.2f}" if oil else "—", _safe_sign(oil_chg), "#ffbb33" if oil >= 90 else "#bbddee", f'<div class="dot" style="background:#ffbb33;box-shadow:0 0 6px #ffbb3388"></div>' if oil >= 90 else ""),
+        ("DXY",     f"{dxy:.2f}" if dxy else "—", "", "#bbddee", ""),
     ]
 
     def _snap_rows():
