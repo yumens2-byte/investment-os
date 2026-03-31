@@ -86,7 +86,6 @@ def _build_daily(story, risk_level, market_data, episode_no):
     <div style="flex:1;background:#10b981;"></div><div style="flex:1;background:#f59e0b;"></div><div style="flex:1;background:#ef4444;"></div>
   </div>
 
-  <!-- 헤더 -->
   <div style="padding:24px 44px 18px;border-bottom:2px solid #222;flex-shrink:0;">
     <div style="font-family:'IBM Plex Mono',monospace;font-size:12px;color:#f59e0b;letter-spacing:4px;margin-bottom:10px;">INVESTMENT COMIC · Ep.{episode_no} · {today} · DAILY</div>
     <div style="font-size:33px;font-weight:900;color:#ffffff;letter-spacing:-1px;line-height:1.15;margin-bottom:16px;">{title}</div>
@@ -109,10 +108,7 @@ def _build_daily(story, risk_level, market_data, episode_no):
     </div>
   </div>
 
-  <!-- 배틀 -->
   <div style="flex:1;display:grid;grid-template-columns:1fr 64px 1fr;min-height:0;padding:20px 44px;">
-
-    <!-- 좌: BUY -->
     <div style="display:flex;flex-direction:column;gap:0;padding-right:22px;">
       <div style="background:#10b981;border-radius:8px;padding:9px 16px;display:inline-flex;align-items:center;gap:8px;align-self:flex-start;margin-bottom:16px;">
         <span style="font-size:14px;font-weight:900;color:#ffffff;letter-spacing:1px;">🐂 MAX BULLHORN</span>
@@ -125,8 +121,6 @@ def _build_daily(story, risk_level, market_data, episode_no):
         <div style="font-size:13px;color:rgba(255,255,255,0.9);margin-top:4px;font-weight:700;">좋아요(하트) 누르기</div>
       </div>
     </div>
-
-    <!-- VS -->
     <div style="display:flex;flex-direction:column;align-items:center;justify-content:center;gap:12px;">
       <div style="flex:1;width:2px;background:#222;"></div>
       <div style="width:56px;height:56px;border-radius:50%;background:#111;border:2px solid #333;display:flex;align-items:center;justify-content:center;flex-shrink:0;">
@@ -134,8 +128,6 @@ def _build_daily(story, risk_level, market_data, episode_no):
       </div>
       <div style="flex:1;width:2px;background:#222;"></div>
     </div>
-
-    <!-- 우: SELL -->
     <div style="display:flex;flex-direction:column;gap:0;padding-left:22px;align-items:flex-end;">
       <div style="background:#ef4444;border-radius:8px;padding:9px 16px;display:inline-flex;align-items:center;gap:8px;align-self:flex-end;margin-bottom:16px;">
         <span style="font-size:14px;font-weight:900;color:#ffffff;letter-spacing:1px;">BARON BEARSWORTH 🐻</span>
@@ -150,7 +142,6 @@ def _build_daily(story, risk_level, market_data, episode_no):
     </div>
   </div>
 
-  <!-- HOLD 배너 -->
   <div style="padding:0 44px 14px;flex-shrink:0;">
     <div style="background:#f59e0b;border-radius:12px;padding:14px 22px;display:flex;align-items:center;justify-content:space-between;">
       <div>
@@ -161,7 +152,6 @@ def _build_daily(story, risk_level, market_data, episode_no):
     </div>
   </div>
 
-  <!-- 하단 -->
   <div style="padding:10px 44px 12px;border-top:2px solid #222;display:flex;justify-content:space-between;align-items:center;flex-shrink:0;">
     <div style="font-family:'IBM Plex Mono',monospace;font-size:13px;font-weight:700;color:#f59e0b;">@InvestmentComic</div>
     <div style="font-size:13px;font-weight:700;color:#ffffff;">당신의 선택은?</div>
@@ -188,7 +178,6 @@ def _build_weekly(story, risk_level, market_data, episode_no):
 
     cuts_data = {n: _cut(cuts, n) for n in range(1, 9)}
 
-    # 좌(BUY): 홀수컷 1,3,5,7 / 우(SELL): 짝수컷 2,4,6,8
     def left_block(n):
         dlg, scene = cuts_data[n]
         border_opacity = "1" if n in (1,3) else "0.45"
@@ -209,7 +198,6 @@ def _build_weekly(story, risk_level, market_data, episode_no):
   <div style="font-size:13px;color:#aaaaaa;margin-top:5px;line-height:1.5;">{scene}</div>
 </div>"""
 
-    # 8개 블록 생성
     lb = {n: left_block(n)  for n in (1,3,5,7)}
     rb = {n: right_block(n) for n in (2,4,6,8)}
 
@@ -236,14 +224,12 @@ def _build_weekly(story, risk_level, market_data, episode_no):
     <div style="flex:1;background:#10b981;"></div><div style="flex:1;background:#f59e0b;"></div><div style="flex:1;background:#ef4444;"></div>
   </div>
 
-  <!-- 헤더: 1줄 압축 -->
   <div style="padding:16px 44px 14px;border-bottom:2px solid #222;flex-shrink:0;">
     <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;">
       <div>
         <div style="font-family:'IBM Plex Mono',monospace;font-size:11px;color:#f59e0b;letter-spacing:3px;margin-bottom:6px;">INVESTMENT COMIC · Ep.{episode_no} · {today} · WEEKLY·8CUT</div>
         <div style="font-size:26px;font-weight:900;color:#ffffff;letter-spacing:-0.5px;line-height:1.15;">{title}</div>
       </div>
-      <!-- 시장 데이터 인라인 -->
       <div style="display:flex;gap:8px;flex-shrink:0;margin-left:20px;">
         <div style="padding:10px 14px;background:#111;border-radius:8px;text-align:center;min-width:84px;">
           <div style="font-family:'IBM Plex Mono',monospace;font-size:10px;color:#aaaaaa;letter-spacing:1px;margin-bottom:3px;">VIX</div>
@@ -259,7 +245,6 @@ def _build_weekly(story, risk_level, market_data, episode_no):
         </div>
       </div>
     </div>
-    <!-- 캐릭터 태그 -->
     <div style="display:flex;justify-content:space-between;align-items:center;">
       <div style="background:#10b981;border-radius:6px;padding:7px 14px;">
         <span style="font-size:13px;font-weight:900;color:#ffffff;letter-spacing:1px;">🐂 MAX BULLHORN</span>
@@ -271,12 +256,10 @@ def _build_weekly(story, risk_level, market_data, episode_no):
     </div>
   </div>
 
-  <!-- 8컷 풀팩킹 -->
   <div style="flex:1;display:flex;flex-direction:column;padding:0 44px;min-height:0;overflow:hidden;">
     {rows}
   </div>
 
-  <!-- BUY/HOLD/SELL -->
   <div style="padding:10px 44px 10px;flex-shrink:0;">
     <div style="display:flex;gap:10px;">
       <div style="background:#10b981;border-radius:10px;padding:12px 16px;text-align:center;flex:1;">
@@ -291,7 +274,6 @@ def _build_weekly(story, risk_level, market_data, episode_no):
     </div>
   </div>
 
-  <!-- 하단 -->
   <div style="padding:8px 44px 10px;border-top:2px solid #222;display:flex;justify-content:space-between;align-items:center;flex-shrink:0;">
     <div style="font-family:'IBM Plex Mono',monospace;font-size:13px;font-weight:700;color:#f59e0b;">@InvestmentComic</div>
     <div style="font-size:13px;font-weight:700;color:#ffffff;">당신의 선택은?</div>
