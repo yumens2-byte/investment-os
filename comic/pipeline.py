@@ -55,7 +55,7 @@ def run(comic_type: str) -> None:
     Args:
         comic_type: 'daily' | 'weekly'
     """
-    from collectors.yahoo_finance import collect_market_data
+    from collectors.yahoo_finance import collect_market_snapshot
     from comic.story import generate_story
     from comic.image_gen import generate_images, CostLimitExceeded
     from comic.compositor import compose_final_image
@@ -74,7 +74,7 @@ def run(comic_type: str) -> None:
     # ── STEP 1. 시장 데이터 수집 ──────────────────────────
     logger.info("[STEP 1] 시장 데이터 수집")
     try:
-        market_data = collect_market_data()
+        market_data = collect_market_snapshot()
         risk_level  = determine_risk(market_data)
         logger.info(f"[STEP 1] 완료 — VIX={market_data.get('vix')}, RISK={risk_level}")
     except Exception as e:

@@ -97,7 +97,7 @@ def _build_user_prompt(
 
 ## Market Data
 - VIX: {market_data.get('vix', 'N/A')}
-- S&P500 Change: {market_data.get('sp500_change', 'N/A')}%
+- S&P500 Change: {market_data.get('sp500', 'N/A')}%
 - US10Y: {market_data.get('us10y', 'N/A')}%
 - Top ETF move: {market_data.get('top_etf', 'N/A')}
 

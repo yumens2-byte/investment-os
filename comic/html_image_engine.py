@@ -352,7 +352,7 @@ def _build_full_html(
         )
 
     vix_val = market_data.get("vix", "N/A")
-    sp500   = market_data.get("sp500_change", "N/A")
+    sp500   = market_data.get("sp500", "N/A")
     sp_sign = "+" if isinstance(sp500, (int, float)) and sp500 >= 0 else ""
 
     return f"""<!DOCTYPE html>
