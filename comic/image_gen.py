@@ -19,7 +19,7 @@ logger = logging.getLogger(__name__)
 
 GPT_IMAGE_MODEL  = "gpt-image-1"
 IMAGE_SIZE       = "1024x1024"
-IMAGE_QUALITY    = "standard"
+IMAGE_QUALITY    = "medium"       # gpt-image-1: low|medium|high|auto
 COST_PER_IMAGE   = 0.04
 MAX_MONTHLY_COST = 10.0
 CHARACTERS_FILE  = Path(__file__).parent / "characters.json"
