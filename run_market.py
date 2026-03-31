@@ -156,6 +156,7 @@ def run(session: str) -> dict:
         fear_greed=fear_greed,
         crypto=crypto,
         news_summary=news_summary,
+        macro_data=fred_data,
         snapshot=snapshot,
         market_regime=market_regime,
         market_score=market_score,
