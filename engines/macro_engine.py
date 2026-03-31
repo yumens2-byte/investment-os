@@ -53,7 +53,7 @@ def _score_oil(oil: float) -> dict:
         state, score = "Low", 1
     elif oil < OIL_HIGH_THRESHOLD:
         state, score = "Moderate", 2
-    elif oil < 110:
+    elif oil < 100:
         state, score = "High", 3
     else:
         state, score = "Oil Shock", 4

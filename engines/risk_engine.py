@@ -93,21 +93,21 @@ def _determine_trading_signal(
     # 전체 시그널
     if risk_level == "HIGH":
         signal = "HEDGE"
-        reason = "High risk environment — defensive posture required"
+        reason = "고위험 구간 — 방어 포지션 필요"
     elif risk_level == "MEDIUM":
         if len(buy_watch) >= 3:
             signal = "ADD"
-            reason = "Moderate risk with selective opportunities"
+            reason = "중간 리스크 — 선별적 매수 기회"
         else:
             signal = "HOLD"
-            reason = "Moderate risk — maintain current exposure"
+            reason = "중간 리스크 — 현재 포지션 유지"
     else:  # LOW
         if len(buy_watch) >= 3:
             signal = "BUY"
-            reason = "Low risk, positive momentum across multiple ETFs"
+            reason = "저위험 — 전반적 모멘텀 양호"
         else:
             signal = "HOLD"
-            reason = "Low risk but limited broad momentum"
+            reason = "저위험 — 광범위 모멘텀 제한적"
 
     return {
         "trading_signal": signal,
