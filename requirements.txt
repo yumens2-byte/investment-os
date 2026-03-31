@@ -34,3 +34,9 @@ playwright>=1.40.0
 
 # 주간 PDF 리포트
 reportlab>=4.0.0
+
+
+# 코믹
+anthropic>=0.25.0
+supabase==2.10.0
+openai>=1.30.0
