@@ -301,7 +301,8 @@ def _build_weekly(story, risk_level, market_data, episode_no):
   <div style="display:flex;height:8px;flex-shrink:0;">
     <div style="flex:1;background:#10b981;"></div><div style="flex:1;background:#f59e0b;"></div><div style="flex:1;background:#ef4444;"></div>
   </div>
-</div></body></html>
+</div></body></html>"""
+
 
 def _build_html(story, risk_level, market_data, comic_type, episode_no):
     if comic_type == "weekly":

@@ -43,14 +43,18 @@ def check_duplicate(publish_date: date, comic_type: str) -> bool:
         result = (
             get_client()
             .table("published_comics")
-            .select("id")
+            .select("id, tweet_id")
             .eq("publish_date", str(publish_date))
             .eq("comic_type", comic_type)
             .execute()
         )
-        is_dup = len(result.data) > 0
+        # DRY_RUN 기록은 실 발행으로 간주하지 않음
+        real_records = [r for r in result.data if r.get("tweet_id") != "DRY_RUN"]
+        is_dup = len(real_records) > 0
         if is_dup:
-            logger.info(f"[중복체크] {publish_date} {comic_type} 이미 발행됨 → SKIP")
+            logger.info(f"[중복체크] {publish_date} {comic_type} 이미 실 발행됨 → SKIP")
+        elif len(result.data) > 0:
+            logger.info(f"[중복체크] DRY_RUN 기록만 존재 → 실 발행 진행")
         return is_dup
     except Exception as e:
         # DB 조회 실패 시 안전하게 중복 아님으로 처리 (발행 시도)
