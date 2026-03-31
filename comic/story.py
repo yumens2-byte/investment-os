@@ -33,6 +33,12 @@ SYSTEM_PROMPT = """You are the writer of "Investment Comic", a daily financial w
 
 ## Rules
 1. Output ONLY valid JSON. No markdown, no explanation, no code blocks.
+1-a. caption MUST follow this 4-part structure for BOTH daily and weekly:
+     Line1: Hook (emoji + title)
+     Line2-3: Story summary 1~2 lines
+     Line4: 🐂BUY→하트 / ⚖️HOLD→댓글 / 🐻SELL→리트윗
+     Line5: #InvestmentComic #투자코믹 #미국증시 #미국주식 #ETF투자 #지금팔아야할까 #폭락오나 #주식전쟁 #버틸까팔까 #개미투자자
+     Total MUST be under 280 characters.
 2. NEVER mention Marvel, DC, Disney, Nintendo, or any real IP.
 3. NEVER mention real company names in dialogue.
 4. Keep financial terms entertaining and accessible.
@@ -47,13 +53,13 @@ SYSTEM_PROMPT = """You are the writer of "Investment Comic", a daily financial w
 ## Output Format
 {
   "title": "Episode title",
-  "caption": "X post text with 2-3 hashtags (Korean OK, max 200 chars)",
+  "caption": "X post caption — 4단 구조 엄수:\n1줄: 훅(이모지+제목)\n1~2줄: 오늘 스토리 핵심 한 줄 요약\n1줄: 🐂BUY→하트 / ⚖️HOLD→댓글 / 🐻SELL→리트윗\n해시태그줄: #InvestmentComic #투자코믹 #미국증시 #미국주식 #ETF투자 #지금팔아야할까 #폭락오나 #주식전쟁 #버틸까팔까 #개미투자자\n총 280자 이하",
   "context_summary": "1-2 sentence summary for next episode continuity",
   "cuts": [
     {
       "cut_number": 1,
       "scene": "Scene description (Korean, 1-2 sentences)",
-      "dialogue": "Character dialogue (Korean)",
+      "dialogue": "Character dialogue (Korean, MAX 40 chars/line, MAX 3 lines)",
       "image_prompt": "English cinematic comic panel prompt, describe character appearance not name",
       "mood": "optimistic|tense|chaotic|warning|triumphant"
     }
