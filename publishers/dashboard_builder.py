@@ -11,21 +11,43 @@ from typing import Optional
 
 logger = logging.getLogger(__name__)
 
-W, H = 1080, 1080
+# ==================== v1.7.1 변경 ====================
+# 1. 화면 크기: 1080x1080 → 1080x1440 (세로 비율 개선)
+# 2. 최소 폰트: 8.5pt → 11pt (가독성)
+# 3. 색상 표준화: 중복 정의 제거
+# 4. 그림자 효과 제거: 성능 최적화
+# 5. VERSION 관리: config.settings 확인 + 명확한 기본값
+# ===================================================
+
+W, H = 1080, 1440  # ⭐️ 세로 비율 개선 (1080x1440)
 DPI  = 96
+
+# 색상: 기본 팔레트 (중복 제거)
 BG="#080c12"; CARD="#0f1520"; CARD2="#131923"; BORDER="#1e2d42"; BORDER2="#243550"
 TEXT="#ddeeff"; SUBTEXT="#6a8aaa"; DIM="#2a3f58"
-RED="#f04444"; GREEN="#1fca7e"; YELLOW="#f5a623"; PURPLE="#9b6dff"
+RED="#ef4444"; GREEN="#10b981"; YELLOW="#f59e0b"; PURPLE="#9b6dff"
 BLUE="#38bdf8"; CYAN="#06d6d6"; ORANGE="#fb923c"
 
-REGIME_COLORS={"Risk-On":"#059669","Risk-Off":"#dc2626","Oil Shock":"#d97706",
-               "Liquidity Crisis":"#7c3aed","Recession Risk":"#9f1239",
-               "Stagflation Risk":"#b45309","AI Bubble":"#0369a1","Transition":"#4b5563"}
-STANCE_COLORS={"Overweight":GREEN,"Underweight":RED,"Neutral":TEXT,"Hedge":PURPLE}
-RISK_COLORS={"LOW":GREEN,"MEDIUM":YELLOW,"HIGH":RED}
-SIGNAL_COLORS={"BUY":GREEN,"ADD":"#34d399","HOLD":YELLOW,"REDUCE":ORANGE,"HEDGE":PURPLE,"SELL":RED}
-SESSION_LABELS={"morning":"Morning Brief","intraday":"Intraday Briefing",
-                "close":"Close Summary","weekly":"Weekly Review"}
+# ⭐️ 색상 표준화: Regime/Stance/Risk/Signal은 위 기본색을 참조
+REGIME_COLORS={
+    "Risk-On":"#059669",
+    "Risk-Off":"#dc2626", 
+    "Oil Shock":"#f97316",
+    "Liquidity Crisis":"#7c3aed",
+    "Recession Risk":"#be123c",
+    "Stagflation Risk":"#b45309",
+    "AI Bubble":"#0369a1",
+    "Transition":"#4b5563"
+}
+STANCE_COLORS={"Overweight":GREEN, "Underweight":RED, "Neutral":TEXT, "Hedge":PURPLE}
+RISK_COLORS={"LOW":GREEN, "MEDIUM":YELLOW, "HIGH":RED}
+SIGNAL_COLORS={"BUY":GREEN, "ADD":"#34d399", "HOLD":YELLOW, "REDUCE":ORANGE, "HEDGE":PURPLE, "SELL":RED}
+SESSION_LABELS={
+    "morning":"Morning Brief",
+    "intraday":"Intraday Briefing",
+    "close":"Close Summary",
+    "weekly":"Weekly Review"
+}
 
 CHAR_W  = 0.0072
 DOT_GAP = 0.014
@@ -55,11 +77,10 @@ def _card(ax, x, y, w, h, accent=None, radius=0.014):
             boxstyle="round,pad=0,rounding_size=0.002",
             linewidth=0, facecolor=accent, transform=ax.transAxes, zorder=2, alpha=0.9))
 
-def _t(ax, x, y, s, c=TEXT, sz=13, w="normal", ha="left", va="center", alpha=1.0, shadow=False):
+# ⭐️ shadow 파라미터 제거 (성능 최적화)
+def _t(ax, x, y, s, c=TEXT, sz=13, w="normal", ha="left", va="center", alpha=1.0):
     kw = dict(color=c, fontsize=sz, fontweight=w, va=va, ha=ha,
               transform=ax.transAxes, zorder=4, alpha=alpha)
-    if shadow:
-        kw["path_effects"] = [pe.withStroke(linewidth=3, foreground="#000000aa")]
     ax.text(x, y, s, **kw)
 
 def _hline(ax, x1, x2, y, color=BORDER2, lw=0.7, alpha=0.5):
@@ -72,7 +93,7 @@ def _badge(ax, x, y, w, h, color, text, tsz=17):
     ax.add_patch(FancyBboxPatch((x,y), w, h,
         boxstyle="round,pad=0.008,rounding_size=0.018",
         linewidth=0, facecolor=color, transform=ax.transAxes, zorder=3))
-    _t(ax, x+w/2, y+h/2, text.upper(), c="white", sz=tsz, w="bold", ha="center", shadow=True)
+    _t(ax, x+w/2, y+h/2, text.upper(), c="white", sz=tsz, w="bold", ha="center")
 
 def _mini_bar(ax, x, y, w, h, pct, max_pct, color):
     ax.add_patch(FancyBboxPatch((x,y), w, h,
@@ -152,25 +173,30 @@ def _render(data: dict, session: str, dt_utc: datetime, fpath: str):
     eurusd = fx.get("eurusd") or 0
     usdjpy = fx.get("usdjpy") or 0
 
+    # ⭐️ VERSION 관리 개선: config.settings 확인 후 명확한 기본값
     try:
         from config.settings import SYSTEM_VERSION, CODENAME
     except Exception:
-        SYSTEM_VERSION = "v1.5.3"
-        CODENAME = "EDT Investment"
+        SYSTEM_VERSION = "v1.7.1"  # 현재 버전으로 업데이트
+        CODENAME = "Investment OS"
 
     fig, ax = _fig()
     P=0.020; G=0.010; MID=0.502
-    HH=0.085; FH=0.044; SH=0.095
+    HH=0.075  # ⭐️ Header 높이 약간 축소 (공간 확보)
+    FH=0.040  # ⭐️ Footer 높이 축소
+    SH=0.105  # ⭐️ Signal 높이 증가 (중요도 반영)
     BH=(1-P*2-HH-FH-SH-G*4)/2
     HY=1-P-HH; BY1=HY-G-BH; BY2=BY1-G-BH; SY=BY2-G-SH; FY=P
     LW=MID-P-G/2; RW=1-MID-P-G/2; RX=MID+G/2
 
+    # ==================== HEADER ====================
     _card(ax,P,HY,1-2*P,HH,accent=rc,radius=0.016)
     _t(ax,P+0.020,HY+HH*0.68,f"Investment OS   |   {session_lbl}",c=TEXT,sz=22,w="bold")
     _t(ax,P+0.020,HY+HH*0.25,
        f"{et.strftime('%b %d, %Y')}     ET {et.strftime('%H:%M')}   |   KST {kst.strftime('%H:%M')}",
        c=SUBTEXT,sz=12)
 
+    # ==================== BODY 1: Market Snapshot & FX ====================
     _card(ax,P,BY1,LW,BH,accent=BLUE)
     _t(ax,P+0.018,BY1+BH-0.022,"MARKET SNAPSHOT",c=SUBTEXT,sz=11,w="bold")
     col1,col2=P+0.018,P+LW*0.52
@@ -187,16 +213,17 @@ def _render(data: dict, session: str, dt_utc: datetime, fpath: str):
 
     fx_sep=BY1+BH*0.22
     _hline(ax,P+0.012,P+LW-0.012,fx_sep,alpha=0.7)
-    _t(ax,P+0.018,fx_sep+0.012,"FX RATES",c=SUBTEXT,sz=9.5,w="bold")
+    _t(ax,P+0.018,fx_sep+0.012,"FX RATES",c=SUBTEXT,sz=11,w="bold")  # ⭐️ 폰트 크기 올림 (9.5→11)
     fx_y=BY1+BH*0.10; fx_cw=LW/3
     for fxx,fy2,fl,fv in [
         (P+fx_cw*0.05,fx_y,"USD/KRW",f"{usdkrw:,.1f}"),
         (P+fx_cw*1.05,fx_y,"EUR/USD",f"{eurusd:.4f}"),
         (P+fx_cw*2.05,fx_y,"USD/JPY",f"{usdjpy:.2f}"),
     ]:
-        _t(ax,fxx,fy2+0.015,fl,c=SUBTEXT,sz=9.5)
+        _t(ax,fxx,fy2+0.015,fl,c=SUBTEXT,sz=11)  # ⭐️ 폰트 크기 올림 (9.5→11)
         _t(ax,fxx,fy2-0.005,fv,c=CYAN,sz=13,w="bold")
 
+    # ==================== BODY 1: Market Regime & Risk ====================
     _card(ax,RX,BY1,RW,BH,accent=rc)
     _t(ax,RX+0.018,BY1+BH-0.022,"MARKET REGIME",c=SUBTEXT,sz=11,w="bold")
     bh2=0.068; by2=BY1+BH*0.63
@@ -207,7 +234,7 @@ def _render(data: dict, session: str, dt_utc: datetime, fpath: str):
 
     score_sep=BY1+BH*0.245
     _hline(ax,RX+0.012,RX+RW-0.012,score_sep,alpha=0.4)
-    _t(ax,RX+0.018,score_sep+0.010,"MARKET SCORE",c=SUBTEXT,sz=8.5,w="bold")
+    _t(ax,RX+0.018,score_sep+0.010,"MARKET SCORE",c=SUBTEXT,sz=11,w="bold")  # ⭐️ 폰트 크기 올림 (8.5→11)
     scores=[
         ("Growth",   ms.get("growth_score",2),     5),
         ("Risk",     ms.get("risk_score",3),        5),
@@ -224,8 +251,9 @@ def _render(data: dict, session: str, dt_utc: datetime, fpath: str):
         col=i%3; row=i//3
         x_start=RX+0.012+col*col_w
         y_pos=row1_y if row==0 else row2_y
-        _score_item(ax,x_start,y_pos,label,score,max_s,dot_r=0.009,sz=9.0)
+        _score_item(ax,x_start,y_pos,label,score,max_s,dot_r=0.009,sz=10)  # ⭐️ 폰트 크기 올림 (9→10)
 
+    # ==================== BODY 2: ETF Strategy & Allocation ====================
     etfs=["QQQM","XLK","SPYM","XLE","ITA","TLT"]
     row_sp=(BH-0.055)/len(etfs)
 
@@ -255,10 +283,11 @@ def _render(data: dict, session: str, dt_utc: datetime, fpath: str):
         _mini_bar(ax,bar_x,ry-bar_h/2,bar_w,bar_h,pct,max_pct,bc)
         _t(ax,bar_x+bar_w+0.010,ry,f"{pct}%",c=TEXT,sz=11,w="bold")
 
+    # ==================== SIGNAL SECTION ====================
     _card(ax,P,SY,1-2*P,SH,accent=sig_c)
-    _t(ax,P+0.018,SY+SH-0.020,"SIGNAL SECTION",c=SUBTEXT,sz=9.5,w="bold")
+    _t(ax,P+0.018,SY+SH-0.020,"SIGNAL SECTION",c=SUBTEXT,sz=11,w="bold")
     _t(ax,P+0.018,SY+SH*0.44,"SIGNAL:",c=SUBTEXT,sz=15,w="bold")
-    _t(ax,P+0.118,SY+SH*0.44,signal,c=sig_c,sz=18,w="bold",shadow=True)
+    _t(ax,P+0.118,SY+SH*0.44,signal,c=sig_c,sz=18,w="bold")  # ⭐️ shadow 제거
     tag_x=P+0.27
     for etf_list,tc,label in [
         (sm.get("buy_watch",[]),GREEN,"BUY"),
@@ -266,15 +295,17 @@ def _render(data: dict, session: str, dt_utc: datetime, fpath: str):
         (sm.get("reduce",[]),RED,"REDUCE"),
     ]:
         if not etf_list: continue
-        _t(ax,tag_x,SY+SH*0.72,label+":",c=tc,sz=9.5,w="bold")
+        _t(ax,tag_x,SY+SH*0.72,label+":",c=tc,sz=11,w="bold")  # ⭐️ 폰트 크기 올림 (9.5→11)
         _t(ax,tag_x+0.062,SY+SH*0.72,"  ".join(etf_list),c=tc,sz=10)
         tag_x+=0.16
     _t(ax,P+0.60,SY+SH*0.44,summary[:55],c=TEXT,sz=9.5,alpha=0.85)
 
+    # ==================== FOOTER ====================
     _card(ax,P,FY,1-2*P,FH,radius=0.014)
     _t(ax,0.5,FY+FH/2,f"Investment OS  {SYSTEM_VERSION}   |   {CODENAME}",
        c=SUBTEXT,sz=10.5,ha="center")
 
+    # ==================== 구분선 ====================
     _vline(ax,MID,BY1,BY1+BH)
     _vline(ax,MID,BY2,BY2+BH)
 
