@@ -48,6 +48,62 @@ def determine_risk(market_data: dict) -> str:
         return "HIGH"
 
 
+def _validate_before_publish(
+    story: dict,
+    final_image_bytes: bytes,
+    comic_type: str,
+) -> tuple[bool, str]:
+    """
+    X 발행 직전 최종 검증 게이트
+    하나라도 실패하면 발행 차단
+
+    Returns: (통과여부, 실패사유)
+    """
+    errors = []
+
+    # ── 스토리 검증 ────────────────────────────────────────
+    if not story:
+        errors.append("story 객체 없음")
+    else:
+        title   = story.get("title", "").strip()
+        caption = story.get("caption", "").strip()
+        cuts    = story.get("cuts", [])
+        summary = story.get("context_summary", "").strip()
+
+        if not title:
+            errors.append("story.title 비어있음")
+
+        if not caption:
+            errors.append("story.caption 비어있음")
+        elif len(caption) > 280:
+            errors.append(f"caption 길이 초과: {len(caption)}자 (X 한도 280자)")
+
+        expected_cuts = 4 if comic_type == "daily" else 8
+        if len(cuts) < expected_cuts:
+            errors.append(f"컷 수 부족: {len(cuts)}/{expected_cuts}")
+
+        if not summary:
+            errors.append("story.context_summary 비어있음")
+
+        for cut in cuts:
+            if not cut.get("dialogue", "").strip():
+                errors.append(f"Cut #{cut.get('cut_number')} dialogue 비어있음")
+            if not cut.get("image_prompt", "").strip():
+                errors.append(f"Cut #{cut.get('cut_number')} image_prompt 비어있음")
+
+    # ── 이미지 검증 ────────────────────────────────────────
+    if not final_image_bytes:
+        errors.append("이미지 bytes 없음")
+    elif len(final_image_bytes) < 1000:
+        # 1×1 최소 PNG = ~67bytes, 실제 이미지는 반드시 1KB 이상
+        errors.append(f"이미지 크기 비정상: {len(final_image_bytes)} bytes (최소 1KB 필요)")
+
+    # ── 결과 ─────────────────────────────────────────────
+    if errors:
+        return False, " | ".join(errors)
+    return True, "OK"
+
+
 def run(comic_type: str) -> None:
     """
     메인 파이프라인 실행
@@ -162,6 +218,16 @@ def run(comic_type: str) -> None:
         logger.info(f"[DRY_RUN] caption: {story['caption']}")
         logger.info("[Pipeline] DRY_RUN 정상 완료")
         sys.exit(0)
+
+    # ── 발행 전 최종 검증 게이트 ─────────────────────────
+    logger.info("[GATE] 발행 전 최종 검증")
+    gate_ok, gate_msg = _validate_before_publish(story, final_image_bytes, comic_type)
+    if not gate_ok:
+        msg = f"[BLOCK] 발행 차단 — 검증 실패: {gate_msg}"
+        logger.error(msg)
+        send_alert(msg)
+        sys.exit(1)
+    logger.info(f"[GATE] 검증 통과 ✅")
 
     logger.info("[STEP 6] X 발행")
     tmp_path = None
