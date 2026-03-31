@@ -38,9 +38,9 @@ def _compute_composite_risk_score(market_score: dict, signals: dict) -> int:
     vix_floor = {
         "Low":      0,
         "Normal":   0,
-        "Elevated": 35,   # VIX 20~30 → 최소 MEDIUM(35)
-        "High":     55,   # VIX 30~40 → 최소 MEDIUM 상단(55)
-        "Extreme":  75,   # VIX 40+   → HIGH 진입(75)
+        "Elevated": 40,   # VIX 20~30 → 최소 MEDIUM(40)
+        "High":     70,   # VIX 30~40 → HIGH(70) ← 시장 통념: VIX 30 = 공포 진입선
+        "Extreme":  80,   # VIX 40+   → HIGH 상단(80)
     }
     normalized = max(normalized, vix_floor.get(vix_state, 0))
 

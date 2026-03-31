@@ -153,20 +153,20 @@ def compute_etf_strategy(
 
         if rank <= 2 and timing in ("BUY", "ADD ON PULLBACK"):
             stance[etf] = "Overweight"
-            strategy_reason[etf] = "Top ranked ETF with positive timing signal"
+            strategy_reason[etf] = "상위 랭크 + 긍정적 타이밍 시그널"
         elif rank >= 5:
             if risk_level == "HIGH":
                 stance[etf] = "Underweight"
-                strategy_reason[etf] = "Low rank in high risk environment"
+                strategy_reason[etf] = "고위험 환경에서 하위 랭크"
             else:
                 stance[etf] = "Underweight"
-                strategy_reason[etf] = "Relatively weak positioning"
+                strategy_reason[etf] = "상대적으로 약한 포지셔닝"
         elif etf == "TLT" and risk_level in ("MEDIUM", "HIGH"):
             stance[etf] = "Hedge"
-            strategy_reason[etf] = "Duration hedge in elevated risk environment"
+            strategy_reason[etf] = "리스크 상승 구간 듀레이션 헤지"
         else:
             stance[etf] = "Neutral"
-            strategy_reason[etf] = "Neutral positioning — no strong signal"
+            strategy_reason[etf] = "뚜렷한 시그널 없음 — 중립 유지"
 
     return {"stance": stance, "strategy_reason": strategy_reason}
 
