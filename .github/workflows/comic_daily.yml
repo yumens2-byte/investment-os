@@ -1,0 +1,62 @@
+name: 🎨 Comic Daily Pipeline
+
+on:
+  schedule:
+    # 평일 KST 08:00 = UTC 23:00 (전날)
+    - cron: '0 23 * * 0-4'
+  workflow_dispatch:
+    inputs:
+      dry_run_override:
+        description: 'DRY_RUN 강제 설정 (true/false, 비워두면 Variables 값 사용)'
+        required: false
+        default: ''
+
+env:
+  PYTHON_VERSION: '3.11'
+
+jobs:
+  comic-daily:
+    name: Daily Comic (4컷)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - name: 📥 Checkout
+        uses: actions/checkout@v4
+
+      - name: 🐍 Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: 'pip'
+
+      - name: 📦 Install Dependencies
+        run: pip install -r requirements.txt
+
+      - name: 🎨 Run Daily Comic Pipeline
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          OPENAI_API_KEY:    ${{ secrets.OPENAI_API_KEY }}
+          X_API_KEY:         ${{ secrets.X_API_KEY }}
+          X_API_SECRET:      ${{ secrets.X_API_SECRET }}
+          X_ACCESS_TOKEN:    ${{ secrets.X_ACCESS_TOKEN }}
+          X_ACCESS_TOKEN_SECRET: ${{ secrets.X_ACCESS_TOKEN_SECRET }}
+          SUPABASE_URL:      ${{ secrets.SUPABASE_URL }}
+          SUPABASE_KEY:      ${{ secrets.SUPABASE_KEY }}
+          TELEGRAM_BOT_TOKEN:       ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_FREE_CHANNEL_ID: ${{ secrets.TELEGRAM_FREE_CHANNEL_ID }}
+          # dry_run_override 입력이 있으면 그걸 사용, 없으면 Variables 값 사용
+          DRY_RUN: ${{ github.event.inputs.dry_run_override != '' && github.event.inputs.dry_run_override || vars.DRY_RUN }}
+        run: |
+          echo "=== Daily Comic Pipeline 시작 ==="
+          echo "DRY_RUN=$DRY_RUN"
+          python -m comic.pipeline --type daily
+
+      - name: 🚨 Notify Failure
+        if: failure()
+        env:
+          TELEGRAM_BOT_TOKEN:       ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_FREE_CHANNEL_ID: ${{ secrets.TELEGRAM_FREE_CHANNEL_ID }}
+        run: |
+          python -m notifier.telegram \
+            --message "🚨 [FAIL] Daily Comic Pipeline 실패 — $(date '+%Y-%m-%d')"
