@@ -34,3 +34,6 @@ playwright>=1.40.0
 
 # 주간 PDF 리포트
 reportlab>=4.0.0
+
+# 미니 코믹
+supabase==2.10.0
