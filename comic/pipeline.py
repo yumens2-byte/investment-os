@@ -211,7 +211,10 @@ def run(comic_type: str) -> None:
         sys.exit(1)
 
     # ── STEP 5. X 발행 ───────────────────────────────────
-    dry_run = os.getenv("DRY_RUN", "true").lower() == "true"
+    # DRY_RUN 공백 or 미설정 시 안전하게 true 처리 (실 발행 방지)
+    _dry_run_val = os.getenv("DRY_RUN", "true").strip().lower()
+    dry_run = _dry_run_val != "false"  # "false"일 때만 실 발행, 나머지는 DRY_RUN
+    logger.info(f"[Pipeline] DRY_RUN={dry_run} (raw='{_dry_run_val}')")
 
     if dry_run:
         logger.info(f"[DRY_RUN] 발행 생략 — '{story['title']}'")

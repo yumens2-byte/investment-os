@@ -21,7 +21,8 @@ logger = logging.getLogger(__name__)
 # ── 상수 ─────────────────────────────────────────────────
 
 MODEL = "claude-sonnet-4-6"
-MAX_TOKENS = 2000
+MAX_TOKENS_DAILY  = 2000
+MAX_TOKENS_WEEKLY = 4000   # 8컷 weekly는 토큰 2배 필요
 
 SYSTEM_PROMPT = """You are the writer of "Investment Comic", a daily financial webcomic.
 
@@ -140,7 +141,7 @@ def generate_story(
         try:
             response = client.messages.create(
                 model=MODEL,
-                max_tokens=MAX_TOKENS,
+                max_tokens=MAX_TOKENS_DAILY if comic_type == "daily" else MAX_TOKENS_WEEKLY,
                 system=SYSTEM_PROMPT,
                 messages=[{"role": "user", "content": user_prompt}]
             )
