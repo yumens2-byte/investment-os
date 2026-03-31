@@ -1,5 +1,8 @@
-# requirements_comic_v2_addition.txt
-# 기존 requirements.txt에 아래 항목 추가
+# ============================================================
+# Investment Comic v2.0 — requirements.txt 추가 항목
+# 기존 requirements.txt 맨 아래에 아래 3줄 추가
+# ============================================================
 
+anthropic>=0.25.0
 supabase==2.10.0
-playwright==1.44.0
+openai>=1.30.0

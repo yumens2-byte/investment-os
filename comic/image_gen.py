@@ -66,9 +66,11 @@ def generate_single_cut(image_prompt, cut_number, current_cost):
         response = client.images.generate(
             model=GPT_IMAGE_MODEL, prompt=prompt,
             size=IMAGE_SIZE, quality=IMAGE_QUALITY,
-            n=1, response_format="b64_json"
+            n=1
         )
-        img = base64.b64decode(response.data[0].b64_json)
+        # gpt-image-1은 URL 방식만 지원 (response_format 파라미터 미지원)
+        import urllib.request
+        img = urllib.request.urlopen(response.data[0].url).read()
         logger.info(f"[ImageGen] Cut #{cut_number} 완료 (${COST_PER_IMAGE})")
         return img, COST_PER_IMAGE
     except CostLimitExceeded:
