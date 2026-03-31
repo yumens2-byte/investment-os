@@ -2,7 +2,7 @@
 publishers/dashboard_html_builder.py
 ======================================
 HTML/Playwright 기반 풀버전 대시보드 이미지 생성기 (session=full 전용)
-v2.2.0 — core_data.json 100% 매핑 + FRED macro_data 복원
+v2.2.1 — Crypto 기준 높이 압축, ETF 상단 정렬
 
 데이터 소스: core_data.json["data"] 필드만 사용
 추측값: 0건
@@ -18,7 +18,7 @@ from typing import Optional
 
 logger = logging.getLogger(__name__)
 
-VERSION = "v2.2.0"
+VERSION = "v2.2.1"
 
 REGIME_COLOR = {
     "Risk-On": "#22ee88", "Risk-Off": "#ff4466", "Oil Shock": "#ffbb00",
@@ -27,7 +27,7 @@ REGIME_COLOR = {
 }
 RISK_COLOR   = {"LOW": "#33ff99", "MEDIUM": "#ffbb33", "HIGH": "#ff4466"}
 STANCE_COLOR = {"Overweight": "#33ff99", "Underweight": "#ff4466", "Neutral": "#99bbdd", "Hedge": "#bb88ff"}
-SIGNAL_COLOR = {"BUY": "#33ff99", "ADD": "#55eeff", "HOLD": "#ffee44", "REDUCE": "#ff4466", "HEDGE": "#bb88ff", "SELL": "#ff4466"}
+SIGNAL_COLOR = {"BUY": "#33ff99", "ADD": "#55eeff", "ADD ON PULLBACK": "#33ff99", "HOLD": "#ffee44", "REDUCE": "#ff4466", "HEDGE": "#bb88ff", "SELL": "#ff4466"}
 SCORE_THRESHOLDS = [(1, "#33ff99"), (2, "#55eeff"), (3, "#ffee44"), (4, "#ffbb33"), (5, "#ff4466")]
 ETFS = ["QQQM", "XLK", "SPYM", "XLE", "ITA", "TLT"]
 
@@ -89,11 +89,9 @@ def _build_html(data: dict, dt_utc: datetime) -> str:
     eth_usd = crypto.get("eth_usd", 0) or 0
     eth_chg = crypto.get("eth_change_pct", 0) or 0
 
-    # FRED macro_data (core_data.json 실제 필드)
     fed_rate    = macro.get("fed_funds_rate")
     hy_spread   = macro.get("hy_spread")
     yield_curve = macro.get("yield_curve")
-    credit_stress = macro.get("credit_stress", "—")
     curve_inverted = macro.get("yield_curve_inverted", False)
 
     def _fmt_fred(v):
@@ -101,7 +99,6 @@ def _build_html(data: dict, dt_utc: datetime) -> str:
         try: return f"{float(v):.2f}%"
         except (ValueError, TypeError): return str(v)
 
-    # yield_curve: 양수=정상(녹), 음수=역전(적) — 경제학 표준
     yc_color = "#ff4466" if curve_inverted else "#33ff99"
 
     regime_name = regime.get("market_regime", "Transition")
@@ -110,8 +107,6 @@ def _build_html(data: dict, dt_utc: datetime) -> str:
     rkc = RISK_COLOR.get(risk_level, "#ffbb33")
 
     needle_deg = {"LOW": -145, "MEDIUM": -100, "HIGH": -45}.get(risk_level, -100)
-    nx2 = int(100 + 62 * math.cos(math.radians(needle_deg)))
-    ny2 = int(95  + 62 * math.sin(math.radians(needle_deg)))
 
     pr_return = prisk.get("portfolio_return_impact", "—")
     pr_risk   = prisk.get("portfolio_risk_impact", "—")
@@ -156,10 +151,10 @@ def _build_html(data: dict, dt_utc: datetime) -> str:
         ("S&P 500", f"{sp500_chg:+.2f}%", _dn_up(sp500_chg), ""),
         ("Nasdaq", f"{nasdaq_chg:+.2f}%", _dn_up(nasdaq_chg), ""),
         ("VIX", f"{vix:.2f}", "#ff4466" if vix>=25 else ("#ffbb33" if vix>=20 else "#33ff99"),
-         f'<div class="dot" style="background:#ff4466;box-shadow:0 0 6px #ff446688"></div>' if vix>=25 else ""),
+         f'<div class="dot" style="background:#ff4466;box-shadow:0 0 5px #ff446688"></div>' if vix>=25 else ""),
         ("US 10Y", f"{us10y:.2f}%", "#bbddee", ""),
         ("WTI", f"${oil:.2f}", "#ffbb33" if oil>=90 else "#bbddee",
-         f'<div class="dot" style="background:#ffbb33;box-shadow:0 0 6px #ffbb3388"></div>' if oil>=90 else ""),
+         f'<div class="dot" style="background:#ffbb33;box-shadow:0 0 5px #ffbb3388"></div>' if oil>=90 else ""),
         ("DXY", f"{dxy:.2f}", "#bbddee", ""),
     ]
 
@@ -182,83 +177,83 @@ def _build_html(data: dict, dt_utc: datetime) -> str:
 <link href="https://fonts.googleapis.com/css2?family=Barlow:wght@400;500;600;700;800;900&family=Barlow+Condensed:wght@400;600;700;800;900&family=IBM+Plex+Mono:wght@400;500;600;700&display=swap" rel="stylesheet">
 <style>
 *{{margin:0;padding:0;box-sizing:border-box;}}
-body{{width:1080px;height:1080px;overflow:hidden;background:#070b11;font-family:'Barlow',sans-serif;color:#eef6ff;}}
-.root{{height:100%;display:flex;flex-direction:column;}}
+body{{width:1080px;overflow:hidden;background:#070b11;font-family:'Barlow',sans-serif;color:#eef6ff;}}
+.root{{display:flex;flex-direction:column;}}
 .rb{{height:3px;background:linear-gradient(90deg,#ff1010,#ff5500,#ff9900,#ffcc00,#aaee00,#11cc55,#00cccc,#0088ff,#7700ff,#ff0099);flex-shrink:0;}}
-.hd{{background:#0c1420;border-bottom:1px solid #2e4868;padding:6px 16px;display:flex;align-items:center;flex-shrink:0;}}
-.hl{{display:flex;align-items:center;gap:6px;}}
-.hd .dot-g{{width:7px;height:7px;border-radius:50%;background:#33ff99;box-shadow:0 0 8px #33ff99;}}
-.hb{{font-family:'IBM Plex Mono',monospace;font-size:11px;font-weight:600;letter-spacing:2px;color:#99bbdd;}}
-.hs{{font-family:'IBM Plex Mono',monospace;font-size:10px;color:#7799bb;}}
-.hc{{flex:1;text-align:center;font-size:18px;font-weight:900;color:#fff;}}
+.hd{{background:#0c1420;border-bottom:1px solid #2e4868;padding:5px 14px;display:flex;align-items:center;flex-shrink:0;}}
+.hl{{display:flex;align-items:center;gap:5px;}}
+.hd .dg{{width:6px;height:6px;border-radius:50%;background:#33ff99;box-shadow:0 0 6px #33ff99;}}
+.hb{{font-family:'IBM Plex Mono',monospace;font-size:10px;font-weight:600;letter-spacing:2px;color:#99bbdd;}}
+.hs{{font-family:'IBM Plex Mono',monospace;font-size:9px;color:#7799bb;}}
+.hc{{flex:1;text-align:center;font-size:16px;font-weight:900;color:#fff;}}
 .hc em{{color:#ffbb33;font-style:normal;}}
-.hr{{display:flex;align-items:baseline;gap:5px;}}
-.ht{{font-family:'IBM Plex Mono',monospace;font-size:20px;font-weight:700;color:#f0f8ff;}}
-.hz{{font-family:'IBM Plex Mono',monospace;font-size:11px;font-weight:600;color:#99bbdd;}}
-.hx{{font-family:'IBM Plex Mono',monospace;font-size:10px;color:#99bbdd;margin-left:5px;}}
-.main{{flex:1;display:grid;grid-template-columns:1fr 1fr 1fr;}}
+.hr{{display:flex;align-items:baseline;gap:4px;}}
+.ht{{font-family:'IBM Plex Mono',monospace;font-size:18px;font-weight:700;color:#f0f8ff;}}
+.hz{{font-family:'IBM Plex Mono',monospace;font-size:10px;font-weight:600;color:#99bbdd;}}
+.hx{{font-family:'IBM Plex Mono',monospace;font-size:9px;color:#99bbdd;margin-left:4px;}}
+.main{{display:grid;grid-template-columns:1fr 1fr 1fr;}}
 .col{{display:flex;flex-direction:column;}}.col+.col{{border-left:1px solid #1e3048;}}
-.s{{padding:5px 10px;border-bottom:1px solid #1e3048;}}.s:last-child{{border-bottom:none;}}
-.sl{{font-family:'IBM Plex Mono',monospace;font-size:9px;letter-spacing:2px;color:#7799bb;text-transform:uppercase;margin-bottom:3px;display:flex;align-items:center;gap:5px;}}.sl::after{{content:'';flex:1;height:1px;background:#1e3048;}}
-.mr{{display:flex;align-items:center;padding:3px 6px;background:rgba(255,255,255,.03);border:1px solid #1e3048;border-radius:3px;margin-bottom:1px;}}
-.mn{{flex:1;font-size:12px;font-weight:500;display:flex;align-items:center;gap:4px;}}
-.mv{{font-family:'IBM Plex Mono',monospace;font-size:15px;font-weight:700;}}
-.dot{{width:6px;height:6px;border-radius:50%;flex-shrink:0;}}
+.s{{padding:3px 8px;border-bottom:1px solid #1e3048;}}.s:last-child{{border-bottom:none;}}
+.sl{{font-family:'IBM Plex Mono',monospace;font-size:8px;letter-spacing:1.5px;color:#7799bb;text-transform:uppercase;margin-bottom:2px;display:flex;align-items:center;gap:4px;}}.sl::after{{content:'';flex:1;height:1px;background:#1e3048;}}
+.mr{{display:flex;align-items:center;padding:2px 5px;background:rgba(255,255,255,.03);border:1px solid #1e3048;border-radius:3px;margin-bottom:1px;}}
+.mn{{flex:1;font-size:11px;font-weight:500;display:flex;align-items:center;gap:3px;}}
+.mv{{font-family:'IBM Plex Mono',monospace;font-size:14px;font-weight:700;}}
+.dot{{width:5px;height:5px;border-radius:50%;flex-shrink:0;}}
 .fx{{display:grid;grid-template-columns:1fr 1fr 1fr;gap:2px;}}
-.fi{{background:rgba(68,238,255,.08);border:1px solid rgba(68,238,255,.22);border-radius:3px;padding:3px 4px;text-align:center;}}
-.fl{{font-family:'IBM Plex Mono',monospace;font-size:10px;font-weight:600;color:#aaeeff;margin-bottom:1px;}}
-.fv{{font-family:'IBM Plex Mono',monospace;font-size:12px;font-weight:700;color:#55eeff;}}
-.fg{{display:flex;align-items:center;gap:8px;padding:4px 6px;background:rgba(255,255,255,.03);border:1px solid #1e3048;border-radius:4px;}}
-.fgv{{font-family:'IBM Plex Mono',monospace;font-size:24px;font-weight:800;line-height:1;}}
-.fgl{{font-size:11px;font-weight:600;}}
-.fgs{{font-family:'IBM Plex Mono',monospace;font-size:9px;color:#7799bb;margin-top:1px;}}
-.fd{{display:flex;align-items:center;padding:3px 6px;background:rgba(255,255,255,.025);border:1px solid #1e3048;border-radius:3px;margin-bottom:1px;}}
-.fdn{{flex:1;font-size:12px;font-weight:500;color:#eef6ff;}}
-.fdv{{font-family:'IBM Plex Mono',monospace;font-size:14px;font-weight:700;margin-right:5px;}}
-.cr{{display:flex;align-items:center;padding:3px 6px;background:rgba(255,255,255,.03);border:1px solid #1e3048;border-radius:3px;margin-bottom:1px;}}
-.cn{{flex:1;font-size:12px;font-weight:600;}}
-.cv{{font-family:'IBM Plex Mono',monospace;font-size:14px;font-weight:700;color:#ffbb33;}}
-.cc{{font-family:'IBM Plex Mono',monospace;font-size:9px;font-weight:600;margin-left:5px;}}
+.fi{{background:rgba(68,238,255,.08);border:1px solid rgba(68,238,255,.2);border-radius:3px;padding:2px 3px;text-align:center;}}
+.fl{{font-family:'IBM Plex Mono',monospace;font-size:8px;font-weight:600;color:#aaeeff;}}
+.fv{{font-family:'IBM Plex Mono',monospace;font-size:11px;font-weight:700;color:#55eeff;}}
+.fg{{display:flex;align-items:center;gap:6px;padding:2px 4px;background:rgba(255,255,255,.03);border:1px solid #1e3048;border-radius:3px;}}
+.fgv{{font-family:'IBM Plex Mono',monospace;font-size:20px;font-weight:800;line-height:1;}}
+.fgl{{font-size:10px;font-weight:600;}}
+.fgs{{font-family:'IBM Plex Mono',monospace;font-size:8px;color:#7799bb;}}
+.fd{{display:flex;align-items:center;padding:2px 5px;background:rgba(255,255,255,.025);border:1px solid #1e3048;border-radius:3px;margin-bottom:1px;}}
+.fdn{{flex:1;font-size:11px;font-weight:500;color:#eef6ff;}}
+.fdv{{font-family:'IBM Plex Mono',monospace;font-size:13px;font-weight:700;margin-right:4px;}}
+.cr{{display:flex;align-items:center;padding:2px 5px;background:rgba(255,255,255,.03);border:1px solid #1e3048;border-radius:3px;margin-bottom:1px;}}
+.cn{{flex:1;font-size:11px;font-weight:600;}}
+.cv{{font-family:'IBM Plex Mono',monospace;font-size:13px;font-weight:700;color:#ffbb33;}}
+.cc{{font-family:'IBM Plex Mono',monospace;font-size:8px;font-weight:600;margin-left:4px;}}
 .gc{{text-align:center;}}
-.gl{{font-family:'Barlow',sans-serif;font-size:20px;font-weight:900;letter-spacing:3px;margin-top:-3px;}}
-.rb2{{padding:6px 8px;border-radius:4px;text-align:center;}}
-.rv{{font-family:'Barlow',sans-serif;font-size:16px;font-weight:900;letter-spacing:2px;}}
-.sr{{display:flex;align-items:center;gap:5px;margin-bottom:2px;}}
-.sn{{width:65px;font-size:10px;color:#99bbdd;}}
-.sb{{flex:1;height:4px;background:#1e3048;border-radius:2px;overflow:hidden;}}
+.gl{{font-family:'Barlow',sans-serif;font-size:18px;font-weight:900;letter-spacing:3px;margin-top:-2px;}}
+.rb2{{padding:5px 7px;border-radius:4px;text-align:center;}}
+.rv{{font-family:'Barlow',sans-serif;font-size:14px;font-weight:900;letter-spacing:2px;}}
+.sr{{display:flex;align-items:center;gap:4px;margin-bottom:1px;}}
+.sn{{width:58px;font-size:9px;color:#99bbdd;}}
+.sb{{flex:1;height:3px;background:#1e3048;border-radius:2px;overflow:hidden;}}
 .sf{{height:100%;border-radius:2px;}}
-.sv{{font-family:'IBM Plex Mono',monospace;font-size:11px;font-weight:700;width:26px;text-align:right;}}
+.sv{{font-family:'IBM Plex Mono',monospace;font-size:10px;font-weight:700;width:24px;text-align:right;}}
 .pg{{display:grid;grid-template-columns:1fr 1fr;gap:2px;}}
-.pi{{background:rgba(255,255,255,.035);border:1px solid #1e3048;border-radius:3px;padding:3px 6px;}}
-.pl{{font-family:'IBM Plex Mono',monospace;font-size:10px;font-weight:600;color:#99bbdd;margin-bottom:1px;}}
-.pv{{font-family:'IBM Plex Mono',monospace;font-size:11px;font-weight:700;}}
-.er{{display:flex;align-items:center;padding:3px 6px;background:rgba(255,255,255,.03);border:1px solid #1e3048;border-radius:3px;margin-bottom:1px;}}
-.et{{font-family:'IBM Plex Mono',monospace;font-size:13px;font-weight:800;color:#eef6ff;width:42px;}}
-.em{{display:flex;flex-direction:column;width:75px;}}
-.es{{font-size:9px;font-weight:600;}}
-.ei{{font-family:'IBM Plex Mono',monospace;font-size:11px;font-weight:800;margin-top:1px;}}
+.pi{{background:rgba(255,255,255,.035);border:1px solid #1e3048;border-radius:3px;padding:2px 5px;}}
+.pl{{font-family:'IBM Plex Mono',monospace;font-size:9px;font-weight:600;color:#99bbdd;}}
+.pv{{font-family:'IBM Plex Mono',monospace;font-size:10px;font-weight:700;}}
+.er{{display:flex;align-items:center;padding:2px 5px;background:rgba(255,255,255,.03);border:1px solid #1e3048;border-radius:3px;margin-bottom:1px;}}
+.et{{font-family:'IBM Plex Mono',monospace;font-size:12px;font-weight:800;color:#eef6ff;width:38px;}}
+.em{{display:flex;flex-direction:column;width:72px;}}
+.es{{font-size:8px;font-weight:600;}}
+.ei{{font-family:'IBM Plex Mono',monospace;font-size:10px;font-weight:800;}}
 .ew{{flex:1;display:flex;align-items:center;gap:3px;}}
-.eb{{flex:1;height:4px;background:#1e3048;border-radius:2px;overflow:hidden;}}
+.eb{{flex:1;height:3px;background:#1e3048;border-radius:2px;overflow:hidden;}}
 .ef{{height:100%;border-radius:2px;}}
-.ep{{font-family:'IBM Plex Mono',monospace;font-size:11px;font-weight:700;color:#eef6ff;width:26px;text-align:right;}}
-.br{{font-size:11px;color:#99bbdd;line-height:1.7;}}
-.ft{{background:#050a10;border-top:1px solid #1e3048;padding:3px 14px;display:flex;align-items:center;gap:6px;flex-shrink:0;}}
-.ftl{{font-family:'IBM Plex Mono',monospace;font-size:8px;color:#7799bb;letter-spacing:2px;}}
-.ftg{{font-family:'IBM Plex Mono',monospace;font-size:7px;padding:1px 4px;border-radius:2px;border:1px solid #1e3048;color:#557799;}}
-.ftr{{font-family:'IBM Plex Mono',monospace;font-size:8px;color:#7799bb;margin-left:auto;}}
+.ep{{font-family:'IBM Plex Mono',monospace;font-size:10px;font-weight:700;color:#eef6ff;width:24px;text-align:right;}}
+.br{{font-size:10px;color:#99bbdd;line-height:1.6;}}
+.ft{{background:#050a10;border-top:1px solid #1e3048;padding:2px 12px;display:flex;align-items:center;gap:5px;flex-shrink:0;}}
+.ftl{{font-family:'IBM Plex Mono',monospace;font-size:7px;color:#7799bb;letter-spacing:1.5px;}}
+.ftg{{font-family:'IBM Plex Mono',monospace;font-size:6px;padding:1px 3px;border-radius:2px;border:1px solid #1e3048;color:#557799;}}
+.ftr{{font-family:'IBM Plex Mono',monospace;font-size:7px;color:#7799bb;margin-left:auto;}}
 </style>
 </head>
 <body>
 <div class="root">
 <div class="rb"></div>
 <div class="hd">
-  <div class="hl"><div class="dot-g"></div><span class="hb">EDT INVESTMENT</span><span class="hs">· INVESTMENT OS</span></div>
+  <div class="hl"><div class="dg"></div><span class="hb">EDT INVESTMENT</span><span class="hs">· INVESTMENT OS</span></div>
   <div class="hc">Full <em>Brief</em></div>
   <div class="hr"><span class="ht">{kst.strftime('%H:%M')}</span><span class="hz">KST</span><span class="hx">{kst.strftime('%b %d')} · ET {et.strftime('%H:%M')}</span></div>
 </div>
 <div class="main">
 <div class="col">
-  <div class="s"><div class="sl">Market Snapshot</div>{_snap_rows()}</div>
+  <div class="s">{_snap_rows()}</div>
   <div class="s"><div class="sl">FX Rates</div>
     <div class="fx">
       <div class="fi"><div class="fl">USD/KRW</div><div class="fv">{usdkrw:,.1f}</div></div>
@@ -266,13 +261,13 @@ body{{width:1080px;height:1080px;overflow:hidden;background:#070b11;font-family:
       <div class="fi"><div class="fl">USD/JPY</div><div class="fv">{usdjpy:.2f}</div></div>
     </div>
   </div>
-  <div class="s"><div class="sl">Fear & Greed Index</div>
+  <div class="s"><div class="sl">Fear & Greed</div>
     <div class="fg"><div class="fgv" style="color:{fg_c}">{fg_value}</div><div><div class="fgl" style="color:{fg_c}">{fg_emoji} {fg_label}</div><div class="fgs">prev {fg_prev} · chg {fg_chg:+d}</div></div></div>
   </div>
   <div class="s"><div class="sl">FRED Macro</div>
-    <div class="fd"><div class="fdn">Fed Funds Rate</div><div class="fdv" style="color:#99bbdd">{_fmt_fred(fed_rate)}</div><div class="dot" style="background:#99bbdd;box-shadow:0 0 5px #99bbdd88"></div></div>
-    <div class="fd"><div class="fdn">HY Spread</div><div class="fdv" style="color:#99bbdd">{_fmt_fred(hy_spread)}</div><div class="dot" style="background:#99bbdd;box-shadow:0 0 5px #99bbdd88"></div></div>
-    <div class="fd"><div class="fdn">Yield Curve</div><div class="fdv" style="color:{yc_color}">{_fmt_fred(yield_curve)}</div><div class="dot" style="background:{yc_color};box-shadow:0 0 5px {yc_color}88"></div></div>
+    <div class="fd"><div class="fdn">Fed Funds Rate</div><div class="fdv" style="color:#99bbdd">{_fmt_fred(fed_rate)}</div><div class="dot" style="background:#99bbdd;box-shadow:0 0 4px #99bbdd88"></div></div>
+    <div class="fd"><div class="fdn">HY Spread</div><div class="fdv" style="color:#99bbdd">{_fmt_fred(hy_spread)}</div><div class="dot" style="background:#99bbdd;box-shadow:0 0 4px #99bbdd88"></div></div>
+    <div class="fd"><div class="fdn">Yield Curve</div><div class="fdv" style="color:{yc_color}">{_fmt_fred(yield_curve)}</div><div class="dot" style="background:{yc_color};box-shadow:0 0 4px {yc_color}88"></div></div>
   </div>
   <div class="s"><div class="sl">Crypto</div>
     <div class="cr"><div class="cn">BTC</div><div class="cv">${btc_usd:,.0f}</div><div class="cc" style="color:{_dn_up(btc_chg)}">{_sign(btc_chg)}</div></div>
@@ -280,24 +275,25 @@ body{{width:1080px;height:1080px;overflow:hidden;background:#070b11;font-family:
   </div>
 </div>
 <div class="col">
-  <div class="s"><div class="sl">Market Risk Level</div>
+  <div class="s">
+    <div class="sl">Market Risk Level</div>
     <div class="gc">
-      <svg width="180" height="115" viewBox="0 0 180 115" overflow="visible" style="display:block;margin:0 auto;">
+      <svg width="160" height="100" viewBox="0 0 160 100" overflow="visible" style="display:block;margin:0 auto;">
         <defs><linearGradient id="g1" x1="0%" y1="0%" x2="100%" y2="0%"><stop offset="0%" stop-color="#33ff99"/><stop offset="28%" stop-color="#aaff00"/><stop offset="52%" stop-color="#ffee44"/><stop offset="72%" stop-color="#ff8800"/><stop offset="100%" stop-color="#ff2244"/></linearGradient></defs>
-        <path d="M 22 85 A 68 68 0 0 1 158 85" fill="none" stroke="#162030" stroke-width="12" stroke-linecap="round"/>
-        <path d="M 22 85 A 68 68 0 0 1 158 85" fill="none" stroke="url(#g1)" stroke-width="12" stroke-linecap="round" opacity=".9"/>
-        <line x1="90" y1="85" x2="{int(90+58*math.cos(math.radians(needle_deg)))}" y2="{int(85+58*math.sin(math.radians(needle_deg)))}" stroke="white" stroke-width="2" stroke-linecap="round"/>
-        <circle cx="90" cy="85" r="4.5" fill="#0d1824" stroke="white" stroke-width="1.5"/>
-        <circle cx="90" cy="85" r="2" fill="white"/>
-        <text x="14" y="104" fill="#33ff99" font-family="IBM Plex Mono" font-size="8" font-weight="700">SAFE</text>
-        <text x="90" y="10" fill="#ffee44" font-family="IBM Plex Mono" font-size="8" font-weight="700" text-anchor="middle">MED</text>
-        <text x="166" y="104" fill="#ff2244" font-family="IBM Plex Mono" font-size="8" font-weight="700" text-anchor="end">HIGH</text>
+        <path d="M 18 75 A 62 62 0 0 1 142 75" fill="none" stroke="#162030" stroke-width="11" stroke-linecap="round"/>
+        <path d="M 18 75 A 62 62 0 0 1 142 75" fill="none" stroke="url(#g1)" stroke-width="11" stroke-linecap="round" opacity=".9"/>
+        <line x1="80" y1="75" x2="{int(80+52*math.cos(math.radians(needle_deg)))}" y2="{int(75+52*math.sin(math.radians(needle_deg)))}" stroke="white" stroke-width="2" stroke-linecap="round"/>
+        <circle cx="80" cy="75" r="4" fill="#0d1824" stroke="white" stroke-width="1.5"/>
+        <circle cx="80" cy="75" r="2" fill="white"/>
+        <text x="12" y="92" fill="#33ff99" font-family="IBM Plex Mono" font-size="7" font-weight="700">SAFE</text>
+        <text x="80" y="8" fill="#ffee44" font-family="IBM Plex Mono" font-size="7" font-weight="700" text-anchor="middle">MED</text>
+        <text x="148" y="92" fill="#ff2244" font-family="IBM Plex Mono" font-size="7" font-weight="700" text-anchor="end">HIGH</text>
       </svg>
-      <div class="gl" style="color:{rkc};text-shadow:0 0 12px {rkc}66">{risk_level}</div>
+      <div class="gl" style="color:{rkc};text-shadow:0 0 10px {rkc}66">{risk_level}</div>
     </div>
   </div>
   <div class="s"><div class="sl">Market Regime</div>
-    <div class="rb2" style="background:{rc}1a;border:2px solid {rc}55"><div class="rv" style="color:{rc};text-shadow:0 0 10px {rc}44">{regime_name.upper()} REGIME</div></div>
+    <div class="rb2" style="background:{rc}1a;border:2px solid {rc}55"><div class="rv" style="color:{rc};text-shadow:0 0 8px {rc}44">{regime_name.upper()} REGIME</div></div>
   </div>
   <div class="s"><div class="sl">Market Score</div>{_score_rows()}</div>
   <div class="s"><div class="sl">Portfolio Risk</div>
