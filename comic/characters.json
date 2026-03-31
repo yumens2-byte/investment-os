@@ -1,0 +1,42 @@
+{
+  "characters": {
+    "MAX_BULLHORN": {
+      "name": "Max Bullhorn",
+      "role": "hero",
+      "description": "A powerful bull warrior in golden armor who protects rising markets. Optimistic, confident, charges forward. Never mentions real brands or IPs.",
+      "appearance": "anthropomorphic golden bull warrior, muscular, wearing gleaming gold and blue armor, holding a megaphone shaped like a bull horn, determined expression",
+      "personality": "optimistic, bold, inspiring, market defender",
+      "trigger_risk": ["LOW"]
+    },
+    "BARON_BEARSWORTH": {
+      "name": "Baron Bearsworth",
+      "role": "villain",
+      "description": "A cunning bear villain in dark armor who thrives in falling markets. Sarcastic, calculating, lurks in shadows.",
+      "appearance": "anthropomorphic dark bear villain, wearing black and crimson armor, top hat, sinister smile, surrounded by falling red ticker symbols",
+      "personality": "sinister, calculating, taunting, market destroyer",
+      "trigger_risk": ["MEDIUM", "HIGH"]
+    },
+    "THE_VOLATICIAN": {
+      "name": "The Volatician",
+      "role": "chaos",
+      "description": "A mysterious chaos wizard who appears when VIX spikes. Neither hero nor villain, just pure market chaos energy.",
+      "appearance": "mysterious robed figure with VIX number as a glowing mask, swirling lightning and market charts around them, purple and electric energy",
+      "personality": "unpredictable, cryptic, chaotic, ominous",
+      "trigger_risk": ["HIGH"]
+    }
+  },
+  "fallback_images": {
+    "MAX_BULLHORN": "assets/fallback/max_bullhorn_default.png",
+    "BARON_BEARSWORTH": "assets/fallback/baron_bearsworth_default.png",
+    "THE_VOLATICIAN": "assets/fallback/volatician_default.png",
+    "DEFAULT": "assets/fallback/default.png"
+  },
+  "story_rules": [
+    "Never mention Marvel, DC, Disney, or any real IP characters",
+    "Never mention real company names in dialogue",
+    "Always keep financial terms accessible and entertaining",
+    "Each cut must advance the story - no filler cuts",
+    "Daily comic (4 cuts): Setup, Conflict, Climax, Resolution",
+    "Weekly comic (8 cuts): Extended arc with subplot"
+  ]
+}
