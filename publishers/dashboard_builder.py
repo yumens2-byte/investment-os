@@ -1,495 +1,283 @@
-"""
-publishers/dashboard_html_builder.py
-======================================
-HTML/Playwright 기반 풀버전 대시보드 이미지 생성기 (session=full 전용)
-v2.1.0 — core_data.json 실제 필드 100% 매핑
-
-데이터 소스: core_data.json["data"] 필드만 사용
-추측값: 0건
-"""
-import asyncio
-import logging
-import math
-import os
-import tempfile
+import warnings; warnings.filterwarnings("ignore")
+import matplotlib
+matplotlib.use("Agg")
+import matplotlib.pyplot as plt
+import matplotlib.patheffects as pe
+from matplotlib.patches import FancyBboxPatch, Circle
 from datetime import datetime, timezone, timedelta
+import os, logging
 from pathlib import Path
 from typing import Optional
 
 logger = logging.getLogger(__name__)
 
-VERSION = "v2.1.0"
+W, H = 1080, 1080
+DPI  = 96
+BG="#080c12"; CARD="#0f1520"; CARD2="#131923"; BORDER="#1e2d42"; BORDER2="#243550"
+TEXT="#ddeeff"; SUBTEXT="#6a8aaa"; DIM="#2a3f58"
+RED="#f04444"; GREEN="#1fca7e"; YELLOW="#f5a623"; PURPLE="#9b6dff"
+BLUE="#38bdf8"; CYAN="#06d6d6"; ORANGE="#fb923c"
 
-# ── 컬러 상수 ──
-REGIME_COLOR = {
-    "Risk-On": "#22ee88", "Risk-Off": "#ff4466", "Oil Shock": "#ffbb00",
-    "Liquidity Crisis": "#bb88ff", "Recession Risk": "#ff2266",
-    "Stagflation Risk": "#ffaa33", "AI Bubble": "#44aaff", "Transition": "#668899",
-}
-RISK_COLOR   = {"LOW": "#33ff99", "MEDIUM": "#ffbb33", "HIGH": "#ff4466"}
-STANCE_COLOR = {"Overweight": "#33ff99", "Underweight": "#ff4466", "Neutral": "#99bbdd", "Hedge": "#bb88ff"}
-SIGNAL_COLOR = {"BUY": "#33ff99", "ADD": "#55eeff", "HOLD": "#ffee44", "REDUCE": "#ff4466", "HEDGE": "#bb88ff", "SELL": "#ff4466"}
-SCORE_THRESHOLDS = [(1, "#33ff99"), (2, "#55eeff"), (3, "#ffee44"), (4, "#ffbb33"), (5, "#ff4466")]
-ETFS = ["QQQM", "XLK", "SPYM", "XLE", "ITA", "TLT"]
+REGIME_COLORS={"Risk-On":"#059669","Risk-Off":"#dc2626","Oil Shock":"#d97706",
+               "Liquidity Crisis":"#7c3aed","Recession Risk":"#9f1239",
+               "Stagflation Risk":"#b45309","AI Bubble":"#0369a1","Transition":"#4b5563"}
+STANCE_COLORS={"Overweight":GREEN,"Underweight":RED,"Neutral":TEXT,"Hedge":PURPLE}
+RISK_COLORS={"LOW":GREEN,"MEDIUM":YELLOW,"HIGH":RED}
+SIGNAL_COLORS={"BUY":GREEN,"ADD":"#34d399","HOLD":YELLOW,"REDUCE":ORANGE,"HEDGE":PURPLE,"SELL":RED}
+SESSION_LABELS={"morning":"Morning Brief","intraday":"Intraday Briefing",
+                "close":"Close Summary","weekly":"Weekly Review"}
+
+CHAR_W  = 0.0072
+DOT_GAP = 0.014
+
+def _score_color(s, m=5):
+    r = s / m
+    if r <= 0.25: return GREEN
+    if r <= 0.45: return CYAN
+    if r <= 0.60: return YELLOW
+    if r <= 0.80: return ORANGE
+    return RED
+
+def _fig():
+    fig = plt.figure(figsize=(W/DPI, H/DPI), facecolor=BG, dpi=DPI)
+    fig.patch.set_facecolor(BG)
+    ax = fig.add_axes([0,0,1,1])
+    ax.set_xlim(0,1); ax.set_ylim(0,1); ax.axis("off"); ax.set_facecolor(BG)
+    return fig, ax
+
+def _card(ax, x, y, w, h, accent=None, radius=0.014):
+    ax.add_patch(FancyBboxPatch((x,y), w, h,
+        boxstyle=f"round,pad=0,rounding_size={radius}",
+        linewidth=0.8, edgecolor=BORDER2, facecolor=CARD,
+        transform=ax.transAxes, zorder=1))
+    if accent:
+        ax.add_patch(FancyBboxPatch((x+0.001, y+h-0.004), w-0.002, 0.003,
+            boxstyle="round,pad=0,rounding_size=0.002",
+            linewidth=0, facecolor=accent, transform=ax.transAxes, zorder=2, alpha=0.9))
+
+def _t(ax, x, y, s, c=TEXT, sz=13, w="normal", ha="left", va="center", alpha=1.0, shadow=False):
+    kw = dict(color=c, fontsize=sz, fontweight=w, va=va, ha=ha,
+              transform=ax.transAxes, zorder=4, alpha=alpha)
+    if shadow:
+        kw["path_effects"] = [pe.withStroke(linewidth=3, foreground="#000000aa")]
+    ax.text(x, y, s, **kw)
+
+def _hline(ax, x1, x2, y, color=BORDER2, lw=0.7, alpha=0.5):
+    ax.add_line(plt.Line2D([x1,x2],[y,y], transform=ax.transAxes, color=color, linewidth=lw, zorder=2, alpha=alpha))
+
+def _vline(ax, x, y1, y2, color=BORDER2, lw=0.7, alpha=0.4):
+    ax.add_line(plt.Line2D([x,x],[y1,y2], transform=ax.transAxes, color=color, linewidth=lw, zorder=2, alpha=alpha))
+
+def _badge(ax, x, y, w, h, color, text, tsz=17):
+    ax.add_patch(FancyBboxPatch((x,y), w, h,
+        boxstyle="round,pad=0.008,rounding_size=0.018",
+        linewidth=0, facecolor=color, transform=ax.transAxes, zorder=3))
+    _t(ax, x+w/2, y+h/2, text.upper(), c="white", sz=tsz, w="bold", ha="center", shadow=True)
+
+def _mini_bar(ax, x, y, w, h, pct, max_pct, color):
+    ax.add_patch(FancyBboxPatch((x,y), w, h,
+        boxstyle="round,pad=0,rounding_size=0.003",
+        linewidth=0, facecolor=DIM, transform=ax.transAxes, zorder=2))
+    fw = max(0.004, (pct/max_pct)*w)
+    ax.add_patch(FancyBboxPatch((x,y), fw, h,
+        boxstyle="round,pad=0,rounding_size=0.003",
+        linewidth=0, facecolor=color, transform=ax.transAxes, zorder=3, alpha=0.9))
+
+def _risk_circle(ax, cx, cy, radius, color):
+    for rm, a in [(1.6,0.06),(1.35,0.12),(1.15,0.20)]:
+        ax.add_patch(Circle((cx,cy), radius*rm, transform=ax.transAxes, zorder=2, facecolor=color, linewidth=0, alpha=a))
+    ax.add_patch(Circle((cx,cy), radius, transform=ax.transAxes, zorder=3, facecolor=color, linewidth=0, alpha=0.95))
+    ax.add_patch(Circle((cx-radius*0.25, cy+radius*0.25), radius*0.35, transform=ax.transAxes, zorder=4, facecolor="white", linewidth=0, alpha=0.15))
+
+def _score_item(ax, x, y, label, score, max_s=5, dot_r=0.009, sz=9.0):
+    dot_c = _score_color(score, max_s)
+    _t(ax, x, y, label, c=SUBTEXT, sz=sz, ha="left", va="center")
+    dot_cx = x + len(label) * CHAR_W + DOT_GAP + dot_r
+    for rm, a in [(1.7,0.05),(1.35,0.12),(1.1,0.22)]:
+        ax.add_patch(Circle((dot_cx,y), dot_r*rm, transform=ax.transAxes, zorder=3, facecolor=dot_c, linewidth=0, alpha=a))
+    ax.add_patch(Circle((dot_cx,y), dot_r, transform=ax.transAxes, zorder=4, facecolor=dot_c, linewidth=0))
 
 
-def _sc(v, m=5):
-    for threshold, color in SCORE_THRESHOLDS:
-        if v <= threshold:
-            return color
-    return "#ff4466"
+def build_dashboard(data: dict, session: str = "morning", dt_utc=None, output_dir=None) -> Optional[str]:
+    try:
+        if dt_utc is None: dt_utc = datetime.now(timezone.utc)
+        if output_dir is None:
+            from config.settings import IMAGES_DIR
+            output_dir = IMAGES_DIR
+        output_dir = Path(output_dir)
+        output_dir.mkdir(parents=True, exist_ok=True)
+        fname = f"dashboard_{session}_{dt_utc.strftime('%Y%m%d_%H%M')}.png"
+        fpath = str(output_dir / fname)
+        _render(data, session, dt_utc, fpath)
+        logger.info(f"[Dashboard] 저장: {fpath}")
+        return fpath
+    except Exception as e:
+        logger.error(f"[Dashboard] 생성 실패: {e}", exc_info=True)
+        return None
 
 
-def _sign(v):
-    return f"▼{abs(v):.2f}%" if v < 0 else f"▲{v:.2f}%"
-
-
-def _dn_up(v):
-    return "#ff4466" if v < 0 else "#33ff99"
-
-
-# ── Fear & Greed 색상 (0~100 스케일, 실제 값 기반) ──
-def _fg_color(v):
-    if v <= 20: return "#ff4466"     # Extreme Fear
-    if v <= 40: return "#ffbb33"     # Fear
-    if v <= 60: return "#99bbdd"     # Neutral
-    if v <= 80: return "#33ff99"     # Greed
-    return "#22ee88"                 # Extreme Greed
-
-
-def _build_html(data: dict, dt_utc: datetime) -> str:
+def _render(data: dict, session: str, dt_utc: datetime, fpath: str):
+    fx = data.get("fx_rates", {})
     kst = dt_utc + timedelta(hours=9)
     et  = dt_utc - timedelta(hours=4)
 
-    # ── 데이터 추출 (core_data.json 실제 필드만) ──
     snap    = data.get("market_snapshot", {})
     regime  = data.get("market_regime", {})
-    ms      = data.get("market_score", {})
     strat   = data.get("etf_strategy", {}).get("stance", {})
-    alloc   = data.get("etf_allocation", {}).get("allocation", {})
-    prisk   = data.get("portfolio_risk", {})
-    tsig    = data.get("trading_signal", {})
-    helpers = data.get("output_helpers", {})
-    fx      = data.get("fx_rates", {})
-    timing  = data.get("etf_analysis", {}).get("timing_signal", {})
-    fg      = data.get("fear_greed", {})
-    crypto  = data.get("crypto", {})
+    alloc_d = data.get("etf_allocation", {}).get("allocation", {})
+    signal  = data.get("trading_signal", {}).get("trading_signal", "HOLD")
+    summary = data.get("output_helpers", {}).get("one_line_summary", "")
+    sm      = data.get("trading_signal", {}).get("signal_matrix", {})
+    ms      = data.get("market_score", {})
 
-    # ── Market Snapshot (core_data 실제 필드) ──
-    sp500_chg  = snap.get("sp500", 0) or 0
-    nasdaq_chg = snap.get("nasdaq", 0) or 0
-    vix        = snap.get("vix", 0) or 0
-    us10y      = snap.get("us10y", 0) or 0
-    oil        = snap.get("oil", 0) or 0
-    dxy        = snap.get("dollar_index", 0) or 0
+    regime_name = regime.get("market_regime", "Transition")
+    risk_level  = regime.get("market_risk_level", "MEDIUM")
+    reason      = regime.get("regime_reason", "")[:44]
+    session_lbl = SESSION_LABELS.get(session, "Market Snapshot")
+    rc          = REGIME_COLORS.get(regime_name, "#4b5563")
+    sig_c       = SIGNAL_COLORS.get(signal, YELLOW)
+    risk_c      = RISK_COLORS.get(risk_level, YELLOW)
 
-    # ── FX (core_data 실제 필드) ──
+    sp500  = snap.get("sp500",  0) or 0
+    nasdaq = snap.get("nasdaq", 0) or 0
+    vix    = snap.get("vix",    0) or 0
+    us10y  = snap.get("us10y",  0) or 0
+    oil    = snap.get("oil",    0) or 0
+    dxy    = snap.get("dollar_index", 0) or 0
+    sp_c   = GREEN if sp500  >= 0 else RED
+    nq_c   = GREEN if nasdaq >= 0 else RED
+    vix_c  = RED if vix >= 30 else (YELLOW if vix >= 20 else GREEN)
+
     usdkrw = fx.get("usdkrw") or 0
     eurusd = fx.get("eurusd") or 0
     usdjpy = fx.get("usdjpy") or 0
 
-    # ── Fear & Greed (core_data 실제 필드) ──
-    fg_value = fg.get("value", 0) or 0
-    fg_label = fg.get("label", "—")
-    fg_prev  = fg.get("prev_value", 0) or 0
-    fg_chg   = fg.get("change", 0) or 0
-    fg_emoji = fg.get("emoji", "")
-    fg_c     = _fg_color(fg_value)
-
-    # ── Crypto (core_data 실제 필드) ──
-    btc_usd = crypto.get("btc_usd", 0) or 0
-    btc_chg = crypto.get("btc_change_pct", 0) or 0
-    eth_usd = crypto.get("eth_usd", 0) or 0
-    eth_chg = crypto.get("eth_change_pct", 0) or 0
-
-    # ── Regime / Risk ──
-    regime_name = regime.get("market_regime", "Transition")
-    risk_level  = regime.get("market_risk_level", "MEDIUM")
-    rc  = REGIME_COLOR.get(regime_name, "#668899")
-    rkc = RISK_COLOR.get(risk_level, "#ffbb33")
-
-    # Risk gauge 바늘
-    risk_angle_map = {"LOW": -145, "MEDIUM": -100, "HIGH": -45}
-    needle_deg = risk_angle_map.get(risk_level, -100)
-    nx2 = int(100 + 62 * math.cos(math.radians(needle_deg)))
-    ny2 = int(95  + 62 * math.sin(math.radians(needle_deg)))
-
-    # ── Portfolio Risk (core_data 실제 필드) ──
-    pr_return = prisk.get("portfolio_return_impact", "—")
-    pr_risk   = prisk.get("portfolio_risk_impact", "—")
-    pr_dd     = prisk.get("drawdown_risk", "—")
-    pr_crash  = prisk.get("crash_alert_level", "—")
-    pr_hedge  = prisk.get("hedge_intensity", "—")
-    pr_beta   = prisk.get("position_exposure", "—")
-    pr_divscore = prisk.get("diversification_score", 0)
-
-    def _pr_color(val):
-        v = str(val).lower()
-        if v in ("low", "contained", "defensive"):
-            return "#33ff99" if v != "defensive" else "#bbddee"
-        if v in ("medium", "moderate"):
-            return "#ffbb33"
-        if v in ("high", "aggressive", "severe"):
-            return "#ff4466"
-        return "#bbddee"
-
-    # ── Market Brief (core_data 실제 필드) ──
-    brief_text = helpers.get("one_line_summary", "—")
-
-    # ── Scores (core_data 실제 필드) ──
-    scores = [
-        ("Growth",    ms.get("growth_score", 0)),
-        ("Risk",      ms.get("risk_score", 0)),
-        ("Inflation", ms.get("inflation_score", 0)),
-        ("Liquidity", ms.get("liquidity_score", 0)),
-        ("Commodity", ms.get("commodity_pressure_score", 0)),
-        ("Stability", ms.get("financial_stability_score", 0)),
-    ]
-
-    # ── ETF 행 ──
-    max_alloc = max(alloc.values()) if alloc else 30
-
-    def _etf_rows():
-        rows = []
-        for etf in ETFS:
-            s    = strat.get(etf, "Neutral")
-            sc   = STANCE_COLOR.get(s, "#99bbdd")
-            sig  = timing.get(etf, "HOLD")
-            sigc = SIGNAL_COLOR.get(sig, "#ffee44")
-            pct  = alloc.get(etf, 0)
-            bar_w = int(pct / max_alloc * 100) if max_alloc > 0 else 0
-            rows.append(f"""<div class="etf-row">
-              <div class="etf-tick">{etf}</div>
-              <div class="etf-mid">
-                <div class="etf-stance" style="color:{sc}">{s}</div>
-                <div class="etf-sig" style="color:{sigc}">{sig}</div>
-              </div>
-              <div class="etf-bar-wrap">
-                <div class="etf-bar-bg"><div class="etf-bar-fill" style="width:{bar_w}%;background:{sc}"></div></div>
-                <div class="etf-pct">{pct}%</div>
-              </div>
-            </div>""")
-        return "\n".join(rows)
-
-    def _score_rows():
-        rows = []
-        for label, val in scores:
-            c = _sc(val)
-            w = int(val / 5 * 100)
-            rows.append(f"""<div class="sc-row">
-              <div class="sc-lbl">{label}</div>
-              <div class="sc-bar"><div class="sc-fill" style="width:{w}%;background:{c}"></div></div>
-              <div class="sc-val" style="color:{c}">{val}/5</div>
-            </div>""")
-        return "\n".join(rows)
-
-    # ── Snapshot 행 (core_data 실제 필드만, 추측 0건) ──
-    # sp500/nasdaq: % 변동만 존재 → % 값을 메인으로 표시
-    # vix/us10y/oil/dxy: 절대값만 존재 → 절대값 표시
-    snap_rows_data = [
-        ("S&P 500", f"{sp500_chg:+.2f}%", _dn_up(sp500_chg), ""),
-        ("Nasdaq",  f"{nasdaq_chg:+.2f}%", _dn_up(nasdaq_chg), ""),
-        ("VIX",     f"{vix:.2f}", "#ff4466" if vix >= 25 else ("#ffbb33" if vix >= 20 else "#33ff99"),
-         f'<div class="dot" style="background:#ff4466;box-shadow:0 0 6px #ff446688"></div>' if vix >= 25 else ""),
-        ("US 10Y",  f"{us10y:.2f}%", "#bbddee", ""),
-        ("WTI",     f"${oil:.2f}", "#ffbb33" if oil >= 90 else "#bbddee",
-         f'<div class="dot" style="background:#ffbb33;box-shadow:0 0 6px #ffbb3388"></div>' if oil >= 90 else ""),
-        ("DXY",     f"{dxy:.2f}", "#bbddee", ""),
-    ]
-
-    def _snap_rows():
-        rows = []
-        for name, val, color, dot_html in snap_rows_data:
-            rows.append(f"""<div class="snap-row">
-              <div class="snap-n">{name}{dot_html}</div>
-              <div class="snap-v" style="color:{color}">{val}</div>
-            </div>""")
-        return "\n".join(rows)
-
     try:
         from config.settings import SYSTEM_VERSION, CODENAME
     except Exception:
-        SYSTEM_VERSION = VERSION
+        SYSTEM_VERSION = "v1.5.3"
         CODENAME = "EDT Investment"
 
-    # ── HTML ──
-    return f"""<!DOCTYPE html>
-<html lang="en">
-<head>
-<meta charset="UTF-8">
-<link href="https://fonts.googleapis.com/css2?family=Barlow:wght@400;500;600;700;800;900&family=Barlow+Condensed:wght@400;600;700;800;900&family=IBM+Plex+Mono:wght@400;500;600;700&display=swap" rel="stylesheet">
-<style>
-*{{margin:0;padding:0;box-sizing:border-box;}}
-body{{width:1080px;height:1080px;overflow:hidden;background:#070b11;font-family:'Barlow',sans-serif;color:#eef6ff;}}
-.root{{height:100%;display:flex;flex-direction:column;}}
-.rb{{height:3px;background:linear-gradient(90deg,#ff1010,#ff5500,#ff9900,#ffcc00,#aaee00,#11cc55,#00cccc,#0088ff,#7700ff,#ff0099);flex-shrink:0;}}
-.hdr{{background:#0c1420;border-bottom:1px solid #2e4868;padding:7px 16px;display:flex;align-items:center;flex-shrink:0;}}
-.hdr-left{{display:flex;align-items:center;gap:7px;}}
-.hdr-dot{{width:7px;height:7px;border-radius:50%;background:#33ff99;box-shadow:0 0 8px #33ff99;}}
-.hdr-brand{{font-family:'IBM Plex Mono',monospace;font-size:12px;font-weight:600;letter-spacing:2px;color:#99bbdd;}}
-.hdr-sep{{font-family:'IBM Plex Mono',monospace;font-size:11px;color:#7799bb;}}
-.hdr-sub{{font-family:'IBM Plex Mono',monospace;font-size:11px;font-weight:500;letter-spacing:1.5px;color:#7799bb;}}
-.hdr-center{{flex:1;text-align:center;}}
-.hdr-title{{font-size:20px;font-weight:900;color:#fff;}}
-.hdr-title em{{color:#ffbb33;font-style:normal;}}
-.hdr-right{{display:flex;align-items:baseline;gap:6px;}}
-.hdr-time{{font-family:'IBM Plex Mono',monospace;font-size:22px;font-weight:700;color:#f0f8ff;}}
-.hdr-tz{{font-family:'IBM Plex Mono',monospace;font-size:12px;font-weight:600;color:#99bbdd;}}
-.hdr-date{{font-family:'IBM Plex Mono',monospace;font-size:11px;color:#99bbdd;margin-left:6px;}}
-.main{{flex:1;display:grid;grid-template-columns:1fr 1fr 1fr;}}
-.col{{display:flex;flex-direction:column;}}
-.col+.col{{border-left:1px solid #1e3048;}}
-.sec{{padding:6px 12px;border-bottom:1px solid #1e3048;}}
-.sec:last-child{{border-bottom:none;}}
-.sl{{font-family:'IBM Plex Mono',monospace;font-size:10px;letter-spacing:2px;color:#7799bb;text-transform:uppercase;margin-bottom:4px;display:flex;align-items:center;gap:6px;}}
-.sl::after{{content:'';flex:1;height:1px;background:#1e3048;}}
-.snap-row{{display:flex;align-items:center;padding:4px 7px;background:rgba(255,255,255,.03);border:1px solid #1e3048;border-radius:4px;margin-bottom:2px;}}
-.snap-n{{flex:1;font-size:13px;font-weight:500;display:flex;align-items:center;gap:5px;}}
-.snap-v{{font-family:'IBM Plex Mono',monospace;font-size:17px;font-weight:700;}}
-.dot{{width:7px;height:7px;border-radius:50%;flex-shrink:0;}}
-.fx3{{display:grid;grid-template-columns:1fr 1fr 1fr;gap:3px;}}
-.fxi{{background:rgba(68,238,255,.08);border:1px solid rgba(68,238,255,.25);border-radius:4px;padding:4px 5px;text-align:center;}}
-.fxl{{font-family:'IBM Plex Mono',monospace;font-size:11px;font-weight:600;color:#aaeeff;margin-bottom:2px;}}
-.fxv{{font-family:'IBM Plex Mono',monospace;font-size:13px;font-weight:700;color:#55eeff;}}
-.fg-box{{display:flex;align-items:center;gap:10px;padding:6px 8px;background:rgba(255,255,255,.03);border:1px solid #1e3048;border-radius:5px;}}
-.fg-val{{font-family:'IBM Plex Mono',monospace;font-size:28px;font-weight:800;line-height:1;}}
-.fg-label{{font-size:12px;font-weight:600;}}
-.fg-sub{{font-family:'IBM Plex Mono',monospace;font-size:10px;color:#7799bb;margin-top:2px;}}
-.crypto-row{{display:flex;align-items:center;padding:4px 8px;background:rgba(255,255,255,.03);border:1px solid #1e3048;border-radius:4px;margin-bottom:2px;}}
-.crypto-n{{flex:1;font-size:13px;font-weight:600;color:#eef6ff;}}
-.crypto-v{{font-family:'IBM Plex Mono',monospace;font-size:15px;font-weight:700;color:#ffbb33;}}
-.crypto-c{{font-family:'IBM Plex Mono',monospace;font-size:10px;font-weight:600;margin-left:6px;}}
-.gauge-c{{text-align:center;}}
-.gauge-lbl{{font-family:'Barlow',sans-serif;font-size:22px;font-weight:900;letter-spacing:4px;margin-top:-4px;}}
-.reg-badge{{padding:7px 10px;border-radius:5px;text-align:center;}}
-.reg-val{{font-family:'Barlow',sans-serif;font-size:18px;font-weight:900;letter-spacing:3px;}}
-.sc-row{{display:flex;align-items:center;gap:6px;margin-bottom:3px;}}
-.sc-lbl{{width:70px;font-size:11px;color:#99bbdd;}}
-.sc-bar{{flex:1;height:5px;background:#1e3048;border-radius:3px;overflow:hidden;}}
-.sc-fill{{height:100%;border-radius:3px;}}
-.sc-val{{font-family:'IBM Plex Mono',monospace;font-size:12px;font-weight:700;width:28px;text-align:right;}}
-.pr-grid{{display:grid;grid-template-columns:1fr 1fr;gap:3px;}}
-.pri{{background:rgba(255,255,255,.035);border:1px solid #1e3048;border-radius:4px;padding:4px 7px;}}
-.pr-label{{font-family:'IBM Plex Mono',monospace;font-size:11px;font-weight:600;color:#99bbdd;margin-bottom:2px;}}
-.pr-val{{font-family:'IBM Plex Mono',monospace;font-size:12px;font-weight:700;}}
-.etf-row{{display:flex;align-items:center;padding:4px 7px;background:rgba(255,255,255,.03);border:1px solid #1e3048;border-radius:4px;margin-bottom:2px;}}
-.etf-tick{{font-family:'IBM Plex Mono',monospace;font-size:14px;font-weight:800;color:#eef6ff;width:46px;}}
-.etf-mid{{display:flex;flex-direction:column;width:80px;}}
-.etf-stance{{font-size:10px;font-weight:600;}}
-.etf-sig{{font-family:'IBM Plex Mono',monospace;font-size:12px;font-weight:800;margin-top:1px;}}
-.etf-bar-wrap{{flex:1;display:flex;align-items:center;gap:4px;}}
-.etf-bar-bg{{flex:1;height:5px;background:#1e3048;border-radius:3px;overflow:hidden;}}
-.etf-bar-fill{{height:100%;border-radius:3px;}}
-.etf-pct{{font-family:'IBM Plex Mono',monospace;font-size:12px;font-weight:700;color:#eef6ff;width:28px;text-align:right;}}
-.brief{{font-size:12px;color:#99bbdd;line-height:1.8;}}
-.ftr{{background:#050a10;border-top:1px solid #1e3048;padding:4px 16px;display:flex;align-items:center;gap:8px;flex-shrink:0;}}
-.ftr-l{{font-family:'IBM Plex Mono',monospace;font-size:9px;color:#7799bb;letter-spacing:2px;}}
-.ftag{{font-family:'IBM Plex Mono',monospace;font-size:8px;padding:1px 5px;border-radius:2px;border:1px solid #1e3048;color:#557799;}}
-.ftr-r{{font-family:'IBM Plex Mono',monospace;font-size:9px;color:#7799bb;margin-left:auto;}}
-</style>
-</head>
-<body>
-<div class="root">
-<div class="rb"></div>
-<div class="hdr">
-  <div class="hdr-left">
-    <div class="hdr-dot"></div>
-    <span class="hdr-brand">EDT INVESTMENT</span>
-    <span class="hdr-sep">·</span>
-    <span class="hdr-sub">INVESTMENT OS</span>
-  </div>
-  <div class="hdr-center"><span class="hdr-title">Full <em>Brief</em></span></div>
-  <div class="hdr-right">
-    <span class="hdr-time">{kst.strftime('%H:%M')}</span>
-    <span class="hdr-tz">KST</span>
-    <span class="hdr-date">{kst.strftime('%b %d')} · ET {et.strftime('%H:%M')}</span>
-  </div>
-</div>
+    fig, ax = _fig()
+    P=0.020; G=0.010; MID=0.502
+    HH=0.085; FH=0.044; SH=0.095
+    BH=(1-P*2-HH-FH-SH-G*4)/2
+    HY=1-P-HH; BY1=HY-G-BH; BY2=BY1-G-BH; SY=BY2-G-SH; FY=P
+    LW=MID-P-G/2; RW=1-MID-P-G/2; RX=MID+G/2
 
-<div class="main">
-<!-- COL 1: Snapshot + FX + Fear&Greed + Crypto -->
-<div class="col">
-  <div class="sec">
-    <div class="sl">Market Snapshot</div>
-    {_snap_rows()}
-  </div>
-  <div class="sec">
-    <div class="sl">FX Rates</div>
-    <div class="fx3">
-      <div class="fxi"><div class="fxl">USD/KRW</div><div class="fxv">{usdkrw:,.1f}</div></div>
-      <div class="fxi"><div class="fxl">EUR/USD</div><div class="fxv">{eurusd:.4f}</div></div>
-      <div class="fxi"><div class="fxl">USD/JPY</div><div class="fxv">{usdjpy:.2f}</div></div>
-    </div>
-  </div>
-  <div class="sec">
-    <div class="sl">Fear & Greed Index</div>
-    <div class="fg-box">
-      <div class="fg-val" style="color:{fg_c}">{fg_value}</div>
-      <div>
-        <div class="fg-label" style="color:{fg_c}">{fg_emoji} {fg_label}</div>
-        <div class="fg-sub">prev {fg_prev} · chg {fg_chg:+d}</div>
-      </div>
-    </div>
-  </div>
-  <div class="sec">
-    <div class="sl">Crypto</div>
-    <div class="crypto-row">
-      <div class="crypto-n">BTC</div>
-      <div class="crypto-v">${btc_usd:,.0f}</div>
-      <div class="crypto-c" style="color:{_dn_up(btc_chg)}">{_sign(btc_chg)}</div>
-    </div>
-    <div class="crypto-row">
-      <div class="crypto-n">ETH</div>
-      <div class="crypto-v">${eth_usd:,.0f}</div>
-      <div class="crypto-c" style="color:{_dn_up(eth_chg)}">{_sign(eth_chg)}</div>
-    </div>
-  </div>
-</div>
+    _card(ax,P,HY,1-2*P,HH,accent=rc,radius=0.016)
+    _t(ax,P+0.020,HY+HH*0.68,f"Investment OS   |   {session_lbl}",c=TEXT,sz=22,w="bold")
+    _t(ax,P+0.020,HY+HH*0.25,
+       f"{et.strftime('%b %d, %Y')}     ET {et.strftime('%H:%M')}   |   KST {kst.strftime('%H:%M')}",
+       c=SUBTEXT,sz=12)
 
-<!-- COL 2: Risk + Regime + Score + PRisk -->
-<div class="col">
-  <div class="sec">
-    <div class="sl">Market Risk Level</div>
-    <div class="gauge-c">
-      <svg width="200" height="130" viewBox="0 0 200 130" overflow="visible" style="display:block;margin:0 auto;">
-        <defs><linearGradient id="g1" x1="0%" y1="0%" x2="100%" y2="0%">
-          <stop offset="0%" stop-color="#33ff99"/><stop offset="28%" stop-color="#aaff00"/>
-          <stop offset="52%" stop-color="#ffee44"/><stop offset="72%" stop-color="#ff8800"/>
-          <stop offset="100%" stop-color="#ff2244"/>
-        </linearGradient></defs>
-        <path d="M 28 95 A 72 72 0 0 1 172 95" fill="none" stroke="#162030" stroke-width="14" stroke-linecap="round"/>
-        <path d="M 28 95 A 72 72 0 0 1 172 95" fill="none" stroke="url(#g1)" stroke-width="14" stroke-linecap="round" opacity=".9"/>
-        <line x1="100" y1="95" x2="{nx2}" y2="{ny2}" stroke="white" stroke-width="2.5" stroke-linecap="round"/>
-        <circle cx="100" cy="95" r="5" fill="#0d1824" stroke="white" stroke-width="2"/>
-        <circle cx="100" cy="95" r="2.5" fill="white"/>
-        <text x="16" y="118" fill="#33ff99" font-family="IBM Plex Mono" font-size="9" font-weight="700">SAFE</text>
-        <text x="100" y="14" fill="#ffee44" font-family="IBM Plex Mono" font-size="9" font-weight="700" text-anchor="middle">MED</text>
-        <text x="184" y="118" fill="#ff2244" font-family="IBM Plex Mono" font-size="9" font-weight="700" text-anchor="end">HIGH</text>
-      </svg>
-      <div class="gauge-lbl" style="color:{rkc};text-shadow:0 0 14px {rkc}66">{risk_level}</div>
-    </div>
-  </div>
-  <div class="sec">
-    <div class="sl">Market Regime</div>
-    <div class="reg-badge" style="background:{rc}1a;border:2px solid {rc}55">
-      <div class="reg-val" style="color:{rc};text-shadow:0 0 12px {rc}44">{regime_name.upper()} REGIME</div>
-    </div>
-  </div>
-  <div class="sec">
-    <div class="sl">Market Score</div>
-    {_score_rows()}
-  </div>
-  <div class="sec">
-    <div class="sl">Portfolio Risk</div>
-    <div class="pr-grid">
-      <div class="pri"><div class="pr-label">Return</div><div class="pr-val" style="color:{_pr_color(pr_return)}">{pr_return}</div></div>
-      <div class="pri"><div class="pr-label">Risk</div><div class="pr-val" style="color:{_pr_color(pr_risk)}">{pr_risk}</div></div>
-      <div class="pri"><div class="pr-label">Drawdown</div><div class="pr-val" style="color:{_pr_color(pr_dd)}">{pr_dd}</div></div>
-      <div class="pri"><div class="pr-label">Crash</div><div class="pr-val" style="color:{_pr_color(pr_crash)}">{pr_crash}</div></div>
-      <div class="pri"><div class="pr-label">Hedge</div><div class="pr-val" style="color:{_pr_color(pr_hedge)}">{pr_hedge}</div></div>
-      <div class="pri"><div class="pr-label">Beta</div><div class="pr-val" style="color:{_pr_color(pr_beta)}">{pr_beta}</div></div>
-    </div>
-  </div>
-</div>
+    _card(ax,P,BY1,LW,BH,accent=BLUE)
+    _t(ax,P+0.018,BY1+BH-0.022,"MARKET SNAPSHOT",c=SUBTEXT,sz=11,w="bold")
+    col1,col2=P+0.018,P+LW*0.52
+    for lx,ly,lbl,val,vc in [
+        (col1,BY1+BH*0.80,"S&P500:",f"{sp500:+.2f}%",sp_c),
+        (col1,BY1+BH*0.63,"Nasdaq:",f"{nasdaq:+.2f}%",nq_c),
+        (col1,BY1+BH*0.46,"VIX:",f"{vix:.1f}  {'⚠' if vix>=25 else ''}",vix_c),
+        (col2,BY1+BH*0.46,"US10Y:",f"{us10y:.2f}%",TEXT),
+        (col1,BY1+BH*0.31,"WTI:",f"${oil:.1f}",TEXT),
+        (col2,BY1+BH*0.31,"DXY:",f"{dxy:.1f}",SUBTEXT),
+    ]:
+        _t(ax,lx,ly,lbl,c=SUBTEXT,sz=12)
+        _t(ax,lx+0.065,ly,val,c=vc,sz=14,w="bold")
 
-<!-- COL 3: ETF + Brief -->
-<div class="col">
-  <div class="sec">
-    <div class="sl">ETF Strategy · Signal · Allocation</div>
-    {_etf_rows()}
-  </div>
-  <div class="sec">
-    <div class="sl">Market Brief</div>
-    <div class="brief">{brief_text}</div>
-  </div>
-</div>
-</div>
+    fx_sep=BY1+BH*0.22
+    _hline(ax,P+0.012,P+LW-0.012,fx_sep,alpha=0.7)
+    _t(ax,P+0.018,fx_sep+0.012,"FX RATES",c=SUBTEXT,sz=9.5,w="bold")
+    fx_y=BY1+BH*0.10; fx_cw=LW/3
+    for fxx,fy2,fl,fv in [
+        (P+fx_cw*0.05,fx_y,"USD/KRW",f"{usdkrw:,.1f}"),
+        (P+fx_cw*1.05,fx_y,"EUR/USD",f"{eurusd:.4f}"),
+        (P+fx_cw*2.05,fx_y,"USD/JPY",f"{usdjpy:.2f}"),
+    ]:
+        _t(ax,fxx,fy2+0.015,fl,c=SUBTEXT,sz=9.5)
+        _t(ax,fxx,fy2-0.005,fv,c=CYAN,sz=13,w="bold")
 
-<div class="ftr">
-  <span class="ftr-l">{CODENAME} · {SYSTEM_VERSION}</span>
-  <span class="ftag">YAHOO·RSS·API</span>
-  <span class="ftag">NOT FINANCIAL ADVICE</span>
-  <span class="ftr-r">{kst.strftime('%b %d, %Y')} · {kst.strftime('%H:%M')} KST</span>
-</div>
-</div>
-</body>
-</html>"""
+    _card(ax,RX,BY1,RW,BH,accent=rc)
+    _t(ax,RX+0.018,BY1+BH-0.022,"MARKET REGIME",c=SUBTEXT,sz=11,w="bold")
+    bh2=0.068; by2=BY1+BH*0.63
+    _badge(ax,RX+0.018,by2,RW-0.036,bh2,rc,regime_name,tsz=17)
+    _risk_circle(ax,RX+0.038,BY1+BH*0.445,0.018,risk_c)
+    _t(ax,RX+0.070,BY1+BH*0.445,f"RISK: {risk_level}",c=risk_c,sz=13,w="bold")
+    _t(ax,RX+0.018,BY1+BH*0.31,reason,c=SUBTEXT,sz=9.5)
 
+    score_sep=BY1+BH*0.245
+    _hline(ax,RX+0.012,RX+RW-0.012,score_sep,alpha=0.4)
+    _t(ax,RX+0.018,score_sep+0.010,"MARKET SCORE",c=SUBTEXT,sz=8.5,w="bold")
+    scores=[
+        ("Growth",   ms.get("growth_score",2),     5),
+        ("Risk",     ms.get("risk_score",3),        5),
+        ("Inflation",ms.get("inflation_score",2),   5),
+        ("Liquidity",ms.get("liquidity_score",2),   5),
+        ("Commodity",ms.get("commodity_pressure_score",3),5),
+        ("Stability",ms.get("financial_stability_score",2),5),
+    ]
+    col_w=(RW-0.016)/3
+    available=score_sep-BY1
+    row1_y=BY1+available*0.72
+    row2_y=BY1+available*0.28
+    for i,(label,score,max_s) in enumerate(scores):
+        col=i%3; row=i//3
+        x_start=RX+0.012+col*col_w
+        y_pos=row1_y if row==0 else row2_y
+        _score_item(ax,x_start,y_pos,label,score,max_s,dot_r=0.009,sz=9.0)
 
-# ── Playwright 렌더링 (기존 유지) ──
-async def _render_async(url: str, out_path: str) -> bool:
-    try:
-        from playwright.async_api import async_playwright
-        async with async_playwright() as p:
-            browser = await p.chromium.launch()
-            page = await browser.new_page(viewport={"width": 1080, "height": 1080})
-            await page.goto(url, wait_until="load")
-            await page.wait_for_timeout(1500)
-            await page.screenshot(
-                path=out_path,
-                clip={"x": 0, "y": 0, "width": 1080, "height": 1080},
-            )
-            await browser.close()
-        return True
-    except Exception as e:
-        logger.error(f"[HtmlDash] Playwright 렌더링 실패: {e}", exc_info=True)
-        return False
+    etfs=["QQQM","XLK","SPYM","XLE","ITA","TLT"]
+    row_sp=(BH-0.055)/len(etfs)
 
+    _card(ax,P,BY2,LW,BH,accent=PURPLE)
+    _t(ax,P+0.018,BY2+BH-0.022,"ETF STRATEGY",c=SUBTEXT,sz=11,w="bold")
+    for i,etf in enumerate(etfs):
+        s=strat.get(etf,"Neutral"); sc=STANCE_COLORS.get(s,TEXT)
+        ry=BY2+BH*0.85-i*row_sp
+        ax.add_patch(FancyBboxPatch((P+0.018,ry-0.015),0.072,0.030,
+            boxstyle="round,pad=0,rounding_size=0.005",
+            linewidth=0.5,edgecolor=BORDER2,facecolor=CARD2,
+            transform=ax.transAxes,zorder=2))
+        _t(ax,P+0.018+0.036,ry,etf,c=TEXT,sz=11,w="bold",ha="center")
+        _t(ax,P+0.105,ry,"—",c=DIM,sz=11)
+        _t(ax,P+0.120,ry,s,c=sc,sz=12)
 
-def _render(url: str, out_path: str) -> bool:
-    try:
-        return asyncio.run(_render_async(url, out_path))
-    except RuntimeError:
-        import concurrent.futures
-        with concurrent.futures.ThreadPoolExecutor(max_workers=1) as ex:
-            future = ex.submit(asyncio.run, _render_async(url, out_path))
-            return future.result()
+    _card(ax,RX,BY2,RW,BH,accent=ORANGE)
+    _t(ax,RX+0.018,BY2+BH-0.022,"ETF ALLOCATION",c=SUBTEXT,sz=11,w="bold")
+    sorted_alloc=sorted(alloc_d.items(),key=lambda x:x[1],reverse=True)
+    max_pct=max((v for _,v in sorted_alloc),default=100)
+    bar_x=RX+0.095; bar_w=RW-0.130; bar_h=0.024
+    for i,(etf,pct) in enumerate(sorted_alloc):
+        ry=BY2+BH*0.85-i*row_sp
+        s=strat.get(etf,"Neutral")
+        bc=GREEN if s=="Overweight" else(RED if s=="Underweight" else "#e05c3a")
+        _t(ax,RX+0.018,ry,etf,c=SUBTEXT,sz=10)
+        _mini_bar(ax,bar_x,ry-bar_h/2,bar_w,bar_h,pct,max_pct,bc)
+        _t(ax,bar_x+bar_w+0.010,ry,f"{pct}%",c=TEXT,sz=11,w="bold")
 
+    _card(ax,P,SY,1-2*P,SH,accent=sig_c)
+    _t(ax,P+0.018,SY+SH-0.020,"SIGNAL SECTION",c=SUBTEXT,sz=9.5,w="bold")
+    _t(ax,P+0.018,SY+SH*0.44,"SIGNAL:",c=SUBTEXT,sz=15,w="bold")
+    _t(ax,P+0.118,SY+SH*0.44,signal,c=sig_c,sz=18,w="bold",shadow=True)
+    tag_x=P+0.27
+    for etf_list,tc,label in [
+        (sm.get("buy_watch",[]),GREEN,"BUY"),
+        (sm.get("hold",[]),YELLOW,"HOLD"),
+        (sm.get("reduce",[]),RED,"REDUCE"),
+    ]:
+        if not etf_list: continue
+        _t(ax,tag_x,SY+SH*0.72,label+":",c=tc,sz=9.5,w="bold")
+        _t(ax,tag_x+0.062,SY+SH*0.72,"  ".join(etf_list),c=tc,sz=10)
+        tag_x+=0.16
+    _t(ax,P+0.60,SY+SH*0.44,summary[:55],c=TEXT,sz=9.5,alpha=0.85)
 
-def build_html_dashboard(
-    data: dict,
-    session: str = "full",
-    dt_utc: Optional[datetime] = None,
-    output_dir: Optional[Path] = None,
-) -> Optional[str]:
-    try:
-        if dt_utc is None:
-            dt_utc = datetime.now(timezone.utc)
-        if output_dir is None:
-            try:
-                from config.settings import IMAGES_DIR
-                output_dir = Path(IMAGES_DIR)
-            except Exception:
-                output_dir = Path("data/images")
-        output_dir = Path(output_dir)
-        output_dir.mkdir(parents=True, exist_ok=True)
+    _card(ax,P,FY,1-2*P,FH,radius=0.014)
+    _t(ax,0.5,FY+FH/2,f"Investment OS  {SYSTEM_VERSION}   |   {CODENAME}",
+       c=SUBTEXT,sz=10.5,ha="center")
 
-        fname = f"dashboard_full_{dt_utc.strftime('%Y%m%d_%H%M')}.png"
-        fpath = str(output_dir / fname)
+    _vline(ax,MID,BY1,BY1+BH)
+    _vline(ax,MID,BY2,BY2+BH)
 
-        logger.info(f"[HtmlDash] {VERSION} HTML 빌드 시작")
-        html = _build_html(data, dt_utc)
-
-        with tempfile.NamedTemporaryFile(
-            mode="w", suffix=".html", delete=False, encoding="utf-8"
-        ) as f:
-            f.write(html)
-            tmp_path = f.name
-
-        logger.info("[HtmlDash] Playwright 렌더링 시작")
-        ok = _render(f"file://{tmp_path}", fpath)
-
-        try:
-            os.unlink(tmp_path)
-        except Exception:
-            pass
-
-        if ok and os.path.exists(fpath):
-            logger.info(f"[HtmlDash] 저장 완료: {fpath}")
-            return fpath
-        else:
-            logger.error("[HtmlDash] 렌더링 실패 — PNG 미생성")
-            return None
-    except Exception as e:
-        logger.error(f"[HtmlDash] 예외 발생: {e}", exc_info=True)
-        return None
+    fig.savefig(fpath,dpi=DPI,bbox_inches="tight",
+                facecolor=BG,edgecolor="none",pad_inches=0)
+    plt.close(fig)
