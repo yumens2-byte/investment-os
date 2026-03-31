@@ -36,4 +36,6 @@ playwright>=1.40.0
 reportlab>=4.0.0
 
 # 미니 코믹
+anthropic>=0.25.0
 supabase==2.10.0
+openai>=1.30.0
