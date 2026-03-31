@@ -61,16 +61,12 @@ def compose_final_image(
     """
     컷 이미지 → 최종 1080×1080 합성
 
-    Args:
-        image_results: generate_images() 반환값
-        story: generate_story() 반환값
-        comic_type: 'daily' | 'weekly'
-        risk_level: 'LOW' | 'MEDIUM' | 'HIGH'
-        episode_no: 에피소드 번호
-
-    Returns:
-        최종 이미지 bytes (PNG)
+    HTML 엔진 결과(html_engine=True)인 경우 합성 없이 그대로 반환
     """
+    # HTML 엔진 결과 감지 → 합성 없이 바로 반환
+    if image_results and image_results[0].get("html_engine"):
+        logger.info("[Compositor] HTML 엔진 결과 — 합성 생략, 직접 반환")
+        return image_results[0]["image_bytes"]
     grid_cols, grid_rows = GRID_DAILY if comic_type == "daily" else GRID_WEEKLY
     border_color = BORDER_COLORS.get(risk_level, "#3b82f6")
 

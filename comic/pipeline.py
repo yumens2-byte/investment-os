@@ -114,8 +114,14 @@ def run(comic_type: str) -> None:
     logger.info("[STEP 3] GPT-4o 이미지 생성")
     try:
         image_results = generate_images(
-            cuts                 = story["cuts"],
-            monthly_cost_so_far  = 0.0     # TODO: Supabase에서 당월 누적 비용 조회로 개선
+            cuts                = story["cuts"],
+            monthly_cost_so_far = 0.0,
+            # HTML 엔진 전환용 파라미터
+            story       = story,
+            risk_level  = risk_level,
+            market_data = market_data,
+            comic_type  = comic_type,
+            episode_no  = episode_no,
         )
         total_cost = sum(r["cost"] for r in image_results)
         fallback_n = sum(1 for r in image_results if r["is_fallback"])
