@@ -41,6 +41,7 @@ def assemble_core_data(
     fear_greed: dict = None,
     crypto: dict = None,
     news_summary: dict = None,
+    macro_data: dict = None,
 ) -> dict:
     """
     각 엔진 출력을 단일 data dict로 조립.
@@ -51,6 +52,7 @@ def assemble_core_data(
         "fear_greed":     fear_greed or {},
         "crypto":         crypto or {},
         "news_summary":   news_summary or {},
+        "macro_data":     macro_data or {},
         "market_snapshot": snapshot,
         "market_regime":  market_regime,
         "market_score":   market_score,
