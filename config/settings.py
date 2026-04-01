@@ -96,6 +96,24 @@ INFLATION_EXP_HIGH = 2.8             # 2.8% 이상 → 인플레이션 우려
 # EM Stress: EEM(신흥국 ETF) 등락률 (%)
 EM_STRESS_THRESHOLD = -2.0           # EEM < -2% → 신흥국 스트레스
 
+# ─── Tier 3 확장 시그널 임계값 (2026-04-01 추가) ──────────
+# AI Momentum: SOXX(반도체 ETF) vs QQQ 상대강도 (%)
+# SOXX > QQQ → AI/반도체 리더십 건재 → Growth 강화
+# SOXX < QQQ → AI 모멘텀 둔화
+AI_MOM_STRONG_THRESHOLD = 0.5        # SOXX-QQQ > 0.5% → AI 리더십
+AI_MOM_WEAK_THRESHOLD = -1.0         # SOXX-QQQ < -1% → AI 둔화
+
+# Nasdaq Relative: NASDAQ - SP500 등락률 차이 (%)
+# NASDAQ >> SP500 → Growth/Tech 주도
+# NASDAQ << SP500 → 방어주/가치주 선호
+NASDAQ_REL_GROWTH_THRESHOLD = 0.5    # NASDAQ-SP500 > 0.5% → Growth 주도
+NASDAQ_REL_VALUE_THRESHOLD = -0.5    # NASDAQ-SP500 < -0.5% → Value 선호
+
+# Banking Stress: KRE(지역은행 ETF) vs XLF(금융 전체) 등락률 차이 (%)
+# KRE << XLF → 지역은행 약세 = 금융 시스템 스트레스
+# 2023 SVB 사태 시 KRE가 XLF 대비 대폭 하락한 패턴
+BANK_STRESS_THRESHOLD = -1.5         # KRE-XLF < -1.5% → 은행 스트레스
+
 # ─── ETF Universe ─────────────────────────────────────────
 ETF_CORE = ["QQQM", "XLK", "SPYM", "XLE", "ITA", "TLT"]
 ETF_SIGNAL = ["XLF", "GLD"]
@@ -122,6 +140,9 @@ TICKER_MAP = {
     "RSP":   "RSP",       # T2-1: Invesco S&P500 Equal Weight (Market Breadth)
     "VIX3M": "^VIX3M",    # T2-2: CBOE 3-Month Volatility (Vol Term Structure)
     "EEM":   "EEM",        # T2-5: iShares MSCI Emerging Markets (EM Stress)
+    # ── Tier 3 확장 (2026-04-01 추가) ──
+    "SOXX":  "SOXX",       # T3-1: iShares Semiconductor (AI Momentum)
+    "KRE":   "KRE",        # T3-3: SPDR Regional Banking (Banking Stress)
 }
 
 # FRED 시리즈 ID
