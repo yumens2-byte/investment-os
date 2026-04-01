@@ -114,24 +114,43 @@ def build_weekly_pdf(summary: dict) -> str:
     LIGHT_BG = colors.HexColor("#f0f0f8")
     GRID_COLOR = colors.HexColor("#ccccdd")
 
+    # ── 한글 CID 폰트 등록 (v2.0 추가) ──
+    KO_FONT = "Helvetica"
+    KO_FONT_BOLD = "Helvetica-Bold"
+    try:
+        from reportlab.pdfbase.cidfonts import UnicodeCIDFont
+        from reportlab.pdfbase import pdfmetrics
+        pdfmetrics.registerFont(UnicodeCIDFont("HYGothic-Medium"))
+        KO_FONT = "HYGothic-Medium"
+        KO_FONT_BOLD = "HYGothic-Medium"  # CID는 Bold 별도 없음
+    except Exception:
+        logger.warning("[WeeklyPDF] 한글 폰트 등록 실패 — Helvetica 유지")
+
     title_s = ParagraphStyle("T", parent=styles["Title"], fontSize=22,
-                             spaceAfter=6, textColor=NAVY, alignment=TA_CENTER)
+                             spaceAfter=6, textColor=NAVY, alignment=TA_CENTER,
+                             fontName=KO_FONT_BOLD)
     sub_s = ParagraphStyle("Sub", parent=styles["Normal"], fontSize=11,
-                           textColor=PURPLE, alignment=TA_CENTER, spaceAfter=14)
+                           textColor=PURPLE, alignment=TA_CENTER, spaceAfter=14,
+                           fontName=KO_FONT)
     sec_s = ParagraphStyle("Sec", parent=styles["Heading2"], fontSize=13,
-                           textColor=NAVY, spaceBefore=14, spaceAfter=6)
+                           textColor=NAVY, spaceBefore=14, spaceAfter=6,
+                           fontName=KO_FONT_BOLD)
     body_s = ParagraphStyle("B", parent=styles["Normal"], fontSize=10,
-                            textColor=colors.HexColor("#333333"), spaceAfter=4)
+                            textColor=colors.HexColor("#333333"), spaceAfter=4,
+                            fontName=KO_FONT)
     small_s = ParagraphStyle("Sm", parent=styles["Normal"], fontSize=9,
-                             textColor=colors.HexColor("#555555"), spaceAfter=3)
+                             textColor=colors.HexColor("#555555"), spaceAfter=3,
+                             fontName=KO_FONT)
     footer_s = ParagraphStyle("F", parent=styles["Normal"], fontSize=8,
-                              textColor=colors.gray, alignment=TA_CENTER)
+                              textColor=colors.gray, alignment=TA_CENTER,
+                              fontName=KO_FONT)
 
     def _table_style(header_color=NAVY):
         return TableStyle([
             ("BACKGROUND", (0, 0), (-1, 0), header_color),
             ("TEXTCOLOR", (0, 0), (-1, 0), colors.white),
-            ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
+            ("FONTNAME", (0, 0), (-1, 0), KO_FONT_BOLD),
+            ("FONTNAME", (0, 1), (-1, -1), KO_FONT),
             ("FONTSIZE", (0, 0), (-1, -1), 9),
             ("ROWBACKGROUNDS", (0, 1), (-1, -1), [colors.white, colors.HexColor("#f8f8fc")]),
             ("GRID", (0, 0), (-1, -1), 0.5, GRID_COLOR),

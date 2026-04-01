@@ -213,13 +213,32 @@ def compute_etf_allocation(
         elif s == "Overweight" and allocation.get(etf, 0) < 15:
             allocation[etf] = 20
 
-    # 총합 100% 정규화
+    # 총합 100% 정규화 (v1.16.0 수정 — 분산 투입)
+    # 기존: 남는 비중을 최대 ETF 1개에 전부 투입 → 과도한 집중
+    # 수정: Overweight ETF에 우선 분산 → 부족하면 Neutral에도 분산
     total = sum(allocation.values())
     if total != 100:
-        diff = 100 - total
-        # 가장 큰 비중 ETF에 차이 흡수
-        max_etf = max(allocation, key=lambda k: allocation[k])
-        allocation[max_etf] += diff
+        diff = 100 - total  # 양수: 부족, 음수: 초과
+
+        if diff > 0:
+            # 부족분 → Overweight ETF에 우선 분산 투입
+            ow_etfs = [e for e in ETF_CORE if stance.get(e) == "Overweight"]
+            if not ow_etfs:
+                # Overweight 없으면 Neutral에 분산
+                ow_etfs = [e for e in ETF_CORE if stance.get(e) != "Underweight"]
+            if ow_etfs:
+                per_etf = diff // len(ow_etfs)
+                remainder = diff % len(ow_etfs)
+                for i, etf in enumerate(ow_etfs):
+                    allocation[etf] += per_etf + (1 if i < remainder else 0)
+            else:
+                # fallback: 최대 비중 ETF에 흡수
+                max_etf = max(allocation, key=lambda k: allocation[k])
+                allocation[max_etf] += diff
+        elif diff < 0:
+            # 초과분 → 가장 큰 비중 ETF에서 차감
+            max_etf = max(allocation, key=lambda k: allocation[k])
+            allocation[max_etf] += diff  # diff는 음수
 
     allocation_reason = {
         etf: f"{stance.get(etf, 'Neutral')} — regime={regime}" for etf in ETF_CORE
