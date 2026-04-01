@@ -106,9 +106,19 @@ def run(session: str) -> dict:
     )
 
     # ── Step 2: Macro Engine ───────────────────────────────────
-    logger.info("[Step 2] Macro Engine 실행")
+    # Tier 1 확장 (2026-04-01): fear_greed, crypto, etf_prices를
+    # macro_engine에 전달하여 확장 시그널 산출에 활용
+    logger.info("[Step 2] Macro Engine 실행 (Tier 1 확장 시그널 포함)")
     from engines.macro_engine import run_macro_engine
-    macro_result = run_macro_engine(snapshot, fred_data, combined_sentiment)
+    macro_result = run_macro_engine(
+        snapshot,
+        fred_data,
+        combined_sentiment,
+        fear_greed=fear_greed,       # T1-1: Fear & Greed → sentiment 보강
+        crypto=crypto,               # T1-2: BTC → risk appetite 보조
+        etf_prices=etf_prices,       # T1-4: XLF/GLD → 금융안정 보강
+        # T1-3: snapshot 내 sp500/nasdaq 등락률은 이미 snapshot에 포함
+    )
     signals = macro_result["signals"]
     market_score = macro_result["market_score"]
 
