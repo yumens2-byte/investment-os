@@ -18,6 +18,8 @@ _TYPE_EMOJI = {
     "FED_SHOCK":     "🏦",
     "CRISIS":        "🆘",
     "VIX_COUNTDOWN": "⚠️",
+    "ETF_RANK":      "📊",      # B-5: ETF 랭킹 변화
+    "REGIME_CHANGE": "🔄",      # B-6: 레짐 전환
 }
 
 # 등급별 이모지
@@ -35,6 +37,8 @@ _TYPE_TITLE = {
     "FED_SHOCK":     "FED SHOCK ALERT",
     "CRISIS":        "CRISIS ALERT",
     "VIX_COUNTDOWN": "VIX 카운트다운",
+    "ETF_RANK":      "ETF 랭킹 전환",     # B-5
+    "REGIME_CHANGE": "레짐 전환 감지",     # B-6
 }
 
 # 등급별 행동 지침
@@ -149,3 +153,145 @@ def format_countdown_tweet(signal) -> str:
     ]
     tweet = "\n".join(lines)
     return tweet[:280]
+
+
+# ──────────────────────────────────────────────────────────────
+# B-5/B-6 텔레그램 상세 포맷 (2026-04-01 추가)
+# ──────────────────────────────────────────────────────────────
+
+def format_etf_rank_telegram(
+    rank_change: dict,
+    signal_diff_result: dict = None,
+    regime: str = "",
+) -> str:
+    """
+    [B-5] ETF 랭킹 변화 — 텔레그램 상세 포맷
+
+    예시:
+    📊 ETF 랭킹 변화 감지
+
+    ▲ 상승: TLT (3위→1위) | ITA (5위→2위)
+    ▼ 하락: QQQM (1위→4위) | XLK (2위→5위)
+
+    주요 원인:
+    • VIX Extreme ↑
+    • 신흥국 EM Crisis Spillover ↑
+    • 실업수당 Weak Labor ↑
+
+    현재 Regime: Risk-Off
+    """
+    lines = ["📊 ETF 랭킹 변화 감지", ""]
+
+    # 상승/하락 ETF
+    moved_up = rank_change.get("moved_up", [])
+    moved_down = rank_change.get("moved_down", [])
+
+    if moved_up:
+        up_str = " | ".join(
+            f"{m['etf']} ({m['from']}위→{m['to']}위)" for m in moved_up
+        )
+        lines.append(f"▲ 상승: {up_str}")
+
+    if moved_down:
+        dn_str = " | ".join(
+            f"{m['etf']} ({m['from']}위→{m['to']}위)" for m in moved_down
+        )
+        lines.append(f"▼ 하락: {dn_str}")
+
+    # 원인 분석
+    if signal_diff_result and signal_diff_result.get("top_movers"):
+        lines.append("")
+        lines.append("주요 원인:")
+        for m in signal_diff_result["top_movers"][:3]:
+            direction = "↑" if m["change"] > 0 else "↓"
+            state = f" {m['state']}" if m.get("state") else ""
+            lines.append(f"• {m['label_kr']}{state} {direction}")
+
+    if regime:
+        lines.append("")
+        lines.append(f"현재 Regime: {regime}")
+
+    return "\n".join(lines)
+
+
+def format_regime_change_telegram(
+    regime_change: dict,
+    signal_diff_result: dict = None,
+    score_diff_result: dict = None,
+    trading_signal: str = "",
+    etf_top1: str = "",
+) -> str:
+    """
+    [B-6] 레짐 전환 — 텔레그램 상세 포맷
+
+    예시:
+    ⚠️ 레짐 전환 감지
+
+    Risk-On → Risk-Off
+    Risk Level: LOW → HIGH
+
+    주요 변화 Score:
+    • Growth: 2 → 4 (+2) ↑
+    • Risk: 2 → 4 (+2) ↑
+    • Liquidity: 2 → 3 (+1) ↑
+
+    원인 시그널 Top 3:
+    • VIX Extreme ↑
+    • 신흥국 EM Crisis Spillover ↑
+    • 실업수당 Weak Labor ↑
+
+    현재 ETF 1위: TLT | Trading Signal: HEDGE
+    """
+    old_r = regime_change.get("old_regime", "—")
+    new_r = regime_change.get("new_regime", "—")
+    old_risk = regime_change.get("old_risk_level", "—")
+    new_risk = regime_change.get("new_risk_level", "—")
+    direction = regime_change.get("direction", "")
+
+    dir_emoji = "🔴" if direction == "danger" else "🟢"
+
+    lines = [
+        f"{dir_emoji} 레짐 전환 감지",
+        "",
+        f"{old_r} → {new_r}",
+        f"Risk Level: {old_risk} → {new_risk}",
+    ]
+
+    # Score 변화
+    if score_diff_result:
+        score_lines = []
+        for key in ["growth_score", "inflation_score", "liquidity_score",
+                     "risk_score", "financial_stability_score", "commodity_pressure_score"]:
+            sd = score_diff_result.get(key, {})
+            if sd and sd.get("change", 0) != 0:
+                label = key.replace("_score", "").replace("_", " ").title()
+                direction_str = "↑" if sd["change"] > 0 else "↓"
+                score_lines.append(
+                    f"• {label}: {sd['old']} → {sd['new']} "
+                    f"({sd['change']:+d}) {direction_str}"
+                )
+        if score_lines:
+            lines.append("")
+            lines.append("주요 변화 Score:")
+            lines.extend(score_lines[:4])  # 최대 4개
+
+    # 시그널 원인
+    if signal_diff_result and signal_diff_result.get("top_movers"):
+        lines.append("")
+        lines.append("원인 시그널 Top 3:")
+        for m in signal_diff_result["top_movers"][:3]:
+            direction_str = "↑" if m["change"] > 0 else "↓"
+            state = f" {m['state']}" if m.get("state") else ""
+            lines.append(f"• {m['label_kr']}{state} {direction_str}")
+
+    # ETF + Trading Signal
+    footer_parts = []
+    if etf_top1:
+        footer_parts.append(f"ETF 1위: {etf_top1}")
+    if trading_signal:
+        footer_parts.append(f"Signal: {trading_signal}")
+    if footer_parts:
+        lines.append("")
+        lines.append(" | ".join(footer_parts))
+
+    return "\n".join(lines)

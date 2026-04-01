@@ -55,6 +55,16 @@ def format_paid_report(data: dict) -> str:
 
     ETFS = ["QQQM", "XLK", "SPYM", "XLE", "ITA", "TLT"]
 
+    # ── B-7: 시그널 기반 ETF별 근거 자동 생성 (2026-04-01 추가) ──
+    signals = data.get("signals", {})
+    etf_rationales = {}
+    if signals:
+        try:
+            from engines.etf_engine import generate_all_etf_rationales
+            etf_rationales = generate_all_etf_rationales(stance, signals, regime)
+        except Exception:
+            pass
+
     lines = [
         "💎 <b>[PREMIUM] ETF 상세 전략 리포트</b>",
         "",
@@ -74,7 +84,6 @@ def format_paid_report(data: dict) -> str:
         s   = stance.get(etf, "Neutral")
         t   = timing.get(etf, "HOLD")
         pct = alloc.get(etf, 0)
-        r   = str_r.get(etf, "")
         pos = rank_map.get(etf, "—")
         st_e = STANCE_EMOJI.get(s, "➡️")
         ti_e = TIMING_EMOJI.get(t, "🟡")
@@ -83,8 +92,22 @@ def format_paid_report(data: dict) -> str:
             f"{st_e} <b>{etf}</b>  {pos}위  |  배분: <b>{pct}%</b>"
         )
         lines.append(f"   {ti_e} {t}  |  {s}")
-        if r:
-            lines.append(f"   <i>{r[:40]}</i>")
+
+        # B-7: 시그널 기반 근거 (있으면 사용, 없으면 기존 strategy_reason)
+        rat = etf_rationales.get(etf, {})
+        rationale = rat.get("rationale", "")
+        risk_text = rat.get("risk", "")
+
+        if rationale:
+            lines.append(f"   🔍 근거: <i>{rationale[:60]}</i>")
+        else:
+            r = str_r.get(etf, "")
+            if r:
+                lines.append(f"   <i>{r[:40]}</i>")
+
+        if risk_text:
+            lines.append(f"   ⚠️ 리스크: <i>{risk_text[:50]}</i>")
+
         lines.append("")
 
     lines += [

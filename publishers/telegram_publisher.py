@@ -475,6 +475,12 @@ def format_rank_change(change: dict, channel: str = "free") -> str:
     """
     ETF 랭킹 변화 알림 포맷
 
+    ⚠️ DEPRECATED (2026-04-01): 이 함수 대신 아래 함수를 사용하세요.
+       - 무료: publishers/alert_formatter.py → format_etf_rank_telegram()
+       - 유료: publishers/premium_alert_formatter.py → format_etf_rank_premium()
+    둘 다 signal_diff 원인 분석을 포함하는 고도화 버전입니다.
+    하위호환을 위해 이 함수는 삭제하지 않습니다.
+
     channel: 'free' → 간결, 'paid' → 상세
     """
     top1_changed = change.get("top1_changed", False)
