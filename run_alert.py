@@ -198,6 +198,69 @@ def run() -> dict:
         logger.info("[run_alert] Alert 없음 — 정상 종료")
         return {"alerts_detected": 0, "alerts_sent": 0}
 
+    # ── Step 2.5: 발행 직전 Validation Gate (v1.16.0 추가) ──
+    # run_view.py와 동일하게 발행 전 데이터 정합성 검증.
+    # FAIL 시 Alert 발행 차단 → 비정상 데이터로 잘못된 Alert 방지.
+    logger.info("[Step 2.5] Alert 발행 전 Validation Gate")
+
+    # (1) 스냅샷 기본 sanity check — 수집 데이터 자체가 이상한 경우 차단
+    _snap_valid = True
+    _snap_errors = []
+    vix_val = snapshot.get("vix", 0)
+    spy_val = snapshot.get("sp500", 0)
+
+    if vix_val <= 0:
+        _snap_errors.append(f"VIX 비정상: {vix_val}")
+        _snap_valid = False
+    if spy_val == 0 and vix_val == 0:
+        _snap_errors.append("SPY/VIX 모두 0 — 수집 실패 의심")
+        _snap_valid = False
+
+    if not _snap_valid:
+        logger.error(f"[Step 2.5] 스냅샷 Validation FAIL — Alert 발행 차단: {_snap_errors}")
+        return {
+            "alerts_detected": len(alerts),
+            "alerts_sent": 0,
+            "reason": "snapshot_validation_fail",
+            "errors": _snap_errors,
+        }
+
+    # (2) core_data.json Validation — B-5/B-6가 의존하는 데이터 검증
+    _core_valid = True
+    try:
+        from core.json_builder import load_core_data as _lcd_val
+        from core.validator import validate_data as _vd
+
+        _cd_val = _lcd_val()
+        _data_val = _cd_val.get("data", {})
+
+        if _data_val:
+            _vr = _vd(_data_val)
+            if _vr["status"] != "PASS":
+                logger.warning(
+                    f"[Step 2.5] core_data Validation FAIL: {_vr.get('errors')}"
+                    " — B-5/B-6 Alert 차단, 기존 Alert는 허용"
+                )
+                _core_valid = False
+    except Exception as e:
+        # core_data 로드 실패 = B-5/B-6 동작 불가 (이미 try/except로 처리됨)
+        logger.info(f"[Step 2.5] core_data 로드 불가 — B-5/B-6 미동작 (정상): {e}")
+        _core_valid = False
+
+    # core_data 검증 실패 시 B-5/B-6 Alert 제거
+    if not _core_valid:
+        before = len(alerts)
+        alerts = [a for a in alerts if a.alert_type not in ("ETF_RANK", "REGIME_CHANGE")]
+        removed = before - len(alerts)
+        if removed > 0:
+            logger.warning(f"[Step 2.5] core_data FAIL → B-5/B-6 Alert {removed}건 제거")
+
+        if not alerts:
+            logger.info("[run_alert] Validation 후 발행 가능 Alert 없음 — 종료")
+            return {"alerts_detected": before, "alerts_sent": 0, "reason": "validation_filtered"}
+
+    logger.info(f"[Step 2.5] Validation PASS — {len(alerts)}건 발행 진행")
+
     # ── Step 3: 쿨다운 체크 + 발송 ───────────────────────
     from core.alert_history import should_send, record_alert
     from publishers.alert_formatter import format_alert_tweet
