@@ -21,6 +21,7 @@ on:
           - close
           - alert
           - full
+          - weekly
       mode:
         description: "mode (alert, full 선택 시 무시됨)"
         required: true
@@ -187,7 +188,7 @@ jobs:
           path: data/published/weekly_log.json
           key: weekly-log-${{ github.ref }}
           restore-keys: weekly-log-
-      - run: python main.py run all --session close --mode tweet
+      - run: python main.py run all --session close --mode ${{ github.event.inputs.mode || 'tweet' }}
       - name: Restore rank history cache
         uses: actions/cache@v4
         with:
