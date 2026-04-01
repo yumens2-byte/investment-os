@@ -366,10 +366,21 @@ def collect_tier2_market_data() -> dict:
     # T2-5: EEM (신흥국 ETF) — 신흥국 스트레스 감지
     result["eem_change"] = _fetch(TICKER_MAP.get("EEM", "EEM"), "change")
 
+    # ── Tier 3 추가 수집 (2026-04-01) ──
+    # T3-1: SOXX (반도체 ETF) — AI 모멘텀 판별용
+    result["soxx_change"] = _fetch(TICKER_MAP.get("SOXX", "SOXX"), "change")
+
+    # T3-1: QQQ — SOXX와 비교하여 AI 리더십 판단
+    result["qqq_change"] = _fetch(TICKER_MAP.get("QQQ", "QQQ"), "change")
+
+    # T3-3: KRE (지역은행 ETF) — 은행 스트레스 감지
+    result["kre_change"] = _fetch(TICKER_MAP.get("KRE", "KRE"), "change")
+
     collected = sum(1 for v in result.values() if v is not None)
     logger.info(
         f"[YF_T2] 수집 완료: {collected}/{len(result)}개 | "
         f"RSP={result.get('rsp_change')} SPY={result.get('spy_change')} "
-        f"VIX3M={result.get('vix3m')} EEM={result.get('eem_change')}"
+        f"VIX3M={result.get('vix3m')} EEM={result.get('eem_change')} "
+        f"SOXX={result.get('soxx_change')} KRE={result.get('kre_change')}"
     )
     return result
