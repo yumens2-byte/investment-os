@@ -21,6 +21,10 @@ from config.settings import (
     ICSA_LOW_THRESHOLD, ICSA_HIGH_THRESHOLD,
     INFLATION_EXP_LOW, INFLATION_EXP_HIGH,
     EM_STRESS_THRESHOLD,
+    # ── Tier 3 확장 시그널 임계값 (2026-04-01 추가) ──
+    AI_MOM_STRONG_THRESHOLD, AI_MOM_WEAK_THRESHOLD,
+    NASDAQ_REL_GROWTH_THRESHOLD, NASDAQ_REL_VALUE_THRESHOLD,
+    BANK_STRESS_THRESHOLD,
 )
 
 logger = logging.getLogger(__name__)
@@ -523,12 +527,159 @@ def _score_em_stress(tier2_data: dict, snapshot: dict) -> dict:
 
 
 # ──────────────────────────────────────────────────────────────
+# 1-D. Tier 3 확장 시그널 (2026-04-01 추가)
+#     노션 설계서(v2.1)에 정의되었으나 미구현이었던 시그널 보완.
+#     ai_momentum / nasdaq_relative / banking_stress
+# ──────────────────────────────────────────────────────────────
+
+def _score_ai_momentum(tier2_data: dict) -> dict:
+    """
+    [T3-1] AI Momentum Signal — SOXX vs QQQ 상대강도
+    ─────────────────────────────────────────────────
+    목적: 설계서 ai_momentum_signal 구현.
+          AI/반도체 섹터가 Tech 전체(QQQ) 대비 강한지 약한지로
+          AI 테마 리더십 지속 여부를 판단.
+          SOXX가 QQQ보다 강하면 AI 투자 모멘텀 건재,
+          약하면 AI 테마 둔화 또는 로테이션 발생.
+
+    로직: spread = SOXX등락률 - QQQ등락률
+          - spread > 0.5% → AI 리더십 강함 (Growth 강화)
+          - spread < -1.0% → AI 둔화 (Growth 약화 경고)
+          - 그 사이 → 중립
+
+    입력: tier2_data (collect_tier2_market_data 결과)
+          - soxx_change: SOXX 일간 등락률 (%)
+          - qqq_change: QQQ 일간 등락률 (%)
+
+    출력: ai_momentum_score (1~3)
+          - 1: AI 리더십 강함 → Growth 보강
+          - 2: 중립
+          - 3: AI 둔화 → Growth 약화 신호
+    """
+    if not tier2_data:
+        return {"ai_momentum_score": 2, "ai_momentum_state": "No Data", "ai_momentum_spread": 0.0}
+
+    soxx_chg = tier2_data.get("soxx_change")
+    qqq_chg = tier2_data.get("qqq_change")
+
+    if soxx_chg is None or qqq_chg is None:
+        return {"ai_momentum_score": 2, "ai_momentum_state": "No Data", "ai_momentum_spread": 0.0}
+
+    spread = soxx_chg - qqq_chg
+
+    if spread >= AI_MOM_STRONG_THRESHOLD:
+        state, score = "AI Leadership", 1
+    elif spread <= AI_MOM_WEAK_THRESHOLD:
+        state, score = "AI Slowdown", 3
+    else:
+        state, score = "Neutral", 2
+
+    return {
+        "ai_momentum_score": score,
+        "ai_momentum_state": state,
+        "ai_momentum_spread": round(spread, 2),
+    }
+
+
+def _score_nasdaq_relative(snapshot: dict) -> dict:
+    """
+    [T3-2] Nasdaq Relative Signal — NASDAQ vs SP500 상대수익
+    ────────────────────────────────────────────────────────
+    목적: 설계서 nasdaq_relative_signal 구현.
+          NASDAQ이 SP500보다 강하면 Growth/Tech 주도 시장,
+          약하면 방어주/가치주 선호(Rotation) 시장.
+          Regime 판단의 보조 지표로 활용.
+
+    로직: spread = NASDAQ등락률 - SP500등락률
+          - spread > 0.5% → Growth 주도 (Tech Outperform)
+          - spread < -0.5% → Value 선호 (Defensive Rotation)
+          - 그 사이 → 균형
+
+    입력: snapshot (collect_market_snapshot 결과)
+          - nasdaq: NASDAQ 일간 등락률 (%)
+          - sp500: SP500 일간 등락률 (%)
+
+    출력: nasdaq_rel_score (1~3)
+          - 1: Growth/Tech 주도
+          - 2: 균형
+          - 3: Value/방어주 선호 → Growth 약화
+    """
+    sp500_chg = snapshot.get("sp500", 0.0) or 0.0
+    nasdaq_chg = snapshot.get("nasdaq", 0.0) or 0.0
+
+    spread = nasdaq_chg - sp500_chg
+
+    if spread >= NASDAQ_REL_GROWTH_THRESHOLD:
+        state, score = "Growth Leadership", 1
+    elif spread <= NASDAQ_REL_VALUE_THRESHOLD:
+        state, score = "Value Rotation", 3
+    else:
+        state, score = "Balanced", 2
+
+    return {
+        "nasdaq_rel_score": score,
+        "nasdaq_rel_state": state,
+        "nasdaq_rel_spread": round(spread, 2),
+    }
+
+
+def _score_banking_stress(tier2_data: dict, etf_prices: dict) -> dict:
+    """
+    [T3-3] Banking Stress Signal — KRE vs XLF 상대강도
+    ───────────────────────────────────────────────────
+    목적: 설계서 banking_stress_signal 구현.
+          2023 SVB/시그니처뱅크 사태에서 KRE(지역은행)가
+          XLF(금융 전체) 대비 대폭 하락하며 금융 시스템 스트레스를
+          선행 감지한 패턴을 자동화.
+
+    로직: spread = KRE등락률 - XLF등락률
+          - spread < -1.5% → 지역은행 스트레스 (SVB 패턴)
+          - 그 외 → 안정
+
+    입력:
+          - tier2_data.kre_change: KRE 일간 등락률 (%)
+          - etf_prices.XLF.change_pct: XLF 일간 등락률 (%)
+
+    출력: banking_stress_score (1~3)
+          - 1: 안정
+          - 2: 소폭 약세
+          - 3: 은행 스트레스 → Financial Stability 약화
+    """
+    kre_chg = tier2_data.get("kre_change") if tier2_data else None
+
+    # XLF는 etf_prices에서 가져옴 (이미 수집 중)
+    xlf_chg = None
+    if etf_prices:
+        xlf_data = etf_prices.get("XLF", {})
+        xlf_chg = xlf_data.get("change_pct", 0.0)
+
+    if kre_chg is None or xlf_chg is None:
+        return {"banking_stress_score": 1, "banking_stress_state": "No Data", "banking_stress_spread": 0.0}
+
+    spread = kre_chg - xlf_chg
+
+    if spread <= BANK_STRESS_THRESHOLD:
+        # KRE가 XLF 대비 대폭 하락 → SVB 패턴, 은행 시스템 스트레스
+        state, score = "Bank Stress", 3
+    elif spread <= -0.5:
+        state, score = "Bank Mild Weakness", 2
+    else:
+        state, score = "Bank Stable", 1
+
+    return {
+        "banking_stress_score": score,
+        "banking_stress_state": state,
+        "banking_stress_spread": round(spread, 2),
+    }
+
+
+# ──────────────────────────────────────────────────────────────
 # 2. Market Score  (6개 축)
 # ──────────────────────────────────────────────────────────────
 
 def compute_market_score(signals: dict) -> dict:
     """
-    6개 축 Market Score 산출 — Tier 1+2 확장 반영 (2026-04-01)
+    6개 축 Market Score 산출 — Tier 1+2+3 확장 반영 (2026-04-01)
     ──────────────────────────────────────────────────────────
     출력: 각 축 1~5 (5=위험/부담, 1=안정/우호)
 
@@ -536,10 +687,9 @@ def compute_market_score(signals: dict) -> dict:
       v1.0: VIX + 금리 + Oil + 감성 기반 단순 평균
       v1.1 (Tier 1): Fear&Greed, BTC, 주가모멘텀, XLF/GLD 반영
       v1.2 (Tier 2): Market Breadth, Vol Term, 실업수당, 기대인플레, EM Stress
-           - growth_score: + Breadth(참여도) + 실업수당(노동시장)
-           - inflation_score: + 기대인플레이션(T5YIFR)
-           - liquidity_score: + EM Stress(글로벌 리스크 전이)
-           - risk_score: + Vol Term Structure(위기 구조 판별)
+      v1.3 (Tier 3): AI Momentum, Nasdaq Relative, Banking Stress
+           - growth_score: + AI모멘텀 + Nasdaq상대강도
+           - financial_stability: + Banking Stress(KRE/XLF)
     """
     # ── 기존 시그널 ──
     vix_score = signals.get("volatility_score", 2)
@@ -561,19 +711,27 @@ def compute_market_score(signals: dict) -> dict:
     infl_exp_score = signals.get("infl_exp_score", 2)      # T2-4: 1~3
     em_stress_score = signals.get("em_stress_score", 1)    # T2-5: 1~4
 
+    # ── Tier 3 확장 시그널 (없으면 중립값 → 기존 로직 보존) ──
+    ai_momentum_score = signals.get("ai_momentum_score", 2)    # T3-1: 1~3
+    nasdaq_rel_score = signals.get("nasdaq_rel_score", 2)      # T3-2: 1~3
+    banking_stress_score = signals.get("banking_stress_score", 1) # T3-3: 1~3
+
     # ═══════════════════════════════════════════════════════
     # growth_score: 성장 환경
     # ═══════════════════════════════════════════════════════
-    # v1.1: VIX 30% + 금리 30% + 모멘텀 40%
     # v1.2: VIX 20% + 금리 20% + 모멘텀 30% + Breadth 15% + 실업수당 15%
-    #   - Breadth: 랠리 참여도 검증 (Narrow=3 → Growth 약화)
-    #   - 실업수당: 실물경제 선행 (Weak Labor=3 → Growth 약화)
+    # v1.3: VIX 15% + 금리 15% + 모멘텀 20% + Breadth 10% + 실업수당 10%
+    #       + AI모멘텀 15% + Nasdaq상대 15%
+    #   - AI모멘텀: SOXX/QQQ 상대강도 (AI 테마 리더십 지속 여부)
+    #   - Nasdaq상대: Growth vs Value 로테이션 방향
     growth_raw = (
-        vix_score * 0.20 +
-        rate_score * 0.20 +
-        momentum_score * 0.30 +
-        breadth_score * 0.15 +
-        claims_score * 0.15
+        vix_score * 0.15 +
+        rate_score * 0.15 +
+        momentum_score * 0.20 +
+        breadth_score * 0.10 +
+        claims_score * 0.10 +
+        ai_momentum_score * 0.15 +
+        nasdaq_rel_score * 0.15
     )
     growth_score = max(1, min(5, round(growth_raw)))
 
@@ -623,9 +781,16 @@ def compute_market_score(signals: dict) -> dict:
     risk_score = max(1, min(5, round(risk_raw)))
 
     # ═══════════════════════════════════════════════════════
-    # financial_stability_score: 금융 안정 (Tier 1 유지)
+    # financial_stability_score: 금융 안정
     # ═══════════════════════════════════════════════════════
-    stability_raw = stability_score * 0.70 + xlf_gld_score * 0.30
+    # v1.1: HY 70% + XLF/GLD 30%
+    # v1.3: HY 50% + XLF/GLD 20% + Banking Stress 30%
+    #   - Banking Stress: KRE/XLF 상대강도 (SVB 패턴 선행 감지)
+    stability_raw = (
+        stability_score * 0.50 +
+        xlf_gld_score * 0.20 +
+        banking_stress_score * 0.30
+    )
     financial_stability = max(1, min(5, round(stability_raw)))
 
     score = {
@@ -717,6 +882,12 @@ def run_macro_engine(
     signals.update(_score_inflation_expectation(fred_data))            # T2-4
     signals.update(_score_em_stress(tier2_data, snapshot))             # T2-5
 
+    # ── Tier 3 확장 3개 시그널 산출 (2026-04-01 추가) ──
+    # 설계서 v2.1에 정의되었으나 미구현이었던 시그널 보완
+    signals.update(_score_ai_momentum(tier2_data))                     # T3-1
+    signals.update(_score_nasdaq_relative(snapshot))                   # T3-2
+    signals.update(_score_banking_stress(tier2_data, etf_prices))      # T3-3
+
     # Market Score (Tier 1 + 2 확장 시그널 포함)
     market_score = compute_market_score(signals)
 
@@ -739,6 +910,11 @@ def run_macro_engine(
         f"Claims={signals.get('claims_state','N/A')} | "
         f"InflExp={signals.get('infl_exp_state','N/A')} | "
         f"EM={signals.get('em_stress_state','N/A')}"
+    )
+    logger.info(
+        f"[MacroEngine] Tier3: AI={signals.get('ai_momentum_state','N/A')} | "
+        f"NasRel={signals.get('nasdaq_rel_state','N/A')} | "
+        f"Bank={signals.get('banking_stress_state','N/A')}"
     )
 
     return {
