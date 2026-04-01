@@ -265,3 +265,221 @@ def run_etf_engine(
         "etf_strategy": strategy,
         "etf_allocation": allocation,
     }
+
+
+# ──────────────────────────────────────────────────────────────
+# 6. ETF 상세 전략 근거 자동 생성 (B-7, 2026-04-01 추가)
+# ──────────────────────────────────────────────────────────────
+
+# ETF별 영향 시그널 매핑
+# key: ETF 티커
+# value: list of (signal_key, state_key, direction)
+#   direction: "bullish" = 점수 높을수록 해당 ETF에 유리
+#              "bearish" = 점수 높을수록 해당 ETF에 불리
+_ETF_SIGNAL_MAP = {
+    "QQQM": [
+        ("equity_momentum_score", "equity_momentum_state", "bearish"),   # 낮을수록 유리
+        ("ai_momentum_score",     "ai_momentum_state",     "bearish"),   # AI Leadership(1)이 유리
+        ("nasdaq_rel_score",      "nasdaq_rel_state",      "bearish"),   # Growth주도(1)가 유리
+        ("breadth_score",         "breadth_state",         "bearish"),   # Broad(1)이 유리
+        ("vol_term_score",        "vol_term_state",        "bearish"),   # Contango(1)가 유리
+    ],
+    "XLK": [
+        ("equity_momentum_score", "equity_momentum_state", "bearish"),
+        ("ai_momentum_score",     "ai_momentum_state",     "bearish"),
+        ("nasdaq_rel_score",      "nasdaq_rel_state",      "bearish"),
+        ("breadth_score",         "breadth_state",         "bearish"),
+    ],
+    "SPYM": [
+        ("volatility_score",          "vix_state",               "bearish"),
+        ("financial_stability_score", "credit_stress_signal",    "bearish"),
+        ("claims_score",              "claims_state",            "bearish"),
+        ("breadth_score",             "breadth_state",           "bearish"),
+    ],
+    "XLE": [
+        ("commodity_pressure_score", "oil_state",       "bullish"),    # 유가 높을수록 유리
+        ("infl_exp_score",           "infl_exp_state",  "bullish"),    # 인플레 높을수록 유리
+        ("em_stress_score",          "em_stress_state",  "bearish"),   # EM 안정이 유리
+    ],
+    "ITA": [
+        ("volatility_score",          "vix_state",              "bullish"),   # 공포 높으면 방산 수요
+        ("financial_stability_score", "credit_stress_signal",   "bullish"),   # 불안정하면 방산
+        ("em_stress_score",           "em_stress_state",        "bullish"),   # EM 스트레스 → 지정학
+        ("banking_stress_score",      "banking_stress_state",   "neutral"),
+    ],
+    "TLT": [
+        ("volatility_score",  "vix_state",        "bullish"),    # VIX 높으면 채권 수요
+        ("vol_term_score",    "vol_term_state",    "bullish"),    # 백워데이션 → 안전자산
+        ("rate_score",        "rate_environment",  "bearish"),    # 금리 낮을수록 유리
+        ("fear_greed_score",  "fear_greed_state",  "special"),    # Extreme Fear → 채권
+        ("claims_score",      "claims_state",      "bullish"),    # 노동시장 악화 → 금리인하 기대
+    ],
+}
+
+# ETF별 정형화된 리스크 텍스트
+_ETF_RISK_TEXT = {
+    "QQQM": {
+        "Overweight": "금리 상승 + 대형주 계절성 약화 가능",
+        "Underweight": "테크 섹터 회복 지연 시 기회비용",
+    },
+    "XLK": {
+        "Overweight": "기술주 순환 + 규제 리스크",
+        "Underweight": "섹터 과대평가 지속 가능",
+    },
+    "SPYM": {
+        "Overweight": "공격적 환경 전환 시 기회비용",
+        "Underweight": "시장 추가 하락 가능",
+    },
+    "XLE": {
+        "Overweight": "유가 급락 + 대체에너지 전환",
+        "Underweight": "지정학 리스크로 유가 반등 가능",
+    },
+    "ITA": {
+        "Overweight": "방산 예산 삭감 가능성",
+        "Underweight": "전통 방산 수요 감소",
+    },
+    "TLT": {
+        "Overweight": "금리 반등 시 가격 하락",
+        "Underweight": "신용리스크 확대 시 기회 상실",
+    },
+}
+
+# 시그널 한국어 라벨 (signal_diff.py와 동일)
+_SIGNAL_LABEL = {
+    "volatility_score":          "VIX",
+    "rate_score":                "금리",
+    "commodity_pressure_score":  "유가",
+    "financial_stability_score": "금융안정",
+    "sentiment_score":           "시장심리",
+    "fear_greed_score":          "공포탐욕",
+    "crypto_risk_score":         "BTC",
+    "equity_momentum_score":     "주가모멘텀",
+    "xlf_gld_score":             "금융/금",
+    "breadth_score":             "시장참여도",
+    "vol_term_score":            "변동성구조",
+    "claims_score":              "실업수당",
+    "infl_exp_score":            "기대인플레",
+    "em_stress_score":           "신흥국",
+    "ai_momentum_score":         "AI모멘텀",
+    "nasdaq_rel_score":          "나스닥상대",
+    "banking_stress_score":      "은행스트레스",
+}
+
+
+def generate_etf_rationale(
+    etf: str,
+    stance: str,
+    signals: dict,
+    regime: str,
+) -> dict:
+    """
+    [B-7] ETF별 시그널 기반 매수/매도 근거 자동 생성
+
+    19개 시그널 중 해당 ETF에 영향을 주는 시그널만 선별하고,
+    현재 Stance(Overweight/Underweight/Neutral/Hedge)와 일치하는
+    방향의 시그널을 근거로 추출한다.
+
+    Args:
+        etf:      ETF 티커 (예: "TLT")
+        stance:   현재 Stance (예: "Overweight")
+        signals:  19개 시그널 dict (macro_engine 출력)
+        regime:   현재 레짐 (예: "Risk-Off")
+
+    Returns:
+        {
+          "rationale": "VIX Extreme + Vol 백워데이션 + 금리 하락 기대",
+          "risk": "금리 반등 시 가격 하락",
+          "signals_used": ["volatility_score", "vol_term_score", "rate_score"],
+        }
+    """
+    if not signals:
+        return {
+            "rationale": f"Regime {regime} 기반 전략",
+            "risk": "시그널 데이터 없음",
+            "signals_used": [],
+        }
+
+    signal_map = _ETF_SIGNAL_MAP.get(etf, [])
+    if not signal_map:
+        return {
+            "rationale": f"Regime {regime} 기반 전략",
+            "risk": "—",
+            "signals_used": [],
+        }
+
+    # ── 해당 ETF에 유리/불리한 시그널 선별 ──
+    favorable = []   # Overweight 근거가 되는 시그널
+    unfavorable = []  # Underweight 근거가 되는 시그널
+
+    for sig_key, state_key, direction in signal_map:
+        score = signals.get(sig_key)
+        state = signals.get(state_key, "")
+        if score is None:
+            continue
+
+        label = _SIGNAL_LABEL.get(sig_key, sig_key)
+
+        if direction == "bullish":
+            # 점수 높을수록 해당 ETF에 유리
+            if score >= 3:
+                favorable.append(f"{label} {state}")
+            elif score <= 1:
+                unfavorable.append(f"{label} {state}")
+        elif direction == "bearish":
+            # 점수 낮을수록 해당 ETF에 유리
+            if score <= 1:
+                favorable.append(f"{label} {state}")
+            elif score >= 3:
+                unfavorable.append(f"{label} {state}")
+        elif direction == "special":
+            # Fear & Greed: Extreme Fear(1)→TLT 유리, Extreme Greed(5)→TLT 불리
+            if score <= 2:
+                favorable.append(f"{label} {state}")
+            elif score >= 4:
+                unfavorable.append(f"{label} {state}")
+
+    # ── Stance에 따라 근거 선택 ──
+    if stance in ("Overweight", "Hedge"):
+        rationale_list = favorable[:4] if favorable else [f"Regime {regime} 기반"]
+    elif stance == "Underweight":
+        rationale_list = unfavorable[:4] if unfavorable else [f"Regime {regime} 기반"]
+    else:  # Neutral
+        rationale_list = [f"뚜렷한 방향성 없음 — Regime {regime}"]
+
+    rationale = " + ".join(rationale_list)
+
+    # ── 리스크 텍스트 ──
+    risk_map = _ETF_RISK_TEXT.get(etf, {})
+    risk = risk_map.get(stance, "포지션 모니터링 필요")
+
+    # 사용된 시그널 키 목록
+    used = [sk for sk, _, _ in signal_map if signals.get(sk) is not None]
+
+    return {
+        "rationale": rationale,
+        "risk": risk,
+        "signals_used": used,
+    }
+
+
+def generate_all_etf_rationales(
+    stance_dict: dict,
+    signals: dict,
+    regime: str,
+) -> Dict[str, dict]:
+    """
+    [B-7] 전체 ETF 6종의 근거 일괄 생성
+
+    Args:
+        stance_dict: {"QQQM": "Overweight", "TLT": "Hedge", ...}
+        signals:     19개 시그널 dict
+        regime:      현재 레짐
+
+    Returns:
+        {"QQQM": {"rationale": "...", "risk": "...", "signals_used": [...]}, ...}
+    """
+    result = {}
+    for etf in ETF_CORE:
+        stance = stance_dict.get(etf, "Neutral")
+        result[etf] = generate_etf_rationale(etf, stance, signals, regime)
+    return result

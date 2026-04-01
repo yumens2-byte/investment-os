@@ -270,6 +270,196 @@ def _crisis_alert(snapshot: dict) -> Optional[AlertSignal]:
     return None
 
 
+# ──────────────────────────────────────────────────────────────
+# B-5: ETF 랭킹 변화 Alert (2026-04-01 추가)
+# ──────────────────────────────────────────────────────────────
+
+def _etf_rank_alert(
+    rank_change: Optional[dict],
+    signal_diff_result: Optional[dict],
+    snapshot: dict,
+) -> Optional[AlertSignal]:
+    """
+    [B-5] ETF 랭킹 변화 Alert
+
+    등급 분류:
+      - Top1 변경 → L2 (전략 전환 필요)
+      - Top3 내 ETF 교체 → L1 (주의 관찰)
+      - Top1 유지 + 하위만 변동 → 발송 안함
+
+    Args:
+        rank_change:      rank_tracker.detect_rank_change() 결과
+        signal_diff_result: signal_diff.compute_signal_diff() 결과
+        snapshot:         현재 시장 스냅샷
+    """
+    if rank_change is None:
+        return None
+
+    top1_changed = rank_change.get("top1_changed", False)
+    moved_up = rank_change.get("moved_up", [])
+    moved_down = rank_change.get("moved_down", [])
+    old_top1 = rank_change.get("old_top1", "—")
+    new_top1 = rank_change.get("new_top1", "—")
+
+    # ── Top1 변경 → L2 ──
+    if top1_changed:
+        # 원인 요약 (signal_diff 결과 활용)
+        cause = ""
+        if signal_diff_result and signal_diff_result.get("summary"):
+            cause = f" | 원인: {signal_diff_result['summary']}"
+
+        return AlertSignal(
+            alert_type="ETF_RANK",
+            level="L2",
+            reason=(
+                f"ETF 1위 전환: {old_top1} → {new_top1}{cause}"
+            ),
+            snapshot=snapshot,
+            etf_hints=[new_top1],
+            avoid_etfs=[old_top1] if old_top1 != "—" else [],
+        )
+
+    # ── Top3 내 교체 있는지 확인 → L1 ──
+    top3_moved = any(
+        m["to"] <= 3 or m["from"] <= 3
+        for m in moved_up + moved_down
+    )
+
+    if top3_moved:
+        up_names = [m["etf"] for m in moved_up if m["to"] <= 3]
+        down_names = [m["etf"] for m in moved_down if m["from"] <= 3]
+
+        cause = ""
+        if signal_diff_result and signal_diff_result.get("summary"):
+            cause = f" | 원인: {signal_diff_result['summary']}"
+
+        parts = []
+        if up_names:
+            parts.append(f"상승: {','.join(up_names)}")
+        if down_names:
+            parts.append(f"하락: {','.join(down_names)}")
+
+        return AlertSignal(
+            alert_type="ETF_RANK",
+            level="L1",
+            reason=f"ETF Top3 변화 — {' / '.join(parts)}{cause}",
+            snapshot=snapshot,
+            etf_hints=up_names,
+            avoid_etfs=down_names,
+        )
+
+    # 하위(4~6위)만 변동 → 발송 안함
+    return None
+
+
+# ──────────────────────────────────────────────────────────────
+# B-6: 레짐 전환 Alert (2026-04-01 추가)
+# ──────────────────────────────────────────────────────────────
+
+def _regime_change_alert(
+    regime_change: Optional[dict],
+    signal_diff_result: Optional[dict],
+    score_diff_result: Optional[dict],
+    snapshot: dict,
+) -> Optional[AlertSignal]:
+    """
+    [B-6] 레짐 전환 Alert
+
+    등급 분류:
+      - 안전→위험 방향 (direction=danger) → L2
+      - 위험→안전 방향 (direction=recovery) → L1
+      - Shock 레짐 진입 → L2
+      - Risk Level만 변경 (레짐 동일) → L1
+
+    Args:
+        regime_change:     regime_tracker.detect_regime_change() 결과
+        signal_diff_result: signal_diff.compute_signal_diff() 결과
+        score_diff_result:  signal_diff.compute_score_diff() 결과
+        snapshot:          현재 시장 스냅샷
+    """
+    if regime_change is None:
+        return None
+
+    old_regime = regime_change.get("old_regime", "—")
+    new_regime = regime_change.get("new_regime", "—")
+    old_risk = regime_change.get("old_risk_level", "—")
+    new_risk = regime_change.get("new_risk_level", "—")
+    direction = regime_change.get("direction", "danger")
+    regime_changed = regime_change.get("regime_changed", False)
+    risk_changed = regime_change.get("risk_changed", False)
+
+    # ── 원인 요약 ──
+    cause = ""
+    if signal_diff_result and signal_diff_result.get("summary"):
+        cause = f" | 원인: {signal_diff_result['summary']}"
+
+    # ── Shock 레짐 진입 → L2 ──
+    shock_regimes = {"Oil Shock", "Liquidity Crisis", "Crisis Regime"}
+    if regime_changed and new_regime in shock_regimes:
+        # 어떤 ETF를 주목/회피할지 레짐 기반 판단
+        hints, avoids = _regime_etf_hints(new_regime)
+        return AlertSignal(
+            alert_type="REGIME_CHANGE",
+            level="L2",
+            reason=f"Shock 레짐 진입: {old_regime} → {new_regime}{cause}",
+            snapshot=snapshot,
+            etf_hints=hints,
+            avoid_etfs=avoids,
+        )
+
+    # ── 레짐 전환 (danger 방향) → L2 ──
+    if regime_changed and direction == "danger":
+        hints, avoids = _regime_etf_hints(new_regime)
+        risk_str = f" | Risk: {old_risk}→{new_risk}" if risk_changed else ""
+        return AlertSignal(
+            alert_type="REGIME_CHANGE",
+            level="L2",
+            reason=f"레짐 전환: {old_regime} → {new_regime}{risk_str}{cause}",
+            snapshot=snapshot,
+            etf_hints=hints,
+            avoid_etfs=avoids,
+        )
+
+    # ── 레짐 전환 (recovery 방향) → L1 ──
+    if regime_changed and direction == "recovery":
+        hints, avoids = _regime_etf_hints(new_regime)
+        risk_str = f" | Risk: {old_risk}→{new_risk}" if risk_changed else ""
+        return AlertSignal(
+            alert_type="REGIME_CHANGE",
+            level="L1",
+            reason=f"레짐 회복: {old_regime} → {new_regime}{risk_str}{cause}",
+            snapshot=snapshot,
+            etf_hints=hints,
+            avoid_etfs=avoids,
+        )
+
+    # ── 레짐 동일 + Risk Level만 변경 → L1 ──
+    if not regime_changed and risk_changed:
+        return AlertSignal(
+            alert_type="REGIME_CHANGE",
+            level="L1",
+            reason=f"Risk Level 변경: {old_risk} → {new_risk} (레짐 {new_regime} 유지){cause}",
+            snapshot=snapshot,
+        )
+
+    return None
+
+
+def _regime_etf_hints(regime: str):
+    """레짐별 주목/회피 ETF 반환"""
+    _HINTS = {
+        "Risk-On":          (["QQQM", "XLK"], []),
+        "Risk-Off":         (["TLT", "ITA"], ["QQQM", "XLK"]),
+        "Oil Shock":        (["XLE", "ITA"], ["QQQM", "TLT"]),
+        "Liquidity Crisis": (["TLT", "SPYM"], ["QQQM", "XLK"]),
+        "Recession Risk":   (["TLT", "SPYM"], ["QQQM", "XLE"]),
+        "Stagflation Risk": (["XLE", "ITA"], ["QQQM", "TLT"]),
+        "Crisis Regime":    (["TLT", "SPYM"], ["QQQM", "XLK", "XLE"]),
+        "Transition":       ([], []),
+    }
+    return _HINTS.get(regime, ([], []))
+
+
 def _vix_countdown_alert(
     snapshot: dict,
     prev_snapshot: Optional[dict] = None,
@@ -315,14 +505,22 @@ def run_alert_engine(
     snapshot: dict,
     news_result: dict,
     prev_snapshot: Optional[dict] = None,
+    rank_change: Optional[dict] = None,
+    regime_change: Optional[dict] = None,
+    signal_diff_result: Optional[dict] = None,
+    score_diff_result: Optional[dict] = None,
 ) -> List[AlertSignal]:
     """
     전체 Alert 감지 실행.
 
     Args:
-        snapshot: 현재 시장 스냅샷
-        news_result: collect_news_sentiment() 결과 (RSS 포함)
+        snapshot:     현재 시장 스냅샷
+        news_result:  collect_news_sentiment() 결과 (RSS 포함)
         prev_snapshot: 직전 실행 스냅샷 (급변 감지용, 없으면 None)
+        rank_change:  rank_tracker.detect_rank_change() 결과 (B-5)
+        regime_change: regime_tracker.detect_regime_change() 결과 (B-6)
+        signal_diff_result: signal_diff.compute_signal_diff() 결과 (B-5/B-6)
+        score_diff_result:  signal_diff.compute_score_diff() 결과 (B-6)
 
     Returns:
         발송 대상 AlertSignal 리스트 (우선순위 정렬)
@@ -361,6 +559,18 @@ def run_alert_engine(
     countdown_sig = _vix_countdown_alert(snapshot, prev_snapshot)
     if countdown_sig:
         alerts.append(countdown_sig)
+
+    # ── B-5: ETF 랭킹 변화 Alert (2026-04-01 추가) ──
+    etf_rank_sig = _etf_rank_alert(rank_change, signal_diff_result, snapshot)
+    if etf_rank_sig:
+        alerts.append(etf_rank_sig)
+
+    # ── B-6: 레짐 전환 Alert (2026-04-01 추가) ──
+    regime_sig = _regime_change_alert(
+        regime_change, signal_diff_result, score_diff_result, snapshot
+    )
+    if regime_sig:
+        alerts.append(regime_sig)
 
     # 6. 프리미엄 알람 정보 — AlertSignal에 vix_level, regime_changed 부착
     vix_now = snapshot.get("vix", 0)
