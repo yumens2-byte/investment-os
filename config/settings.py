@@ -52,6 +52,26 @@ OIL_LOW_THRESHOLD = 70.0
 OIL_HIGH_THRESHOLD = 90.0
 DXY_HIGH_THRESHOLD = 104.0
 
+# ─── Tier 1 확장 시그널 임계값 (2026-04-01 추가) ──────────
+# Fear & Greed Index 임계값 (0~100, alternative.me 기준)
+# 24 이하 = Extreme Fear / 75 이상 = Extreme Greed
+FEAR_GREED_FEAR_THRESHOLD = 30       # 이 이하면 공포 구간
+FEAR_GREED_GREED_THRESHOLD = 70      # 이 이상이면 탐욕 구간
+
+# BTC 24h 등락률 임계값 (%)
+# BTC가 위험자산 선행지표로 작동 — 급락 시 리스크 오프 신호
+BTC_RISK_DROP_THRESHOLD = -5.0       # 이 이하 급락 → Risk 가중
+BTC_RISK_SURGE_THRESHOLD = 8.0       # 이 이상 급등 → 과열 경고
+
+# S&P500/NASDAQ 일간 등락률 임계값 (%)
+EQUITY_STRONG_MOVE_THRESHOLD = 1.5   # 이 이상 움직임 = 강한 모멘텀
+EQUITY_CRASH_THRESHOLD = -2.0        # 이 이하 = 급락 신호
+
+# XLF(금융) / GLD(금) 상대강도 판단 기준 (일간 등락률 차이 %)
+# XLF > GLD → Risk-On 선호 / GLD > XLF → 안전자산 선호
+XLF_GLD_RISK_ON_THRESHOLD = 1.0      # XLF-GLD > 1% → 금융 안정
+XLF_GLD_RISK_OFF_THRESHOLD = -1.0    # XLF-GLD < -1% → 안전자산 선호
+
 # ─── ETF Universe ─────────────────────────────────────────
 ETF_CORE = ["QQQM", "XLK", "SPYM", "XLE", "ITA", "TLT"]
 ETF_SIGNAL = ["XLF", "GLD"]
