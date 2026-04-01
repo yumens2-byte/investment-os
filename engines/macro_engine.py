@@ -15,6 +15,12 @@ from config.settings import (
     BTC_RISK_DROP_THRESHOLD, BTC_RISK_SURGE_THRESHOLD,
     EQUITY_STRONG_MOVE_THRESHOLD, EQUITY_CRASH_THRESHOLD,
     XLF_GLD_RISK_ON_THRESHOLD, XLF_GLD_RISK_OFF_THRESHOLD,
+    # ── Tier 2 확장 시그널 임계값 (2026-04-01 추가) ──
+    BREADTH_HEALTHY_THRESHOLD, BREADTH_NARROW_THRESHOLD,
+    VOL_TERM_BACKWARDATION, VOL_TERM_NORMAL,
+    ICSA_LOW_THRESHOLD, ICSA_HIGH_THRESHOLD,
+    INFLATION_EXP_LOW, INFLATION_EXP_HIGH,
+    EM_STRESS_THRESHOLD,
 )
 
 logger = logging.getLogger(__name__)
@@ -281,22 +287,259 @@ def _score_xlf_gld_relative(etf_prices: dict) -> dict:
     }
 
 
+
+# ──────────────────────────────────────────────────────────────
+# 1-C. Tier 2 확장 시그널 (2026-04-01 추가)
+#     새로운 데이터 소스를 추가 수집하여 분석 엔진에 연결.
+#     yfinance: RSP, VIX3M, EEM / FRED: ICSA, T5YIFR
+# ──────────────────────────────────────────────────────────────
+
+
+
+# ──────────────────────────────────────────────────────────────
+# 1-C. Tier 2 확장 시그널 (2026-04-01 추가)
+#     새로운 데이터 소스를 추가 수집하여 분석 엔진에 연결.
+#     yfinance: RSP, VIX3M, EEM / FRED: ICSA, T5YIFR
+# ──────────────────────────────────────────────────────────────
+
+def _score_market_breadth(tier2_data: dict, snapshot: dict) -> dict:
+    """
+    [T2-1] Market Breadth Signal — RSP/SPY 상대강도
+    ─────────────────────────────────────────────────
+    목적: S&P500 지수가 상승해도 소수 메가캡(AAPL, NVDA 등)이
+          끌고 가는 것인지, 전체 시장이 참여하는 것인지를 구분.
+          RSP(균등가중 ETF)와 SPY(시총가중 ETF) 등락률 차이로 판단.
+
+    로직: breadth_spread = RSP등락률 - SPY등락률
+          - 양수(RSP > SPY) → 중소형주도 참여, 건강한 랠리
+          - 음수(RSP < SPY) → 대형주만 상승, 취약한 랠리
+          - SP500 자체가 하락 중이면 breadth 의미 약화 → 보정
+
+    입력: tier2_data (collect_tier2_market_data 결과)
+          - rsp_change: RSP 일간 등락률 (%)
+          - spy_change: SPY 일간 등락률 (%)
+
+    출력: breadth_score (1~3)
+          - 1: 건강한 참여 (Broad Rally)
+          - 2: 중립
+          - 3: 소수 종목 집중 (Narrow Rally) → Growth 약화 신호
+    """
+    if not tier2_data:
+        return {"breadth_score": 2, "breadth_state": "Unknown", "breadth_spread": 0.0}
+
+    rsp_chg = tier2_data.get("rsp_change")
+    spy_chg = tier2_data.get("spy_change")
+
+    # 둘 다 None이면 판단 불가
+    if rsp_chg is None or spy_chg is None:
+        return {"breadth_score": 2, "breadth_state": "No Data", "breadth_spread": 0.0}
+
+    spread = rsp_chg - spy_chg
+
+    if spread >= BREADTH_HEALTHY_THRESHOLD:
+        state, score = "Broad Rally", 1
+    elif spread <= BREADTH_NARROW_THRESHOLD:
+        state, score = "Narrow Rally", 3
+    else:
+        state, score = "Neutral", 2
+
+    return {
+        "breadth_score": score,
+        "breadth_state": state,
+        "breadth_spread": round(spread, 2),
+    }
+
+
+def _score_vol_term_structure(snapshot: dict, tier2_data: dict) -> dict:
+    """
+    [T2-2] Volatility Term Structure Signal — VIX/VIX3M 비율
+    ─────────────────────────────────────────────────────────
+    목적: 현재 VIX만 사용하면 "공포가 일시적인지 구조적인지" 구분 불가.
+          VIX(1개월) vs VIX3M(3개월) 비율을 보면:
+            - VIX > VIX3M (백워데이션): 단기 패닉, 시장 급변
+            - VIX < VIX3M (컨탱고): 정상 상태, 안정
+
+    로직: ratio = VIX / VIX3M
+          - ratio >= 1.0 → 백워데이션 = 구조적 위기 의심
+          - ratio < 0.85 → 정상 컨탱고 = 안정
+          - 그 사이 → 경계
+
+    입력: snapshot (VIX 가격), tier2_data (VIX3M 가격)
+
+    출력: vol_term_score (1~3)
+          - 1: 정상 (컨탱고)
+          - 2: 경계
+          - 3: 백워데이션 (구조적 위기) → Risk 대폭 가중
+    """
+    vix = snapshot.get("vix")
+    vix3m = tier2_data.get("vix3m") if tier2_data else None
+
+    if vix is None or vix3m is None or vix3m == 0:
+        return {"vol_term_score": 2, "vol_term_state": "No Data", "vol_term_ratio": None}
+
+    ratio = vix / vix3m
+
+    if ratio >= VOL_TERM_BACKWARDATION:
+        # 백워데이션: 단기 VIX가 장기보다 높음 → 급격한 공포
+        state, score = "Backwardation", 3
+    elif ratio < VOL_TERM_NORMAL:
+        # 정상 컨탱고: 시장 안정
+        state, score = "Contango", 1
+    else:
+        state, score = "Flat", 2
+
+    return {
+        "vol_term_score": score,
+        "vol_term_state": state,
+        "vol_term_ratio": round(ratio, 3),
+    }
+
+
+def _score_initial_claims(fred_data: dict) -> dict:
+    """
+    [T2-3] Initial Jobless Claims Signal — 실업수당 청구
+    ────────────────────────────────────────────────────
+    목적: 실물경제 선행지표 중 가장 실시간성이 높은 데이터.
+          주간 업데이트되므로 월간 지표(CPI, GDP)보다 빠르게
+          노동시장 악화를 감지 가능.
+
+    로직: ICSA (천 명 단위)
+          - < 220K → 노동시장 매우 강함 → 성장 우호
+          - 220~300K → 정상 범위
+          - > 300K → 노동시장 악화 → Recession 경고
+
+    입력: fred_data (collect_macro_data 결과)
+          - initial_claims: 천 명 단위 (예: 225.0 = 225,000명)
+
+    출력: claims_score (1~3)
+          - 1: 노동시장 강함
+          - 2: 정상
+          - 3: 노동시장 악화 → Growth 약화 + Recession 가중
+    """
+    claims = fred_data.get("initial_claims") if fred_data else None
+
+    if claims is None:
+        return {"claims_score": 2, "claims_state": "No Data", "claims_value": None}
+
+    if claims < ICSA_LOW_THRESHOLD:
+        state, score = "Strong Labor", 1
+    elif claims > ICSA_HIGH_THRESHOLD:
+        state, score = "Weak Labor", 3
+    else:
+        state, score = "Normal", 2
+
+    return {
+        "claims_score": score,
+        "claims_state": state,
+        "claims_value": round(claims, 1),
+    }
+
+
+def _score_inflation_expectation(fred_data: dict) -> dict:
+    """
+    [T2-4] Inflation Expectation Signal — 5Y Breakeven
+    ───────────────────────────────────────────────────
+    목적: 현재 Inflation Score는 유가 + 금리만 반영.
+          시장 참가자의 실제 인플레이션 기대(5년 Breakeven)를
+          추가하면 인플레이션 국면 판단이 정밀해짐.
+
+    로직: T5YIFR (%)
+          - < 2.0% → 디스인플레이션, 성장 둔화 가능성
+          - 2.0~2.8% → Fed 목표 부근, 정상
+          - > 2.8% → 인플레이션 우려 → Inflation Score 가중
+
+    입력: fred_data (collect_macro_data 결과)
+          - inflation_exp: % (예: 2.35)
+
+    출력: infl_exp_score (1~3)
+          - 1: 디스인플레이션 (2% 미만)
+          - 2: 정상 (2~2.8%)
+          - 3: 인플레이션 우려 (2.8% 초과)
+    """
+    infl = fred_data.get("inflation_exp") if fred_data else None
+
+    if infl is None:
+        return {"infl_exp_score": 2, "infl_exp_state": "No Data", "infl_exp_value": None}
+
+    if infl < INFLATION_EXP_LOW:
+        state, score = "Disinflation", 1
+    elif infl > INFLATION_EXP_HIGH:
+        state, score = "Inflation Concern", 3
+    else:
+        state, score = "Normal", 2
+
+    return {
+        "infl_exp_score": score,
+        "infl_exp_state": state,
+        "infl_exp_value": round(infl, 2),
+    }
+
+
+def _score_em_stress(tier2_data: dict, snapshot: dict) -> dict:
+    """
+    [T2-5] Emerging Market Stress Signal — EEM 등락률
+    ──────────────────────────────────────────────────
+    목적: 신흥국 시장 급락 + 달러 강세가 동시 발생하면
+          글로벌 리스크오프가 선진국으로 전이되는 패턴이 반복됨.
+          1997 아시아 위기, 2013 Taper Tantrum, 2018 터키 리라 등.
+
+    로직: EEM 등락률
+          - EEM < -2% → 신흥국 스트레스
+          - EEM < -2% AND DXY 강세 → 위기 전이 위험 (score 상향)
+          - EEM 정상 → 글로벌 리스크 안정
+
+    입력: tier2_data (EEM 등락률), snapshot (DXY 가격)
+
+    출력: em_stress_score (1~4)
+          - 1: 안정
+          - 2: 소폭 약세
+          - 3: 스트레스 (EEM 급락)
+          - 4: 위기 전이 위험 (EEM 급락 + 달러 강세)
+    """
+    eem_chg = tier2_data.get("eem_change") if tier2_data else None
+
+    if eem_chg is None:
+        return {"em_stress_score": 1, "em_stress_state": "No Data"}
+
+    dxy = snapshot.get("dollar_index", 100.0)
+    # DXY 104 이상 = 달러 강세 (settings의 DXY_HIGH_THRESHOLD 참조)
+    dollar_strong = dxy is not None and dxy >= 104.0
+
+    if eem_chg <= EM_STRESS_THRESHOLD:
+        if dollar_strong:
+            # 신흥국 급락 + 달러 강세 동시 → 위기 전이 위험
+            state, score = "EM Crisis Spillover", 4
+        else:
+            state, score = "EM Stress", 3
+    elif eem_chg <= -1.0:
+        state, score = "EM Mild Weakness", 2
+    else:
+        state, score = "EM Stable", 1
+
+    return {
+        "em_stress_score": score,
+        "em_stress_state": state,
+    }
+
+
 # ──────────────────────────────────────────────────────────────
 # 2. Market Score  (6개 축)
 # ──────────────────────────────────────────────────────────────
 
 def compute_market_score(signals: dict) -> dict:
     """
-    6개 축 Market Score 산출 — Tier 1 확장 반영 (2026-04-01)
+    6개 축 Market Score 산출 — Tier 1+2 확장 반영 (2026-04-01)
     ──────────────────────────────────────────────────────────
     출력: 각 축 1~5 (5=위험/부담, 1=안정/우호)
 
     변경 이력:
       v1.0: VIX + 금리 + Oil + 감성 기반 단순 평균
       v1.1 (Tier 1): Fear&Greed, BTC, 주가모멘텀, XLF/GLD 반영
-           - growth_score: 주가 모멘텀 직접 반영 (기존 VIX+금리만 → +모멘텀)
-           - risk_score: Fear&Greed + BTC 변동 보조 반영
-           - financial_stability: XLF/GLD 상대강도 보조 반영
+      v1.2 (Tier 2): Market Breadth, Vol Term, 실업수당, 기대인플레, EM Stress
+           - growth_score: + Breadth(참여도) + 실업수당(노동시장)
+           - inflation_score: + 기대인플레이션(T5YIFR)
+           - liquidity_score: + EM Stress(글로벌 리스크 전이)
+           - risk_score: + Vol Term Structure(위기 구조 판별)
     """
     # ── 기존 시그널 ──
     vix_score = signals.get("volatility_score", 2)
@@ -305,55 +548,83 @@ def compute_market_score(signals: dict) -> dict:
     stability_score = signals.get("financial_stability_score", 2)
     sentiment_score = signals.get("sentiment_score", 2)
 
-    # ── Tier 1 확장 시그널 (없으면 중립값 사용 → 기존 로직 보존) ──
-    fear_greed_score = signals.get("fear_greed_score", 3)    # T1-1: 1~5
-    crypto_risk_score = signals.get("crypto_risk_score", 1)  # T1-2: 1~4
-    momentum_score = signals.get("equity_momentum_score", 3) # T1-3: 1~5
-    xlf_gld_score = signals.get("xlf_gld_score", 2)          # T1-4: 1~3
+    # ── Tier 1 확장 시그널 ──
+    fear_greed_score = signals.get("fear_greed_score", 3)
+    crypto_risk_score = signals.get("crypto_risk_score", 1)
+    momentum_score = signals.get("equity_momentum_score", 3)
+    xlf_gld_score = signals.get("xlf_gld_score", 2)
 
-    # ── growth_score: 성장 환경 ──
-    # 기존: (VIX + 금리) / 2
-    # 개선: 주가 모멘텀 30% 가중 반영
-    #   - VIX 낮고 + 금리 낮고 + 실제 주가 상승 중 = 진짜 성장 우호
-    #   - VIX 낮아도 주가 하락 중이면 성장 약화 반영
-    growth_raw = (vix_score * 0.30 + rate_score * 0.30 + momentum_score * 0.40)
+    # ── Tier 2 확장 시그널 (없으면 중립값 → 기존 로직 보존) ──
+    breadth_score = signals.get("breadth_score", 2)        # T2-1: 1~3
+    vol_term_score = signals.get("vol_term_score", 2)      # T2-2: 1~3
+    claims_score = signals.get("claims_score", 2)          # T2-3: 1~3
+    infl_exp_score = signals.get("infl_exp_score", 2)      # T2-4: 1~3
+    em_stress_score = signals.get("em_stress_score", 1)    # T2-5: 1~4
+
+    # ═══════════════════════════════════════════════════════
+    # growth_score: 성장 환경
+    # ═══════════════════════════════════════════════════════
+    # v1.1: VIX 30% + 금리 30% + 모멘텀 40%
+    # v1.2: VIX 20% + 금리 20% + 모멘텀 30% + Breadth 15% + 실업수당 15%
+    #   - Breadth: 랠리 참여도 검증 (Narrow=3 → Growth 약화)
+    #   - 실업수당: 실물경제 선행 (Weak Labor=3 → Growth 약화)
+    growth_raw = (
+        vix_score * 0.20 +
+        rate_score * 0.20 +
+        momentum_score * 0.30 +
+        breadth_score * 0.15 +
+        claims_score * 0.15
+    )
     growth_score = max(1, min(5, round(growth_raw)))
 
-    # ── inflation_score: 원자재 + 금리 (기존 유지) ──
-    inflation_score = max(1, min(5, round((oil_score + rate_score) / 2)))
-
-    # ── liquidity_score: 신용 + 달러 (기존 유지) ──
-    dollar_score = 2 if not signals.get("dollar_tightening_signal") else 3
-    liquidity_score = max(1, min(5, round((stability_score + dollar_score) / 2)))
-
-    # ── risk_score: 종합 위험도 ──
-    # 기존: (VIX + 감성) / 2
-    # 개선: Fear&Greed + BTC 변동 반영
-    #   - Fear&Greed가 Extreme Fear이면 리스크 높음
-    #   - BTC 급락이면 위험자산 전반 리스크오프 전이
-    #   - 가중치: VIX 30% + 감성 25% + Fear&Greed 25% + BTC 20%
-    #   주의: fear_greed_score는 높을수록 탐욕(과열)이므로
-    #         공포(1) = 시장 위험, 탐욕(5) = 과열 위험 — 둘 다 risk 가중
-    fg_risk = fear_greed_score if fear_greed_score <= 2 else (
-        5 - fear_greed_score + 1 if fear_greed_score >= 4 else 2
+    # ═══════════════════════════════════════════════════════
+    # inflation_score: 인플레이션 환경
+    # ═══════════════════════════════════════════════════════
+    # v1.1: (Oil + 금리) / 2
+    # v1.2: Oil 35% + 금리 30% + 기대인플레 35%
+    #   - 기대인플레: 시장 참가자의 실제 인플레이션 전망 반영
+    inflation_raw = (
+        oil_score * 0.35 +
+        rate_score * 0.30 +
+        infl_exp_score * 0.35
     )
-    # fg_risk 변환: Extreme Fear(1)→4, Fear(2)→3, Neutral(3)→2,
-    #               Greed(4)→3, Extreme Greed(5)→4 — U자형 리스크 곡선
+    inflation_score = max(1, min(5, round(inflation_raw)))
+
+    # ═══════════════════════════════════════════════════════
+    # liquidity_score: 유동성 환경
+    # ═══════════════════════════════════════════════════════
+    # v1.1: (stability + dollar) / 2
+    # v1.2: stability 30% + dollar 30% + EM Stress 40%
+    #   - EM Stress: 신흥국 급락+달러강세 → 글로벌 유동성 경색 반영
+    dollar_score = 2 if not signals.get("dollar_tightening_signal") else 3
+    liquidity_raw = (
+        stability_score * 0.30 +
+        dollar_score * 0.30 +
+        em_stress_score * 0.40
+    )
+    liquidity_score = max(1, min(5, round(liquidity_raw)))
+
+    # ═══════════════════════════════════════════════════════
+    # risk_score: 종합 위험도
+    # ═══════════════════════════════════════════════════════
+    # v1.1: VIX 30% + 감성 25% + F&G 25% + BTC 20%
+    # v1.2: VIX 20% + 감성 15% + F&G 20% + BTC 15% + Vol Term 30%
+    #   - Vol Term: 백워데이션이면 구조적 위기 → Risk 대폭 가중
     fg_risk_map = {1: 4, 2: 3, 3: 2, 4: 3, 5: 4}
     fg_risk = fg_risk_map.get(fear_greed_score, 2)
 
     risk_raw = (
-        vix_score * 0.30 +
-        sentiment_score * 0.25 +
-        fg_risk * 0.25 +
-        crypto_risk_score * 0.20
+        vix_score * 0.20 +
+        sentiment_score * 0.15 +
+        fg_risk * 0.20 +
+        crypto_risk_score * 0.15 +
+        vol_term_score * 0.30
     )
     risk_score = max(1, min(5, round(risk_raw)))
 
-    # ── financial_stability_score: 금융 안정 ──
-    # 기존: HY 스프레드 단독
-    # 개선: XLF/GLD 상대강도 30% 반영
-    #   - HY 스프레드 낮더라도 GLD가 급등(안전자산 선호)이면 불안정
+    # ═══════════════════════════════════════════════════════
+    # financial_stability_score: 금융 안정 (Tier 1 유지)
+    # ═══════════════════════════════════════════════════════
     stability_raw = stability_score * 0.70 + xlf_gld_score * 0.30
     financial_stability = max(1, min(5, round(stability_raw)))
 
@@ -380,6 +651,7 @@ def run_macro_engine(
     fear_greed: dict = None,
     crypto: dict = None,
     etf_prices: dict = None,
+    tier2_data: dict = None,
 ) -> dict:
     """
     시장 스냅샷 + FRED + 뉴스 감성 + 확장 데이터 → 신호 + Market Score 반환.
@@ -390,9 +662,15 @@ def run_macro_engine(
       - snapshot.sp500/nasdaq: 이미 수집된 등락률 → 모멘텀 (T1-3)
       - etf_prices: XLF/GLD 상대강도 → 금융안정 보강 (T1-4)
 
+    Tier 2 확장 (2026-04-01):
+      - tier2_data.rsp/spy: Market Breadth → Growth 참여도 (T2-1)
+      - tier2_data.vix3m: Vol Term Structure → Risk 위기구조 (T2-2)
+      - fred_data.initial_claims: 실업수당 → Growth 실물경제 (T2-3)
+      - fred_data.inflation_exp: 기대인플레 → Inflation 정밀화 (T2-4)
+      - tier2_data.eem: EM Stress → Liquidity 글로벌 전이 (T2-5)
+
     하위호환:
-      fear_greed, crypto, etf_prices가 None이어도 기존 로직 정상 동작.
-      각 Tier 1 시그널 함수는 None 입력 시 중립값을 반환하도록 설계.
+      모든 확장 파라미터가 None이어도 기존 로직 정상 동작.
 
     Args:
         snapshot: collect_market_snapshot() 결과
@@ -401,6 +679,7 @@ def run_macro_engine(
         fear_greed: collect_fear_greed() 결과 (옵션)
         crypto: collect_crypto_prices() 결과 (옵션)
         etf_prices: collect_etf_prices() 결과 (옵션)
+        tier2_data: collect_tier2_market_data() 결과 (옵션)
 
     Returns:
         macro_result dict (signals + market_score)
@@ -425,16 +704,23 @@ def run_macro_engine(
     signals.update(_score_news_sentiment(news_sentiment))
 
     # ── Tier 1 확장 4개 시그널 산출 (2026-04-01 추가) ──
-    # 각 함수는 데이터가 None이어도 안전하게 중립값 반환
     signals.update(_score_fear_greed(fear_greed))          # T1-1
     signals.update(_score_crypto_risk(crypto))             # T1-2
     signals.update(_score_equity_momentum(snapshot))        # T1-3
     signals.update(_score_xlf_gld_relative(etf_prices))    # T1-4
 
-    # Market Score (Tier 1 확장 시그널 포함)
+    # ── Tier 2 확장 5개 시그널 산출 (2026-04-01 추가) ──
+    # 각 함수는 데이터가 None이어도 안전하게 중립값 반환
+    signals.update(_score_market_breadth(tier2_data, snapshot))        # T2-1
+    signals.update(_score_vol_term_structure(snapshot, tier2_data))    # T2-2
+    signals.update(_score_initial_claims(fred_data))                   # T2-3
+    signals.update(_score_inflation_expectation(fred_data))            # T2-4
+    signals.update(_score_em_stress(tier2_data, snapshot))             # T2-5
+
+    # Market Score (Tier 1 + 2 확장 시그널 포함)
     market_score = compute_market_score(signals)
 
-    # ── 로그 출력 (기존 + Tier 1 확장) ──
+    # ── 로그 출력 ──
     logger.info(
         f"[MacroEngine] VIX={vix:.1f}({signals['vix_state']}) | "
         f"Rate={signals['rate_environment']} | "
@@ -446,6 +732,13 @@ def run_macro_engine(
         f"BTC={signals.get('crypto_risk_state','N/A')} | "
         f"Momentum={signals.get('equity_momentum_state','N/A')} | "
         f"XLF/GLD={signals.get('xlf_gld_state','N/A')}"
+    )
+    logger.info(
+        f"[MacroEngine] Tier2: Breadth={signals.get('breadth_state','N/A')} | "
+        f"VolTerm={signals.get('vol_term_state','N/A')} | "
+        f"Claims={signals.get('claims_state','N/A')} | "
+        f"InflExp={signals.get('infl_exp_state','N/A')} | "
+        f"EM={signals.get('em_stress_state','N/A')}"
     )
 
     return {
