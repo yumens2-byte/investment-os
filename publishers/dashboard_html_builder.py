@@ -328,10 +328,14 @@ async def _render_async(url: str, out_path: str) -> bool:
         from playwright.async_api import async_playwright
         async with async_playwright() as p:
             browser = await p.chromium.launch()
-            page = await browser.new_page(viewport={"width": 1080, "height": 1080})
+            page = await browser.new_page(viewport={"width": 1080, "height": 2000})
             await page.goto(url, wait_until="load")
             await page.wait_for_timeout(1500)
-            await page.screenshot(path=out_path, clip={"x": 0, "y": 0, "width": 1080, "height": 1080})
+            # 컨텐츠 실제 높이 측정 → 그 높이로 캡처
+            content_h = await page.evaluate("document.querySelector('.root').offsetHeight")
+            h = max(400, min(content_h, 1200))  # 최소 400, 최대 1200
+            await page.screenshot(path=out_path, clip={"x": 0, "y": 0, "width": 1080, "height": h})
+            logger.info(f"[HtmlDash] 캡처 크기: 1080x{h}px")
             await browser.close()
         return True
     except Exception as e:
