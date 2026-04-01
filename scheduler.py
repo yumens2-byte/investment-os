@@ -114,7 +114,7 @@ def job_close():
 
 def job_weekly():
     logger.info("[Scheduler] ⏰ Weekly Thread 시작 (금요일 20:00 KST)")
-    _run_pipeline("close", mode="thread")
+    _run_pipeline("weekly", mode="thread")
 
 
 # ──────────────────────────────────────────────────────────────

@@ -99,15 +99,53 @@ def record_daily(data: dict, dt_utc: Optional[datetime] = None) -> None:
             if prev and curr and prev != 0:
                 etf_returns[etf] = round((curr - prev) / prev * 100, 2)
 
+        # ── B-8 확장: market_score + allocation + top_signals 저장 (2026-04-01) ──
+        market_score = data.get("market_score", {})
+        allocation = data.get("etf_allocation", {}).get("allocation", {})
+        signals = data.get("signals", {})
+
+        # 주요 시그널 Top 3 추출 (극단값 우선)
+        top_signals = []
+        if signals:
+            _score_keys = [k for k in signals if k.endswith("_score")]
+            # 중립(2)에서 먼 순서로 정렬 → 극단값 우선
+            extremes = sorted(
+                [(k, signals[k]) for k in _score_keys if isinstance(signals.get(k), (int, float))],
+                key=lambda x: abs(x[1] - 2.5),
+                reverse=True,
+            )
+            for sig_key, val in extremes[:3]:
+                # _score → _state 매핑
+                state_key = sig_key.replace("_score", "_state")
+                # 일부는 다른 패턴: volatility_score → vix_state 등
+                _STATE_MAP = {
+                    "volatility_score": "vix_state",
+                    "rate_score": "rate_environment",
+                    "commodity_pressure_score": "oil_state",
+                    "financial_stability_score": "credit_stress_signal",
+                    "sentiment_score": "sentiment_state",
+                }
+                state_key = _STATE_MAP.get(sig_key, state_key)
+                state = signals.get(state_key, "")
+                top_signals.append({
+                    "signal": sig_key,
+                    "value": val,
+                    "state": state,
+                })
+
         entry = {
-            "date":       today,
-            "regime":     regime,
-            "risk":       risk,
-            "signal":     signal,
-            "buy_watch":  matrix.get("buy_watch", []),
-            "hold":       matrix.get("hold", []),
-            "reduce":     matrix.get("reduce", []),
-            "etf_returns": etf_returns,
+            "date":         today,
+            "regime":       regime,
+            "risk":         risk,
+            "signal":       signal,
+            "buy_watch":    matrix.get("buy_watch", []),
+            "hold":         matrix.get("hold", []),
+            "reduce":       matrix.get("reduce", []),
+            "etf_returns":  etf_returns,
+            # B-8 확장 필드 (2026-04-01 추가)
+            "market_score": market_score,
+            "allocation":   allocation,
+            "top_signals":  top_signals,
         }
 
         if existing:
@@ -122,6 +160,45 @@ def record_daily(data: dict, dt_utc: Optional[datetime] = None) -> None:
 
     except Exception as e:
         logger.warning(f"[WeeklyTracker] 기록 실패 (영향 없음): {e}")
+
+
+def _detect_weekly_regime_changes(entries: list) -> list:
+    """주간 중 레짐이 변한 날 감지"""
+    changes = []
+    for i in range(1, len(entries)):
+        prev_r = entries[i - 1].get("regime", "")
+        curr_r = entries[i].get("regime", "")
+        if prev_r and curr_r and prev_r != curr_r:
+            changes.append({
+                "date": entries[i].get("date", ""),
+                "from": prev_r,
+                "to": curr_r,
+            })
+    return changes
+
+
+def _aggregate_top_signals(entries: list) -> list:
+    """모든 날의 top_signals를 병합 → 빈도 + 최대값 기준 Top 5"""
+    sig_freq = {}  # signal_key → {"count": N, "max_value": V, "state": "..."}
+    for e in entries:
+        for ts in e.get("top_signals", []):
+            key = ts.get("signal", "")
+            if not key:
+                continue
+            if key not in sig_freq:
+                sig_freq[key] = {"count": 0, "max_value": 2.5, "state": ""}
+            sig_freq[key]["count"] += 1
+            val = ts.get("value", 0)
+            if abs(val - 2.5) >= abs(sig_freq[key]["max_value"] - 2.5):
+                sig_freq[key]["max_value"] = val
+                sig_freq[key]["state"] = ts.get("state", "")
+
+    # 빈도 내림차순 → Top 5
+    sorted_sigs = sorted(sig_freq.items(), key=lambda x: -x[1]["count"])
+    return [
+        {"signal": k, "count": v["count"], "max_value": v["max_value"], "state": v["state"]}
+        for k, v in sorted_sigs[:5]
+    ]
 
 
 def get_weekly_summary() -> dict:
@@ -195,6 +272,19 @@ def get_weekly_summary() -> dict:
         "reduce_count":     {k: v for k, v in reduce_count.items() if v > 0},
         "etf_week_return":  etf_week_return,
         "entries":          entries,
+        # ── B-8 확장 (2026-04-01 추가) ──
+        # 일별 Market Score 이력 (Score 추이 테이블용)
+        "daily_scores":     [
+            {"date": e.get("date", ""), **e.get("market_score", {})}
+            for e in entries if e.get("market_score")
+        ],
+        # 주초/주말 allocation 비교
+        "allocation_start": entries[0].get("allocation", {}) if entries else {},
+        "allocation_end":   entries[-1].get("allocation", {}) if entries else {},
+        # 주간 레짐 전환 이벤트 (레짐이 변한 날 목록)
+        "regime_changes":   _detect_weekly_regime_changes(entries),
+        # 주간 주요 시그널 (모든 날의 top_signals 병합 → 빈도순)
+        "weekly_top_signals": _aggregate_top_signals(entries),
     }
 
 

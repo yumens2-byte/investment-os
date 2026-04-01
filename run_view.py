@@ -159,8 +159,9 @@ def run(mode: str = "tweet", session: str = None) -> dict:
             send_message, send_photo, format_free_signal, send_document
         )
 
-        if session_type == "weekly":
-            # weekly: 주간 성적표 + AI 성적표 텔레그램 발송 + PDF 유료 채널 발송
+        if session_type == "weekly" or (session_type == "close" and mode == "thread"):
+            # weekly (또는 close+thread fallback):
+            # 주간 성적표 + AI 성적표 텔레그램 발송 + PDF 유료 채널 발송
             from core.weekly_tracker import get_weekly_summary, get_ai_scorecard
             from publishers.weekly_formatter import (
                 format_weekly_telegram,

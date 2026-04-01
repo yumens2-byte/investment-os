@@ -252,7 +252,7 @@ def build_parser() -> argparse.ArgumentParser:
     # run market
     rm = run_sub.add_parser("market", help="수집 + 분석 (core_data.json 저장)")
     rm.add_argument("--session",
-                    choices=["morning", "intraday", "close", "full", "auto"],
+                    choices=["morning", "intraday", "close", "full", "weekly", "auto"],
                     default="auto",
                     help="실행 세션 (auto=현재 시간 자동 감지)")
 
@@ -266,7 +266,7 @@ def build_parser() -> argparse.ArgumentParser:
     # run all
     ra = run_sub.add_parser("all", help="수집 + 분석 + 발행 전체")
     ra.add_argument("--session",
-                    choices=["morning", "intraday", "close", "full", "auto"],
+                    choices=["morning", "intraday", "close", "full", "weekly", "auto"],
                     default="auto")
     ra.add_argument("--mode",
                     choices=["tweet", "thread"],
