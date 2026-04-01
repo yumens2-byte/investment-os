@@ -98,6 +98,42 @@ def validate_data(data: dict) -> dict:
     if sig not in _VALID_TRADING_SIGNALS:
         errors.append(f"invalid_enum:trading_signal={sig}")
 
+    # ── 9. Tier 1 확장 시그널 정합성 검증 (2026-04-01 추가) ──────────
+    # Market Score 범위 검증 — 모든 Score는 1~5 정수여야 함
+    # 비상식적 수치 발생 시 발행 차단
+    ms = data.get("market_score", {})
+    _SCORE_KEYS = [
+        "growth_score", "inflation_score", "liquidity_score",
+        "risk_score", "financial_stability_score", "commodity_pressure_score",
+    ]
+    for sk in _SCORE_KEYS:
+        sv = ms.get(sk)
+        if sv is not None and (not isinstance(sv, (int, float)) or sv < 1 or sv > 5):
+            errors.append(
+                f"sanity_fail:market_score.{sk}={sv} — "
+                f"유효 범위(1~5) 벗어남. 시그널 계산 오류 의심. 발행 차단."
+            )
+
+    # Tier 1 시그널 개별 범위 검증 (signals dict가 core_data에 포함된 경우)
+    sigs = data.get("signals", {})
+    _SIGNAL_RANGES = {
+        "fear_greed_score":       (1, 5),   # T1-1
+        "crypto_risk_score":      (1, 4),   # T1-2
+        "equity_momentum_score":  (1, 5),   # T1-3
+        "xlf_gld_score":          (1, 3),   # T1-4
+        "volatility_score":       (1, 5),   # 기존
+        "rate_score":             (1, 4),   # 기존
+        "commodity_pressure_score": (1, 4), # 기존
+        "sentiment_score":        (1, 3),   # 기존
+    }
+    for sig_key, (lo, hi) in _SIGNAL_RANGES.items():
+        sig_val = sigs.get(sig_key)
+        if sig_val is not None and (not isinstance(sig_val, (int, float)) or sig_val < lo or sig_val > hi):
+            errors.append(
+                f"sanity_fail:signal.{sig_key}={sig_val} — "
+                f"유효 범위({lo}~{hi}) 벗어남. 발행 차단."
+            )
+
     confidence = "HIGH" if not errors else "LOW"
     return _build_result(errors, warnings, confidence)
 
