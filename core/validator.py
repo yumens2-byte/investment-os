@@ -121,6 +121,11 @@ def validate_data(data: dict) -> dict:
         "crypto_risk_score":      (1, 4),   # T1-2
         "equity_momentum_score":  (1, 5),   # T1-3
         "xlf_gld_score":          (1, 3),   # T1-4
+        "breadth_score":          (1, 3),   # T2-1
+        "vol_term_score":         (1, 3),   # T2-2
+        "claims_score":           (1, 3),   # T2-3
+        "infl_exp_score":         (1, 3),   # T2-4
+        "em_stress_score":        (1, 4),   # T2-5
         "volatility_score":       (1, 5),   # 기존
         "rate_score":             (1, 4),   # 기존
         "commodity_pressure_score": (1, 4), # 기존
