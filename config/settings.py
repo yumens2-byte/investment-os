@@ -72,6 +72,30 @@ EQUITY_CRASH_THRESHOLD = -2.0        # 이 이하 = 급락 신호
 XLF_GLD_RISK_ON_THRESHOLD = 1.0      # XLF-GLD > 1% → 금융 안정
 XLF_GLD_RISK_OFF_THRESHOLD = -1.0    # XLF-GLD < -1% → 안전자산 선호
 
+# ─── Tier 2 확장 시그널 임계값 (2026-04-01 추가) ──────────
+# Market Breadth: RSP(균등가중)/SPY(시총가중) 등락률 차이 (%)
+# RSP > SPY → 광범위 참여 (건강한 랠리)
+# RSP < SPY → 소수 대형주 주도 (취약한 랠리)
+BREADTH_HEALTHY_THRESHOLD = 0.3      # RSP-SPY > 0.3% → 광범위 참여
+BREADTH_NARROW_THRESHOLD = -0.5      # RSP-SPY < -0.5% → 소수 종목 집중
+
+# Vol Term Structure: VIX/VIX3M 비율
+# > 1.0 (백워데이션) → 단기 패닉, 구조적 위기 의심
+# < 0.85 (정상 컨탱고) → 안정
+VOL_TERM_BACKWARDATION = 1.0         # VIX > VIX3M → 단기 패닉
+VOL_TERM_NORMAL = 0.85               # VIX/VIX3M < 0.85 → 안정
+
+# 실업수당 청구 (ICSA) — 주간 데이터, 천 명 단위
+ICSA_LOW_THRESHOLD = 220.0           # 220K 이하 → 노동시장 강함
+ICSA_HIGH_THRESHOLD = 300.0          # 300K 이상 → 노동시장 악화 경고
+
+# 기대 인플레이션 (5Y Breakeven, T5YIFR) — %
+INFLATION_EXP_LOW = 2.0              # 2% 이하 → 디스인플레이션
+INFLATION_EXP_HIGH = 2.8             # 2.8% 이상 → 인플레이션 우려
+
+# EM Stress: EEM(신흥국 ETF) 등락률 (%)
+EM_STRESS_THRESHOLD = -2.0           # EEM < -2% → 신흥국 스트레스
+
 # ─── ETF Universe ─────────────────────────────────────────
 ETF_CORE = ["QQQM", "XLK", "SPYM", "XLE", "ITA", "TLT"]
 ETF_SIGNAL = ["XLF", "GLD"]
@@ -94,6 +118,10 @@ TICKER_MAP = {
     "TLT": "TLT",
     "XLF": "XLF",
     "GLD": "GLD",
+    # ── Tier 2 확장 (2026-04-01 추가) ──
+    "RSP":   "RSP",       # T2-1: Invesco S&P500 Equal Weight (Market Breadth)
+    "VIX3M": "^VIX3M",    # T2-2: CBOE 3-Month Volatility (Vol Term Structure)
+    "EEM":   "EEM",        # T2-5: iShares MSCI Emerging Markets (EM Stress)
 }
 
 # FRED 시리즈 ID
@@ -102,6 +130,9 @@ FRED_SERIES = {
     "hy_spread": "BAMLH0A0HYM2",
     "yield_curve": "T10Y2Y",
     "real_gdp_growth": "GDPC1",
+    # ── Tier 2 확장 (2026-04-01 추가) ──
+    "initial_claims": "ICSA",        # T2-3: 주간 신규 실업수당 청구건수 (천 명)
+    "inflation_exp":  "T5YIFR",      # T2-4: 5년 기대 인플레이션율 (%)
 }
 
 # ─── 다중 RSS 소스 설정 (Reddit 대체) ──────────────────────
