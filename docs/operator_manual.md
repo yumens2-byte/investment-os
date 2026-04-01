@@ -38,13 +38,13 @@ pip install -r requirements.txt
 
 ```bash
 # ── FRED API (무료, 필수) ──────────────────────────
-FRED_API_KEY=58df5ab214cb5f13a91541753e67c34c
+FRED_API_KEY=1111
 
 # ── X (Twitter) API v2 (필수) ─────────────────────
-X_API_KEY=MNzmaM4bygVSKaIvHjMzJ9s5W
-X_API_SECRET=mUTHEVlzuhBXM4V3VHKXQCFPI72tKbCGfhmDSeXbdsNCqimWoq
-X_ACCESS_TOKEN=1914285902266007552-5plejm7GYfoTjUHWbjRcgNXG689hqE
-X_ACCESS_TOKEN_SECRET=9OQj0Hp1kH3OMaMrOy34r8YgkGeLX0lX7fh3Xl2EN3Onw
+X_API_KEY=1111
+X_API_SECRET=1111
+X_ACCESS_TOKEN=1111
+X_ACCESS_TOKEN_SECRET=1111
 
 # ── 운영 모드 ─────────────────────────────────────
 DRY_RUN=true      # 반드시 true로 시작, 검증 완료 후 false 전환
