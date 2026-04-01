@@ -1,237 +1,176 @@
 """
-run_view.py
-===========
-역할: 출력(검증 → 중복체크 → X 발행)
-실행: python run_view.py [--mode tweet|thread]
-
-파이프라인:
-  core_data.json 로드 (run_market.py 결과)
-  → validate_data + validate_output (Hard Gate)
-  → 중복 검사 (history.json 비교)
-  → 트윗 포맷 생성
-  → X 발행 (DRY_RUN or 실제)
-  → 발행 이력 기록
-
-run_market.py 없이 단독 실행 불가.
+collectors/fred_client.py
+FRED API에서 거시경제 지표를 수집한다.
+공식 무료 API. 데이터 갱신 주기: 일~주 단위.
 """
-import argparse
 import logging
-import sys
-from datetime import datetime, timezone
+from typing import Optional
+from config.settings import FRED_API_KEY, FRED_SERIES
 
-from config.settings import LOG_LEVEL, DRY_RUN
+logger = logging.getLogger(__name__)
 
-logging.basicConfig(
-    level=getattr(logging, LOG_LEVEL, logging.INFO),
-    format="%(asctime)s [%(levelname)s] %(name)s — %(message)s",
-    datefmt="%Y-%m-%d %H:%M:%S",
-)
-logger = logging.getLogger("run_view")
+_fred_client = None
 
 
-def run(mode: str = "tweet", session: str = None) -> dict:
-    """
-    출력 파이프라인 실행.
-    mode:    "tweet" (단일 트윗) or "thread" (X 쓰레드)
-    session: 외부에서 강제 지정 시 output_helpers보다 우선 (full 세션용)
-    """
-    logger.info(f"{'='*50}")
-    logger.info(f"[run_view] 시작 — mode={mode} | DRY_RUN={DRY_RUN}")
-    logger.info(f"{'='*50}")
-
-    # ── Step 1: core_data.json 로드 ────────────────────────────
-    logger.info("[Step 1] core_data.json 로드")
-    from core.json_builder import load_core_data
-    try:
-        envelope = load_core_data()
-    except FileNotFoundError as e:
-        logger.error(f"[run_view] {e}")
-        return {"success": False, "reason": "core_data_not_found"}
-
-    data = envelope.get("data", {})
-
-    # ── Step 2: Validation Hard Gate ──────────────────────────
-    logger.info("[Step 2] Validation 실행")
-    from core.validator import validate_data, validate_output
-
-    data_result = validate_data(data)
-    output_result = validate_output(data)
-
-    if data_result["status"] != "PASS":
-        logger.error(f"[run_view] validate_data FAIL: {data_result['errors']}")
-        return {
-            "success": False,
-            "reason": "validate_data_fail",
-            "errors": data_result["errors"],
-        }
-
-    if output_result["status"] != "PASS":
-        logger.error(f"[run_view] validate_output FAIL: {output_result['errors']}")
-        return {
-            "success": False,
-            "reason": "validate_output_fail",
-            "errors": output_result["errors"],
-        }
-
-    logger.info("[Step 2] Validation PASS")
-
-    # ── Step 3: 트윗 텍스트 생성 ───────────────────────────────
-    logger.info("[Step 3] 트윗 포맷 생성")
-    from publishers.x_formatter import format_market_snapshot_tweet, format_thread_posts, format_image_tweet
-
-    # session 인자가 있으면 우선 사용 (full 세션 등 외부 강제 지정)
-    _inner_session = data.get("output_helpers", {}).get("session_type", "postmarket")
-    session_type = session if session else _inner_session
-    session_labels = {
-        "morning":   "Morning Brief 🌅",
-        "intraday":  "Intraday Update 📡",
-        "close":     "Close Summary 🔔",
-        "postmarket":"Market Snapshot 📊",
-        "full":      "Full Brief 📊",          # v1.8.0 신규
-    }
-    session_label = session_labels.get(session_type, "Market Snapshot 📊")
-
-    # v1.8.0: session=full 은 mode 무시 — 이미지 트윗 고정
-    if session_type == "full":
-        primary_text     = format_image_tweet(data, "full")
-        image_tweet_text = primary_text
-        posts            = [primary_text]
-    elif mode == "thread":
-        posts = format_thread_posts(data)
-        primary_text = posts[0] if posts else ""
-        image_tweet_text = None
-    else:
-        primary_text = format_market_snapshot_tweet(data, session_label)
-        image_tweet_text = format_image_tweet(data, session_type)
-        posts = [primary_text]
-
-    logger.info(f"[Step 3] 생성 완료 ({len(primary_text)}자)")
-
-    # ── Step 4: 중복 검사 ──────────────────────────────────────
-    logger.info("[Step 4] 중복 검사")
-    from core.duplicate_checker import is_duplicate, record_published
-
-    if is_duplicate(primary_text, data):
-        logger.warning("[run_view] 중복 감지 — 발행 차단")
-        return {
-            "success": False,
-            "reason": "duplicate_detected",
-            "text_preview": primary_text[:80],
-        }
-
-    logger.info("[Step 4] 중복 없음 — 발행 진행")
-
-    # ── Step 5: 발행 직전 최종 데이터 검증 로그 ───────────────
-    logger.info("[Step 5] 발행 직전 데이터 확인")
-    _log_publish_summary(data, primary_text)
-
-    # ── Step 5.5: 이미지 생성 ───────────────────────────────────
-    logger.info("[Step 5.5] 대시보드 이미지 생성")
-    image_path = None
-    try:
-        from publishers.image_generator import generate_image
-        from datetime import datetime, timezone
-        image_path = generate_image(data=data, session=session_type)
-        if image_path:
-            logger.info(f"[Step 5.5] 이미지 생성 완료: {image_path}")
-        else:
-            logger.warning("[Step 5.5] 이미지 생성 실패 — 텍스트만 발행")
-    except Exception as e:
-        logger.warning(f"[Step 5.5] 이미지 생성 예외 — 텍스트만 발행: {e}")
-
-    # ── Step 6: X 발행 ─────────────────────────────────────────
-    logger.info(f"[Step 6] X 발행 (mode={mode})")
-    from publishers.x_publisher import publish_tweet, publish_tweet_with_image, publish_thread
-
-    if mode == "thread":
-        pub_result = publish_thread(posts)
-    elif image_path and image_tweet_text:
-        pub_result = publish_tweet_with_image(image_tweet_text, image_path)
-    else:
-        pub_result = publish_tweet(primary_text)
-
-    tweet_id = pub_result.get("tweet_id") or pub_result.get("tweet_ids", [""])[0]
-
-    # ── Step 6-TG: 텔레그램 발행 (session=full 전용) ────────────
-    if session_type == "full":
-        logger.info("[Step 6-TG] 텔레그램 발행 시작")
+def _get_client():
+    """FRED 클라이언트 싱글톤 (lazy import)"""
+    global _fred_client
+    if _fred_client is None:
+        if not FRED_API_KEY:
+            logger.warning("[FRED] API 키 미설정. FRED 수집 건너뜀.")
+            return None
         try:
-            from publishers.telegram_publisher import (
-                send_message, send_photo, format_free_signal
-            )
-            # 무료 채널 — 시그널 텍스트
-            free_text = format_free_signal(data)
-            send_message(free_text, channel="free")
-
-            # 유료 채널 — 풀버전 대시보드 이미지
-            if image_path:
-                send_photo(image_path, caption=free_text, channel="paid")
-            else:
-                logger.warning("[Step 6-TG] 이미지 없음 — 유료 채널 텍스트만 발행")
-                send_message(free_text, channel="paid")
-
-            logger.info("[Step 6-TG] 텔레그램 발행 완료")
+            from fredapi import Fred
+            _fred_client = Fred(api_key=FRED_API_KEY)
         except Exception as e:
-            logger.warning(f"[Step 6-TG] 텔레그램 발행 예외 (X 발행 영향 없음): {e}")
+            logger.error(f"[FRED] 클라이언트 초기화 실패: {e}")
+            return None
+    return _fred_client
 
-    # ── Step 7: 이력 기록 ──────────────────────────────────────
-    if pub_result.get("success"):
-        logger.info("[Step 7] 발행 이력 기록")
-        record_published(primary_text, data, tweet_id=str(tweet_id))
 
-    # 결과
-    result = {
-        "success": pub_result.get("success", False),
-        "mode": mode,
-        "tweet_id": tweet_id,
-        "dry_run": DRY_RUN,
-        "regime": data.get("market_regime", {}).get("market_regime", ""),
-        "risk_level": data.get("market_regime", {}).get("market_risk_level", ""),
-        "text_preview": primary_text[:80],
-        "timestamp": datetime.now(timezone.utc).isoformat(),
+def _fetch_latest(series_id: str) -> Optional[float]:
+    """특정 시리즈의 최신값 조회"""
+    client = _get_client()
+    if client is None:
+        return None
+    try:
+        series = client.get_series(series_id)
+        if series is None or series.empty:
+            return None
+        # NaN 제거 후 마지막 값
+        series = series.dropna()
+        return float(series.iloc[-1]) if not series.empty else None
+    except Exception as e:
+        logger.error(f"[FRED] {series_id} 조회 실패: {e}")
+        return None
+
+
+def collect_macro_data() -> dict:
+    """
+    FRED 거시경제 데이터 수집
+    Returns: macro_data dict
+    """
+    logger.info("[FRED] 거시경제 데이터 수집 시작")
+
+    fed_rate = _fetch_latest(FRED_SERIES["fed_funds_rate"])
+    hy_spread = _fetch_latest(FRED_SERIES["hy_spread"])
+    yield_curve = _fetch_latest(FRED_SERIES["yield_curve"])
+
+    data = {
+        "fed_funds_rate": fed_rate if fed_rate is not None else 5.25,
+        "hy_spread": hy_spread if hy_spread is not None else 4.0,
+        "yield_curve": yield_curve if yield_curve is not None else 0.0,
+        # 신용 스트레스 판단 (HY 스프레드 기준)
+        # < 3.5% → Low / 3.5~5.5% → Moderate / > 5.5% → High
+        "credit_stress": _classify_credit_stress(hy_spread),
+        # 장단기 역전 여부
+        "yield_curve_inverted": (yield_curve is not None and yield_curve < 0),
     }
 
-    logger.info(f"{'='*50}")
-    logger.info(f"[run_view] 완료 — success={result['success']} | id={tweet_id}")
-    logger.info(f"{'='*50}")
+    # ── Tier 2 FRED 시리즈 수집 (2026-04-01 추가) ────────────
+    # T2-3: 주간 신규 실업수당 청구건수 (천 명 단위)
+    #   노동시장 실시간 건강도 — 주간 업데이트, 선행성 높음
+    initial_claims = _fetch_latest(FRED_SERIES.get("initial_claims", "ICSA"))
+    data["initial_claims"] = initial_claims
+    if initial_claims is not None:
+        logger.info(f"[FRED] 신규 실업수당 청구: {initial_claims:.0f}K")
+    else:
+        logger.warning("[FRED] ICSA 수집 실패 → None (엔진에서 중립 처리)")
 
-    return result
+    # T2-4: 5년 기대 인플레이션율 (%)
+    #   시장이 향후 5년간 기대하는 인플레이션 수준
+    inflation_exp = _fetch_latest(FRED_SERIES.get("inflation_exp", "T5YIFR"))
+    data["inflation_exp"] = inflation_exp
+    if inflation_exp is not None:
+        logger.info(f"[FRED] 기대 인플레이션: {inflation_exp:.2f}%")
+    else:
+        logger.warning("[FRED] T5YIFR 수집 실패 → None (엔진에서 중립 처리)")
 
+    # ── Tier 2 확장 FRED 시리즈 (2026-04-01 추가) ──────────────
+    # T2-3: 주간 신규 실업수당 청구건수 (ICSA)
+    #   - 단위: 천 명 (예: 220 = 220,000명)
+    #   - 주간 업데이트 — 실물경제 선행지표 중 가장 실시간성 높음
+    #   - 수집 실패 시 None → macro_engine에서 중립 처리
+    initial_claims = _fetch_latest(FRED_SERIES.get("initial_claims", "ICSA"))
+    # FRED ICSA 단위: 명 (예: 220000) → 천 명으로 변환
+    if initial_claims is not None and initial_claims > 1000:
+        initial_claims = initial_claims / 1000.0
+    data["initial_claims"] = initial_claims
 
-def _log_publish_summary(data: dict, text: str) -> None:
-    """발행 직전 핵심 데이터 로그 출력"""
-    snap = data.get("market_snapshot", {})
-    regime = data.get("market_regime", {})
-    alloc = data.get("etf_allocation", {}).get("allocation", {})
+    # T2-4: 5년 기대 인플레이션율 (T5YIFR, 5-Year Breakeven)
+    #   - 단위: % (예: 2.35)
+    #   - 일간 업데이트 — 시장의 인플레이션 기대를 반영
+    #   - 수집 실패 시 None → macro_engine에서 중립 처리
+    data["inflation_exp"] = _fetch_latest(FRED_SERIES.get("inflation_exp", "T5YIFR"))
 
-    logger.info("─── 발행 직전 데이터 확인 ───")
-    logger.info(f"  SPY: {snap.get('sp500', 0):+.2f}% | VIX: {snap.get('vix', 0):.1f} | US10Y: {snap.get('us10y', 0):.2f}%")
-    logger.info(f"  Regime: {regime.get('market_regime')} | Risk: {regime.get('market_risk_level')}")
-    logger.info(f"  Allocation: {alloc}")
-    logger.info(f"  Tweet({len(text)}자):\n{text}")
-    logger.info("─────────────────────────────")
-
-
-def main():
-    parser = argparse.ArgumentParser(description="Investment OS — X Publisher")
-    parser.add_argument(
-        "--mode",
-        choices=["tweet", "thread"],
-        default="tweet",
-        help="발행 모드 (tweet=단일 | thread=쓰레드)",
+    logger.info(
+        f"[FRED] 수집 완료: 기준금리 {data['fed_funds_rate']:.2f}% | "
+        f"HY 스프레드 {data['hy_spread']:.2f}% | "
+        f"수익률 곡선 {data['yield_curve']:.2f}% | "
+        f"실업수당 {data.get('initial_claims', 'N/A')}K | "
+        f"기대인플레 {data.get('inflation_exp', 'N/A')}%"
     )
-    args = parser.parse_args()
-
-    try:
-        result = run(mode=args.mode)
-        if not result.get("success"):
-            logger.warning(f"[run_view] 발행 실패/차단: {result.get('reason', 'unknown')}")
-            sys.exit(2)
-        sys.exit(0)
-    except Exception as e:
-        logger.critical(f"[run_view] 예외: {e}", exc_info=True)
-        sys.exit(1)
+    return data
 
 
-if __name__ == "__main__":
-    main()
+def _classify_credit_stress(hy_spread: Optional[float]) -> str:
+    if hy_spread is None:
+        return "Unknown"
+    if hy_spread < 3.5:
+        return "Low"
+    elif hy_spread < 5.5:
+        return "Moderate"
+    else:
+        return "High"
+
+
+def detect_macro_changes(
+    current: dict,
+    prev: dict,
+    thresholds: dict = None,
+) -> list:
+    """
+    현재 vs 이전 FRED 데이터 비교 → 유의미한 변화 감지
+
+    Args:
+        current:    최신 collect_macro_data() 결과
+        prev:       직전 저장된 FRED 데이터
+        thresholds: 변화 감지 임계값 (기본값 내장)
+
+    Returns:
+        변화 감지된 항목 리스트
+        [{"indicator_id": str, "prev": float, "new": float, "change": float}]
+    """
+    if not prev:
+        return []
+
+    DEFAULTS = {
+        "fed_funds_rate": 0.25,   # 0.25% 이상 변화
+        "hy_spread":      0.5,    # 0.5% 이상 변화
+        "yield_curve":    0.3,    # 0.3% 이상 변화
+    }
+    # FRED 필드명 → indicator_id 매핑
+    FIELD_TO_ID = {
+        "fed_funds_rate": "FEDFUNDS",
+        "hy_spread":      "BAMLH0A0HYM2",
+        "yield_curve":    "T10Y2Y",
+    }
+    thresholds = thresholds or DEFAULTS
+    changes = []
+
+    for field, indicator_id in FIELD_TO_ID.items():
+        cur_val  = current.get(field)
+        prev_val = prev.get(field)
+        if cur_val is None or prev_val is None:
+            continue
+        threshold = thresholds.get(field, 0.25)
+        change = abs(cur_val - prev_val)
+        if change >= threshold:
+            changes.append({
+                "indicator_id": indicator_id,
+                "prev":  round(prev_val, 4),
+                "new":   round(cur_val, 4),
+                "change": round(cur_val - prev_val, 4),
+            })
+
+    return changes

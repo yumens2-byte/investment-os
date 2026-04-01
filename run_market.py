@@ -106,9 +106,19 @@ def run(session: str) -> dict:
     )
 
     # ── Step 2: Macro Engine ───────────────────────────────────
-    # Tier 1 확장 (2026-04-01): fear_greed, crypto, etf_prices를
-    # macro_engine에 전달하여 확장 시그널 산출에 활용
-    logger.info("[Step 2] Macro Engine 실행 (Tier 1 확장 시그널 포함)")
+    # Tier 1+2 확장 (2026-04-01): fear_greed, crypto, etf_prices,
+    # tier2_data를 macro_engine에 전달하여 확장 시그널 산출에 활용
+    logger.info("[Step 2] Macro Engine 실행 (Tier 1+2 확장 시그널 포함)")
+
+    # Tier 2 추가 시장 데이터 수집 (RSP, VIX3M, EEM)
+    tier2_data = {}
+    try:
+        from collectors.yahoo_finance import collect_tier2_market_data
+        tier2_data = collect_tier2_market_data()
+        logger.info(f"[Step 2-T2] Tier 2 데이터 수집 완료: {tier2_data}")
+    except Exception as e:
+        logger.warning(f"[Step 2-T2] Tier 2 데이터 수집 실패 (영향 없음): {e}")
+
     from engines.macro_engine import run_macro_engine
     macro_result = run_macro_engine(
         snapshot,
@@ -117,7 +127,9 @@ def run(session: str) -> dict:
         fear_greed=fear_greed,       # T1-1: Fear & Greed → sentiment 보강
         crypto=crypto,               # T1-2: BTC → risk appetite 보조
         etf_prices=etf_prices,       # T1-4: XLF/GLD → 금융안정 보강
+        tier2_data=tier2_data,       # T2-1,2,5: Breadth/VolTerm/EM
         # T1-3: snapshot 내 sp500/nasdaq 등락률은 이미 snapshot에 포함
+        # T2-3,4: fred_data 내 initial_claims/inflation_exp는 이미 fred_data에 포함
     )
     signals = macro_result["signals"]
     market_score = macro_result["market_score"]
