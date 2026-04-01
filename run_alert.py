@@ -109,8 +109,90 @@ def run() -> dict:
 
     # ── Step 2: Alert 엔진 실행 ───────────────────────────
     logger.info("[Step 2] Alert 엔진 실행")
+
+    # ── Step 2-B5: ETF 랭킹 변화 감지 (B-5, 2026-04-01 추가) ──
+    rank_change = None
+    signal_diff_result = None
+    try:
+        from core.rank_tracker import detect_rank_change
+        from core.signal_diff import compute_signal_diff
+        from core.json_builder import load_core_data as _lcd_rank
+
+        # 현재 core_data에서 ETF 랭킹 + signals 로드
+        _cd = _lcd_rank()
+        _data = _cd.get("data", {})
+        new_rank = _data.get("etf_analysis", {}).get("etf_rank", {})
+        new_signals = _data.get("signals", {})
+
+        if new_rank:
+            rank_change = detect_rank_change(new_rank)
+
+            # 랭킹 변화가 있으면 → 시그널 변화량 분석
+            if rank_change:
+                # 이전 signals는 regime_tracker에서도 쓸 수 있으므로 여기서 로드
+                _prev_signals = {}
+                try:
+                    from core.regime_tracker import _load as _rt_load
+                    _rt_data = _rt_load()
+                    _prev_signals = _rt_data.get("last_signals", {})
+                except Exception:
+                    pass
+
+                if _prev_signals:
+                    signal_diff_result = compute_signal_diff(_prev_signals, new_signals)
+                    logger.info(
+                        f"[Step 2-B5] 랭킹 변화 원인: {signal_diff_result.get('summary', 'N/A')}"
+                    )
+    except Exception as e:
+        logger.warning(f"[Step 2-B5] ETF 랭킹 감지 실패 (영향 없음): {e}")
+
+    # ── Step 2-B6: 레짐 전환 감지 (B-6, 2026-04-01 추가) ──
+    regime_change = None
+    score_diff_result = None
+    try:
+        from core.regime_tracker import detect_regime_change
+        from core.signal_diff import compute_signal_diff as _sd2, compute_score_diff
+        from core.json_builder import load_core_data as _lcd_regime
+
+        _cd2 = _lcd_regime()
+        _data2 = _cd2.get("data", {})
+        new_regime = _data2.get("market_regime", {}).get("market_regime", "")
+        new_risk_level = _data2.get("market_regime", {}).get("market_risk_level", "")
+        new_market_score = _data2.get("market_score", {})
+        new_signals_r = _data2.get("signals", {})
+
+        if new_regime:
+            regime_change = detect_regime_change(
+                new_regime, new_risk_level, new_market_score, new_signals_r
+            )
+
+            # 레짐 전환이 있으면 → Score/시그널 변화량 분석
+            if regime_change:
+                old_score = regime_change.get("old_market_score", {})
+                new_score = regime_change.get("new_market_score", {})
+                score_diff_result = compute_score_diff(old_score, new_score)
+
+                # signal_diff는 B-5에서 이미 계산했을 수 있으므로 없으면 계산
+                if signal_diff_result is None:
+                    old_sigs = regime_change.get("old_signals", {})
+                    signal_diff_result = _sd2(old_sigs, new_signals_r)
+
+                logger.info(
+                    f"[Step 2-B6] 레짐 전환: {regime_change.get('old_regime')} → "
+                    f"{regime_change.get('new_regime')} | "
+                    f"원인: {signal_diff_result.get('summary', 'N/A')}"
+                )
+    except Exception as e:
+        logger.warning(f"[Step 2-B6] 레짐 전환 감지 실패 (영향 없음): {e}")
+
     from engines.alert_engine import run_alert_engine
-    alerts = run_alert_engine(snapshot, news_result, prev_snapshot or None)
+    alerts = run_alert_engine(
+        snapshot, news_result, prev_snapshot or None,
+        rank_change=rank_change,
+        regime_change=regime_change,
+        signal_diff_result=signal_diff_result,
+        score_diff_result=score_diff_result,
+    )
 
     if not alerts:
         logger.info("[run_alert] Alert 없음 — 정상 종료")
@@ -182,11 +264,53 @@ def run() -> dict:
         else:
             logger.error(f"[run_alert] 발행 실패: {signal.alert_type}/{signal.level}")
 
-        # 텔레그램 무료 채널 — Alert 즉시 발송 (DRY_RUN 무관)
+        # ── 텔레그램 무료 채널 — B-5/B-6는 전용 상세 포맷 사용 ──
         try:
             from publishers.telegram_publisher import send_message
-            tg_text = f"🚨 <b>Investment OS Alert</b>\n\n{tweet}"
-            send_message(tg_text, channel="free")
+
+            if signal.alert_type == "ETF_RANK" and rank_change:
+                # B-5: ETF 랭킹 상세 포맷 (원인 분석 포함)
+                from publishers.alert_formatter import format_etf_rank_telegram
+                # 현재 레짐 정보 로드
+                _tg_regime = ""
+                try:
+                    from core.json_builder import load_core_data as _lcd_tg
+                    _tg_cd = _lcd_tg()
+                    _tg_regime = _tg_cd.get("data", {}).get("market_regime", {}).get("market_regime", "")
+                except Exception:
+                    pass
+                tg_text = format_etf_rank_telegram(rank_change, signal_diff_result, _tg_regime)
+                send_message(tg_text, channel="free")
+                logger.info(f"[run_alert] TG 무료 B-5 상세 포맷 발송 완료")
+
+            elif signal.alert_type == "REGIME_CHANGE" and regime_change:
+                # B-6: 레짐 전환 상세 포맷 (Score + 시그널 원인)
+                from publishers.alert_formatter import format_regime_change_telegram
+                # 현재 trading signal + ETF 1위 로드
+                _tg_signal = ""
+                _tg_top1 = ""
+                try:
+                    from core.json_builder import load_core_data as _lcd_tg2
+                    _tg_cd2 = _lcd_tg2()
+                    _tg_d2 = _tg_cd2.get("data", {})
+                    _tg_signal = _tg_d2.get("trading_signal", {}).get("trading_signal", "")
+                    _tg_rank = _tg_d2.get("etf_analysis", {}).get("etf_rank", {})
+                    if _tg_rank:
+                        _tg_top1 = min(_tg_rank, key=_tg_rank.get)
+                except Exception:
+                    pass
+                tg_text = format_regime_change_telegram(
+                    regime_change, signal_diff_result, score_diff_result,
+                    _tg_signal, _tg_top1,
+                )
+                send_message(tg_text, channel="free")
+                logger.info(f"[run_alert] TG 무료 B-6 상세 포맷 발송 완료")
+
+            else:
+                # 기존 Alert: X 트윗 텍스트 그대로
+                tg_text = f"🚨 <b>Investment OS Alert</b>\n\n{tweet}"
+                send_message(tg_text, channel="free")
+
             logger.info(f"[run_alert] 텔레그램 무료 채널 발송 완료: {signal.alert_type}/{signal.level}")
         except Exception as e:
             logger.warning(f"[run_alert] 텔레그램 발송 예외 (X 발행 영향 없음): {e}")
@@ -223,6 +347,43 @@ def run() -> dict:
                 )
                 tg_send(pm_text, channel="paid")
                 logger.info(f"[run_alert] 유료 채널 레짐 전환 알람 발송")
+
+            # ── B-5/B-6 유료 채널 (L2 이상만) ─────────────────
+            # B-5: ETF 랭킹 Top1 변경 (L2) → 프리미엄 전체 랭킹 + 원인
+            if (signal.alert_type == "ETF_RANK"
+                    and signal.level == "L2"
+                    and rank_change):
+                from publishers.premium_alert_formatter import format_etf_rank_premium
+                pm_text = format_etf_rank_premium(
+                    rank_change,
+                    signal_diff_result=signal_diff_result,
+                    regime=regime,
+                    risk_level=risk,
+                    trading_signal=sig_val,
+                )
+                tg_send(pm_text, channel="paid")
+                logger.info("[run_alert] 유료 채널 B-5 ETF 랭킹 프리미엄 발송")
+
+            # B-6: 레짐 전환 danger/Shock (L2) → 프리미엄 Score + 전략
+            if (signal.alert_type == "REGIME_CHANGE"
+                    and signal.level == "L2"
+                    and regime_change):
+                from publishers.premium_alert_formatter import format_regime_change_premium_v2
+                pm_text = format_regime_change_premium_v2(
+                    regime_change,
+                    signal_diff_result=signal_diff_result,
+                    score_diff_result=score_diff_result,
+                    trading_signal=sig_val,
+                    etf_top1=min(
+                        data.get("etf_analysis", {}).get("etf_rank", {"—": 1}),
+                        key=data.get("etf_analysis", {}).get("etf_rank", {"—": 1}).get,
+                        default="—"
+                    ) if data.get("etf_analysis", {}).get("etf_rank") else "",
+                    etf_hints=signal.etf_hints,
+                    avoid_etfs=signal.avoid_etfs,
+                )
+                tg_send(pm_text, channel="paid")
+                logger.info("[run_alert] 유료 채널 B-6 레짐 전환 프리미엄 발송")
 
         except Exception as e:
             logger.warning(f"[run_alert] 유료 채널 알람 예외 (영향 없음): {e}")

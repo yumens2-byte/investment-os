@@ -182,6 +182,7 @@ def run(session: str) -> dict:
         snapshot=snapshot,
         market_regime=market_regime,
         market_score=market_score,
+        signals=signals,
         etf_analysis=etf_result["etf_analysis"],
         etf_strategy=etf_result["etf_strategy"],
         etf_allocation=etf_result["etf_allocation"],
