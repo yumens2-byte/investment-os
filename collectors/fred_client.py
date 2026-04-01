@@ -67,10 +67,48 @@ def collect_macro_data() -> dict:
         "yield_curve_inverted": (yield_curve is not None and yield_curve < 0),
     }
 
+    # ── Tier 2 FRED 시리즈 수집 (2026-04-01 추가) ────────────
+    # T2-3: 주간 신규 실업수당 청구건수 (천 명 단위)
+    #   노동시장 실시간 건강도 — 주간 업데이트, 선행성 높음
+    initial_claims = _fetch_latest(FRED_SERIES.get("initial_claims", "ICSA"))
+    data["initial_claims"] = initial_claims
+    if initial_claims is not None:
+        logger.info(f"[FRED] 신규 실업수당 청구: {initial_claims:.0f}K")
+    else:
+        logger.warning("[FRED] ICSA 수집 실패 → None (엔진에서 중립 처리)")
+
+    # T2-4: 5년 기대 인플레이션율 (%)
+    #   시장이 향후 5년간 기대하는 인플레이션 수준
+    inflation_exp = _fetch_latest(FRED_SERIES.get("inflation_exp", "T5YIFR"))
+    data["inflation_exp"] = inflation_exp
+    if inflation_exp is not None:
+        logger.info(f"[FRED] 기대 인플레이션: {inflation_exp:.2f}%")
+    else:
+        logger.warning("[FRED] T5YIFR 수집 실패 → None (엔진에서 중립 처리)")
+
+    # ── Tier 2 확장 FRED 시리즈 (2026-04-01 추가) ──────────────
+    # T2-3: 주간 신규 실업수당 청구건수 (ICSA)
+    #   - 단위: 천 명 (예: 220 = 220,000명)
+    #   - 주간 업데이트 — 실물경제 선행지표 중 가장 실시간성 높음
+    #   - 수집 실패 시 None → macro_engine에서 중립 처리
+    initial_claims = _fetch_latest(FRED_SERIES.get("initial_claims", "ICSA"))
+    # FRED ICSA 단위: 명 (예: 220000) → 천 명으로 변환
+    if initial_claims is not None and initial_claims > 1000:
+        initial_claims = initial_claims / 1000.0
+    data["initial_claims"] = initial_claims
+
+    # T2-4: 5년 기대 인플레이션율 (T5YIFR, 5-Year Breakeven)
+    #   - 단위: % (예: 2.35)
+    #   - 일간 업데이트 — 시장의 인플레이션 기대를 반영
+    #   - 수집 실패 시 None → macro_engine에서 중립 처리
+    data["inflation_exp"] = _fetch_latest(FRED_SERIES.get("inflation_exp", "T5YIFR"))
+
     logger.info(
         f"[FRED] 수집 완료: 기준금리 {data['fed_funds_rate']:.2f}% | "
         f"HY 스프레드 {data['hy_spread']:.2f}% | "
-        f"수익률 곡선 {data['yield_curve']:.2f}%"
+        f"수익률 곡선 {data['yield_curve']:.2f}% | "
+        f"실업수당 {data.get('initial_claims', 'N/A')}K | "
+        f"기대인플레 {data.get('inflation_exp', 'N/A')}%"
     )
     return data
 
