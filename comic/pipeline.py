@@ -129,6 +129,7 @@ def run(comic_type: str) -> None:
 
     # ── STEP 1. 시장 데이터 수집 ──────────────────────────
     logger.info("[STEP 1] 시장 데이터 수집")
+    core_data = None
     try:
         market_data = collect_market_snapshot()
         risk_level  = determine_risk(market_data)
@@ -139,6 +140,19 @@ def run(comic_type: str) -> None:
         send_alert(msg)
         sys.exit(1)
 
+    # ── STEP 1-B: Investment OS core_data 로드 (B-19) ────
+    try:
+        from core.json_builder import load_core_data
+        envelope = load_core_data()
+        core_data = envelope.get("data", {})
+        # core_data에서 regime 기반 risk_level 덮어쓰기
+        regime_risk = core_data.get("market_regime", {}).get("market_risk_level", "")
+        if regime_risk:
+            risk_level = regime_risk
+            logger.info(f"[STEP 1-B] core_data 로드 성공 — regime={core_data.get('market_regime', {}).get('market_regime', '?')}, risk={risk_level}")
+    except Exception as e:
+        logger.info(f"[STEP 1-B] core_data 없음 (정상 — VIX 기반 fallback): {e}")
+
     # ── STEP 5 선행: 중복 체크 ────────────────────────────
     # (이미지 생성 비용 낭비 방지를 위해 스토리 생성 전에 체크)
     logger.info("[STEP 5-pre] 중복 발행 체크")
@@ -147,21 +161,22 @@ def run(comic_type: str) -> None:
         sys.exit(0)
 
     # ── STEP 2. 스토리 생성 ──────────────────────────────
-    logger.info("[STEP 2] Claude 스토리 생성")
+    logger.info("[STEP 2] 스토리 생성 (Gemini → Claude fallback)")
     episode_no      = get_next_episode_no()
     recent_episodes = get_recent_episodes(limit=3)
 
     try:
         story = generate_story(
-            risk_level     = risk_level,
-            comic_type     = comic_type,
-            market_data    = market_data,
-            episode_no     = episode_no,
-            recent_episodes = recent_episodes
+            risk_level      = risk_level,
+            comic_type      = comic_type,
+            market_data     = market_data,
+            episode_no      = episode_no,
+            recent_episodes = recent_episodes,
+            core_data       = core_data,
         )
         logger.info(f"[STEP 2] 완료 — Ep.{episode_no}: '{story['title']}'")
     except Exception as e:
-        msg = f"[FAIL] STEP2 Claude 스토리 생성 실패: {e}"
+        msg = f"[FAIL] STEP2 스토리 생성 실패 (Gemini+Claude): {e}"
         logger.error(msg)
         send_alert(msg)
         sys.exit(1)
