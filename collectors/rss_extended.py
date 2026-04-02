@@ -357,5 +357,5 @@ def collect_extended_sentiment() -> dict:
             "headlines": [],
         }
 
-    sentiment_result["headlines"] = unique_headlines[:10]  # 상위 10개 보관
+    sentiment_result["headlines"] = unique_headlines[:30]  # B-16: Gemini 분석용 30개
     return sentiment_result

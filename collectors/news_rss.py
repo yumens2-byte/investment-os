@@ -31,4 +31,6 @@ def collect_news_sentiment() -> dict:
         "sources_ok": result.get("sources_ok", 0),
         "sources_fail": result.get("sources_fail", 0),
         "source_detail": result.get("source_detail", []),
+        # B-16: Gemini 뉴스 분석용 헤드라인 전달
+        "headlines": result.get("headlines", []),
     }
