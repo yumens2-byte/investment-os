@@ -340,3 +340,71 @@ jobs:
             data/outputs/core_data.json
             data/images/
           retention-days: 7
+  narrative:
+     name: AI Narrative
+     if: github.event.schedule == '30 2 * * 1-5' || (github.event_name == 'workflow_dispatch' && github.event.inputs.session == 'narrative')
+     runs-on: ubuntu-latest
+     timeout-minutes: 15
+     env:
+       TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+       TELEGRAM_FREE_CHANNEL_ID: ${{ secrets.TELEGRAM_FREE_CHANNEL_ID }}
+       TELEGRAM_PAID_CHANNEL_ID: ${{ secrets.TELEGRAM_PAID_CHANNEL_ID }}
+       FRED_API_KEY: ${{ secrets.FRED_API_KEY }}
+       X_API_KEY: ${{ secrets.X_API_KEY }}
+       X_API_SECRET: ${{ secrets.X_API_SECRET }}
+       X_ACCESS_TOKEN: ${{ secrets.X_ACCESS_TOKEN }}
+       X_ACCESS_TOKEN_SECRET: ${{ secrets.X_ACCESS_TOKEN_SECRET }}
+       GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+       GEMINI_API_SUB_KEY: ${{ secrets.GEMINI_API_SUB_KEY }}
+     steps:
+       - uses: actions/checkout@v4
+       - uses: actions/setup-python@v5
+         with:
+           python-version: "3.11"
+           cache: pip
+       - run: pip install -r requirements.txt
+       - name: Restore weekly log cache
+         uses: actions/cache@v4
+         with:
+           path: data/published/weekly_log.json
+           key: weekly-log-${{ github.ref }}
+           restore-keys: weekly-log-
+       - name: Restore DLQ cache
+         uses: actions/cache@v4
+         with:
+           path: data/published/dlq.json
+           key: dlq-${{ github.ref }}
+           restore-keys: dlq-
+       - run: python main.py run all --session narrative --mode tweet
+       - name: Save weekly log cache
+         uses: actions/cache/save@v4
+         if: always()
+         with:
+           path: data/published/weekly_log.json
+           key: weekly-log-${{ github.ref }}-${{ github.run_id }}
+       - name: Save DLQ cache
+         uses: actions/cache/save@v4
+         if: always()
+         with:
+           path: data/published/dlq.json
+           key: dlq-${{ github.ref }}-${{ github.run_id }}
+       - uses: actions/upload-artifact@v4
+         if: always()
+         with:
+           name: narrative-${{ github.run_id }}
+           path: data/outputs/core_data.json
+           retention-days: 3
+
+       - name: Restore DLQ cache
+         uses: actions/cache@v4
+         with:
+           path: data/published/dlq.json
+           key: dlq-${{ github.ref }}
+           restore-keys: dlq-
+
+       - name: Save DLQ cache
+         uses: actions/cache/save@v4
+         if: always()
+         with:
+           path: data/published/dlq.json
+           key: dlq-${{ github.ref }}-${{ github.run_id }}
