@@ -121,6 +121,20 @@ jobs:
             data/outputs/validation_result.json
           retention-days: 7
 
+       - name: Restore DLQ cache
+         uses: actions/cache@v4
+         with:
+           path: data/published/dlq.json
+           key: dlq-${{ github.ref }}
+           restore-keys: dlq-
+
+       - name: Save DLQ cache
+         uses: actions/cache/save@v4
+         if: always()
+         with:
+           path: data/published/dlq.json
+           key: dlq-${{ github.ref }}-${{ github.run_id }}
+
   intraday:
     name: Intraday Update
     if: github.event.schedule == '30 14 * * 1-5' || (github.event_name == 'workflow_dispatch' && github.event.inputs.session == 'intraday')
@@ -168,6 +182,20 @@ jobs:
           name: intraday-${{ github.run_id }}
           path: data/outputs/core_data.json
           retention-days: 3
+
+       - name: Restore DLQ cache
+         uses: actions/cache@v4
+         with:
+           path: data/published/dlq.json
+           key: dlq-${{ github.ref }}
+           restore-keys: dlq-
+
+       - name: Save DLQ cache
+         uses: actions/cache/save@v4
+         if: always()
+         with:
+           path: data/published/dlq.json
+           key: dlq-${{ github.ref }}-${{ github.run_id }}
 
   close:
     name: Close Summary
@@ -217,6 +245,20 @@ jobs:
           path: data/outputs/core_data.json
           retention-days: 3
 
+       - name: Restore DLQ cache
+         uses: actions/cache@v4
+         with:
+           path: data/published/dlq.json
+           key: dlq-${{ github.ref }}
+           restore-keys: dlq-
+
+       - name: Save DLQ cache
+         uses: actions/cache/save@v4
+         if: always()
+         with:
+           path: data/published/dlq.json
+           key: dlq-${{ github.ref }}-${{ github.run_id }}
+
   weekly_thread:
     name: Weekly Thread
     if: github.event.schedule == '0 11 * * 4' || (github.event_name == 'workflow_dispatch' && github.event.inputs.session == 'weekly')
@@ -258,6 +300,20 @@ jobs:
           name: weekly-${{ github.run_id }}
           path: data/outputs/
           retention-days: 14
+
+       - name: Restore DLQ cache
+         uses: actions/cache@v4
+         with:
+           path: data/published/dlq.json
+           key: dlq-${{ github.ref }}
+           restore-keys: dlq-
+
+       - name: Save DLQ cache
+         uses: actions/cache/save@v4
+         if: always()
+         with:
+           path: data/published/dlq.json
+           key: dlq-${{ github.ref }}-${{ github.run_id }}
 
   alert_check:
     name: Alert Check
@@ -309,6 +365,20 @@ jobs:
           path: data/published/alert_history.json
           retention-days: 7
 
+       - name: Restore DLQ cache
+         uses: actions/cache@v4
+         with:
+           path: data/published/dlq.json
+           key: dlq-${{ github.ref }}
+           restore-keys: dlq-
+
+       - name: Save DLQ cache
+         uses: actions/cache/save@v4
+         if: always()
+         with:
+           path: data/published/dlq.json
+           key: dlq-${{ github.ref }}-${{ github.run_id }}
+
   full_dashboard:
     name: Full Dashboard
     if: github.event.schedule == '30 9 * * 1-5' || (github.event_name == 'workflow_dispatch' && github.event.inputs.session == 'full')
@@ -354,6 +424,25 @@ jobs:
             data/outputs/core_data.json
             data/images/
           retention-days: 7
+
+
+          
+       - name: Restore DLQ cache
+         uses: actions/cache@v4
+         with:
+           path: data/published/dlq.json
+           key: dlq-${{ github.ref }}
+           restore-keys: dlq-
+
+       - name: Save DLQ cache
+         uses: actions/cache/save@v4
+         if: always()
+         with:
+           path: data/published/dlq.json
+           key: dlq-${{ github.ref }}-${{ github.run_id }}
+          
+
+          
   narrative:
      name: AI Narrative
      if: github.event.schedule == '30 2 * * 1-5' || (github.event_name == 'workflow_dispatch' && github.event.inputs.session == 'narrative')
