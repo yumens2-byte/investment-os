@@ -144,6 +144,31 @@ def format_paid_report(data: dict) -> str:
     if reason:
         lines.append(f"\n<i>{reason}</i>")
 
+    # ── B-16: Gemini 뉴스 심층 분석 (있으면 표시) ──
+    news_analysis = data.get("news_analysis", {})
+    top_issues = news_analysis.get("top_issues", [])
+    if top_issues:
+        lines += [
+            "",
+            "─────────────────────────",
+            "📰 <b>AI 뉴스 심층 분석</b>",
+            "",
+        ]
+        IMPACT_EMOJI = {"bullish": "🟢", "bearish": "🔴", "neutral": "🟡"}
+        for i, iss in enumerate(top_issues, 1):
+            ie = IMPACT_EMOJI.get(iss.get("impact", "neutral"), "🟡")
+            conf = iss.get("confidence", 0)
+            lines.append(
+                f"{ie} <b>{i}. {iss.get('topic', '?')}</b> "
+                f"(신뢰도 {conf:.0%})"
+            )
+            summary = iss.get("summary", "")
+            if summary:
+                lines.append(f"   <i>{summary}</i>")
+        key_risk = news_analysis.get("key_risk", "")
+        if key_risk:
+            lines.append(f"\n⚠️ 핵심 리스크: <i>{key_risk}</i>")
+
     lines += [
         "",
         "#ETF #프리미엄 #포지션사이징 #ETF전략",
