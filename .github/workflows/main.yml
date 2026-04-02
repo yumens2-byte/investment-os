@@ -22,6 +22,7 @@ on:
           - alert
           - full
           - weekly
+          - narrative
       mode:
         description: "mode (alert, full 선택 시 무시됨)"
         required: true
