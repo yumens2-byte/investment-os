@@ -99,6 +99,7 @@ def cmd_schedule(run_now: str | None) -> int:
             "intraday": scheduler.job_intraday,
             "close":    scheduler.job_close,
             "weekly":   scheduler.job_weekly,
+            "narrative": scheduler.job_narrative,
         }
         job = job_map.get(run_now)
         if job is None:
@@ -252,7 +253,7 @@ def build_parser() -> argparse.ArgumentParser:
     # run market
     rm = run_sub.add_parser("market", help="수집 + 분석 (core_data.json 저장)")
     rm.add_argument("--session",
-                    choices=["morning", "intraday", "close", "full", "weekly", "auto"],
+                    choices=["morning", "intraday", "close", "full", "weekly", "narrative", "auto"],
                     default="auto",
                     help="실행 세션 (auto=현재 시간 자동 감지)")
 
@@ -266,7 +267,7 @@ def build_parser() -> argparse.ArgumentParser:
     # run all
     ra = run_sub.add_parser("all", help="수집 + 분석 + 발행 전체")
     ra.add_argument("--session",
-                    choices=["morning", "intraday", "close", "full", "weekly", "auto"],
+                    choices=["morning", "intraday", "close", "full", "weekly", "narrative", "auto"],
                     default="auto")
     ra.add_argument("--mode",
                     choices=["tweet", "thread"],
@@ -275,7 +276,7 @@ def build_parser() -> argparse.ArgumentParser:
     # ── schedule ─────────────────────────────────────────────────
     sch = sub.add_parser("schedule", help="자동 스케줄 데몬 실행")
     sch.add_argument("--now",
-                     choices=["morning", "intraday", "close", "weekly"],
+                     choices=["morning", "intraday", "close", "weekly", "narrative"],
                      default=None,
                      help="즉시 특정 잡 실행 (데몬 아님)")
 

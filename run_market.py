@@ -268,7 +268,7 @@ def main():
     parser = argparse.ArgumentParser(description="Investment OS — Market Analysis v1.5.0")
     parser.add_argument(
         "--session",
-        choices=["morning", "intraday", "close", "full", "weekly", "auto"],
+        choices=["morning", "intraday", "close", "full", "weekly", "narrative", "auto"],
         default="auto",
     )
     args = parser.parse_args()

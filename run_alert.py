@@ -49,6 +49,19 @@ def run() -> dict:
     logger.info(f"[run_alert] 시작 | DRY_RUN={DRY_RUN}")
     logger.info("=" * 50)
 
+    # ── Step 0: DLQ 재처리 (B-17) ────────────────────────────
+    try:
+        from core.dlq import process_queue, get_queue_size
+        q_size = get_queue_size()
+        if q_size > 0:
+            logger.info(f"[Step 0] DLQ 재처리 시작: {q_size}건")
+            dlq_result = process_queue()
+            logger.info(f"[Step 0] DLQ 완료: {dlq_result}")
+        else:
+            logger.info("[Step 0] DLQ 비어있음 — 스킵")
+    except Exception as e:
+        logger.warning(f"[Step 0] DLQ 처리 실패 (영향 없음): {e}")
+
     # ── Step 1: 데이터 수집 ────────────────────────────────
     logger.info("[Step 1] 시장 데이터 + RSS 수집")
     from collectors.yahoo_finance import collect_market_snapshot

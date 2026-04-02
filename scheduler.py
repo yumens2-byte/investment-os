@@ -117,6 +117,11 @@ def job_weekly():
     _run_pipeline("weekly", mode="thread")
 
 
+def job_narrative():
+    logger.info("[Scheduler] ⏰ AI 내러티브 시작 (평일 11:30 KST)")
+    _run_pipeline("narrative", mode="tweet")
+
+
 # ──────────────────────────────────────────────────────────────
 # 스케줄 등록
 # ──────────────────────────────────────────────────────────────
@@ -127,9 +132,11 @@ def setup_schedule():
     schedule.every().day.at(SCHEDULE_INTRADAY).do(job_intraday)
     schedule.every().day.at(SCHEDULE_CLOSE).do(job_close)
     schedule.every().friday.at("20:00").do(job_weekly)
+    schedule.every().day.at("11:30").do(job_narrative)
 
     logger.info("─── 스케줄 등록 완료 ───")
     logger.info(f"  Morning Brief   : 평일 {SCHEDULE_MORNING} KST")
+    logger.info(f"  AI Narrative    : 평일 11:30 KST")
     logger.info(f"  Intraday Update : 평일 {SCHEDULE_INTRADAY} KST")
     logger.info(f"  Close Summary   : 평일 {SCHEDULE_CLOSE} KST")
     logger.info(f"  Weekly Thread   : 매주 금요일 20:00 KST")

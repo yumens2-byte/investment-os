@@ -39,6 +39,19 @@ def run(mode: str = "tweet", session: str = None) -> dict:
     logger.info(f"[run_view] 시작 — mode={mode} | DRY_RUN={DRY_RUN}")
     logger.info(f"{'='*50}")
 
+    # ── Step 0: DLQ 재처리 (B-17) ────────────────────────────
+    try:
+        from core.dlq import process_queue, get_queue_size
+        q_size = get_queue_size()
+        if q_size > 0:
+            logger.info(f"[Step 0] DLQ 재처리 시작: {q_size}건")
+            dlq_result = process_queue()
+            logger.info(f"[Step 0] DLQ 완료: {dlq_result}")
+        else:
+            logger.info("[Step 0] DLQ 비어있음 — 스킵")
+    except Exception as e:
+        logger.warning(f"[Step 0] DLQ 처리 실패 (영향 없음): {e}")
+
     # ── Step 1: core_data.json 로드 ────────────────────────────
     logger.info("[Step 1] core_data.json 로드")
     from core.json_builder import load_core_data
@@ -207,6 +220,29 @@ def run(mode: str = "tweet", session: str = None) -> dict:
             from publishers.paid_report_formatter import format_paid_report
             paid_text = format_paid_report(data)
             send_message(paid_text, channel="paid")
+        elif session_type == "narrative":
+            # narrative: Gemini AI 시장 해설 → X + TG 무료/유료 (11:30 KST)
+            try:
+                from engines.narrative_engine import (
+                    generate_narrative, format_narrative_tweet, format_narrative_telegram,
+                )
+                narr = generate_narrative(data)
+                narrative_text = narr.get("narrative", "")
+                source = narr.get("source", "fallback")
+
+                if narrative_text:
+                    from publishers.x_publisher import publish_tweet as _pub_narr
+                    tweet = format_narrative_tweet(narrative_text)
+                    _pub_narr(tweet)
+
+                    tg_text = format_narrative_telegram(narrative_text, data)
+                    send_message(tg_text, channel="free")
+                    send_message(tg_text, channel="paid")
+                    logger.info(f"[Step 6-TG] AI 내러티브 발행 완료 (source={source})")
+                else:
+                    logger.warning("[Step 6-TG] AI 내러티브 비어있음 — 스킵")
+            except Exception as e:
+                logger.warning(f"[Step 6-TG] AI 내러티브 발행 실패 (영향 없음): {e}")
         else:
             # morning / intraday / close: 무료 채널 텍스트
             free_text = format_free_signal(data, session=session_type)
