@@ -78,9 +78,23 @@ def send_message(
                 logger.info(f"[TG] 텍스트 발행 완료 → {cid}")
             else:
                 logger.error(f"[TG] 발행 실패 → {cid}: {data}")
+                # DLQ 저장 (B-17) — DLQ 알림 자체는 저장하지 않음 (무한루프 방지)
+                if "[DLQ]" not in text:
+                    try:
+                        from core.dlq import enqueue
+                        enqueue("tg_message", {"text": text[:500], "channel": channel}, f"API 실패: {str(data)[:100]}")
+                    except Exception:
+                        pass
             results.append(data)
         except Exception as e:
             logger.error(f"[TG] 텍스트 발행 예외 → {cid}: {e}")
+            # DLQ 저장 (B-17)
+            if "[DLQ]" not in text:
+                try:
+                    from core.dlq import enqueue
+                    enqueue("tg_message", {"text": text[:500], "channel": channel}, str(e)[:200])
+                except Exception:
+                    pass
             results.append({"ok": False, "error": str(e), "chat_id": cid})
     return results
 

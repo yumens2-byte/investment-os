@@ -164,6 +164,12 @@ def publish_tweet(tweet_text: str) -> dict:
 
     client = _get_client()
     if client is None:
+        # DLQ 저장 (B-17)
+        try:
+            from core.dlq import enqueue
+            enqueue("x_tweet", {"text": tweet_text[:280]}, "X API client 생성 실패")
+        except Exception:
+            pass
         return {
             "success": False,
             "tweet_id": None,
@@ -172,6 +178,13 @@ def publish_tweet(tweet_text: str) -> dict:
         }
 
     tweet_id = _publish_single(client, tweet_text)
+    if tweet_id is None:
+        # DLQ 저장 (B-17)
+        try:
+            from core.dlq import enqueue
+            enqueue("x_tweet", {"text": tweet_text[:280]}, "X API 발행 실패")
+        except Exception:
+            pass
     return {
         "success": tweet_id is not None,
         "tweet_id": tweet_id,
