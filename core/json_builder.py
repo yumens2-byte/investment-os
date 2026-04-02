@@ -43,20 +43,21 @@ def assemble_core_data(
     news_summary: dict = None,
     macro_data: dict = None,
     signals: dict = None,
+    news_analysis: dict = None,
 ) -> dict:
     """
     각 엔진 출력을 단일 data dict로 조립.
     모든 Output 엔진(run_view 등)은 이 dict만 참조한다.
 
     2026-04-01 추가: signals (19개 시그널 dict)
-      - B-5/B-6 원인 분석(signal_diff)에 사용
-      - B-7 ETF 상세 전략 근거 생성에 사용
+    2026-04-02 추가: news_analysis (B-16 Gemini 뉴스 심층 분석)
     """
     return {
         "fx_rates":       fx_rates or {},
         "fear_greed":     fear_greed or {},
         "crypto":         crypto or {},
         "news_summary":   news_summary or {},
+        "news_analysis":  news_analysis or {},
         "macro_data":     macro_data or {},
         "market_snapshot": snapshot,
         "market_regime":  market_regime,
