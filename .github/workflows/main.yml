@@ -121,19 +121,19 @@ jobs:
             data/outputs/validation_result.json
           retention-days: 7
 
-       - name: Restore DLQ cache
-         uses: actions/cache@v4
-         with:
-           path: data/published/dlq.json
-           key: dlq-${{ github.ref }}
-           restore-keys: dlq-
+      - name: Restore DLQ cache
+        uses: actions/cache@v4
+        with:
+          path: data/published/dlq.json
+          key: dlq-${{ github.ref }}
+          restore-keys: dlq-
 
-       - name: Save DLQ cache
-         uses: actions/cache/save@v4
-         if: always()
-         with:
-           path: data/published/dlq.json
-           key: dlq-${{ github.ref }}-${{ github.run_id }}
+      - name: Save DLQ cache
+        uses: actions/cache/save@v4
+        if: always()
+        with:
+          path: data/published/dlq.json
+          key: dlq-${{ github.ref }}-${{ github.run_id }}
 
   intraday:
     name: Intraday Update
@@ -183,19 +183,19 @@ jobs:
           path: data/outputs/core_data.json
           retention-days: 3
 
-       - name: Restore DLQ cache
-         uses: actions/cache@v4
-         with:
-           path: data/published/dlq.json
-           key: dlq-${{ github.ref }}
-           restore-keys: dlq-
+      - name: Restore DLQ cache
+        uses: actions/cache@v4
+        with:
+          path: data/published/dlq.json
+          key: dlq-${{ github.ref }}
+          restore-keys: dlq-
 
-       - name: Save DLQ cache
-         uses: actions/cache/save@v4
-         if: always()
-         with:
-           path: data/published/dlq.json
-           key: dlq-${{ github.ref }}-${{ github.run_id }}
+      - name: Save DLQ cache
+        uses: actions/cache/save@v4
+        if: always()
+        with:
+          path: data/published/dlq.json
+          key: dlq-${{ github.ref }}-${{ github.run_id }}
 
   close:
     name: Close Summary
@@ -245,19 +245,19 @@ jobs:
           path: data/outputs/core_data.json
           retention-days: 3
 
-       - name: Restore DLQ cache
-         uses: actions/cache@v4
-         with:
-           path: data/published/dlq.json
-           key: dlq-${{ github.ref }}
-           restore-keys: dlq-
+      - name: Restore DLQ cache
+        uses: actions/cache@v4
+        with:
+          path: data/published/dlq.json
+          key: dlq-${{ github.ref }}
+          restore-keys: dlq-
 
-       - name: Save DLQ cache
-         uses: actions/cache/save@v4
-         if: always()
-         with:
-           path: data/published/dlq.json
-           key: dlq-${{ github.ref }}-${{ github.run_id }}
+      - name: Save DLQ cache
+        uses: actions/cache/save@v4
+        if: always()
+        with:
+          path: data/published/dlq.json
+          key: dlq-${{ github.ref }}-${{ github.run_id }}
 
   weekly_thread:
     name: Weekly Thread
@@ -301,19 +301,19 @@ jobs:
           path: data/outputs/
           retention-days: 14
 
-       - name: Restore DLQ cache
-         uses: actions/cache@v4
-         with:
-           path: data/published/dlq.json
-           key: dlq-${{ github.ref }}
-           restore-keys: dlq-
+      - name: Restore DLQ cache
+        uses: actions/cache@v4
+        with:
+          path: data/published/dlq.json
+          key: dlq-${{ github.ref }}
+          restore-keys: dlq-
 
-       - name: Save DLQ cache
-         uses: actions/cache/save@v4
-         if: always()
-         with:
-           path: data/published/dlq.json
-           key: dlq-${{ github.ref }}-${{ github.run_id }}
+      - name: Save DLQ cache
+        uses: actions/cache/save@v4
+        if: always()
+        with:
+          path: data/published/dlq.json
+          key: dlq-${{ github.ref }}-${{ github.run_id }}
 
   alert_check:
     name: Alert Check
@@ -365,19 +365,19 @@ jobs:
           path: data/published/alert_history.json
           retention-days: 7
 
-       - name: Restore DLQ cache
-         uses: actions/cache@v4
-         with:
-           path: data/published/dlq.json
-           key: dlq-${{ github.ref }}
-           restore-keys: dlq-
+      - name: Restore DLQ cache
+        uses: actions/cache@v4
+        with:
+          path: data/published/dlq.json
+          key: dlq-${{ github.ref }}
+          restore-keys: dlq-
 
-       - name: Save DLQ cache
-         uses: actions/cache/save@v4
-         if: always()
-         with:
-           path: data/published/dlq.json
-           key: dlq-${{ github.ref }}-${{ github.run_id }}
+      - name: Save DLQ cache
+        uses: actions/cache/save@v4
+        if: always()
+        with:
+          path: data/published/dlq.json
+          key: dlq-${{ github.ref }}-${{ github.run_id }}
 
   full_dashboard:
     name: Full Dashboard
@@ -427,19 +427,19 @@ jobs:
 
 
           
-       - name: Restore DLQ cache
-         uses: actions/cache@v4
-         with:
-           path: data/published/dlq.json
-           key: dlq-${{ github.ref }}
-           restore-keys: dlq-
+      - name: Restore DLQ cache
+        uses: actions/cache@v4
+        with:
+          path: data/published/dlq.json
+          key: dlq-${{ github.ref }}
+          restore-keys: dlq-
 
-       - name: Save DLQ cache
-         uses: actions/cache/save@v4
-         if: always()
-         with:
-           path: data/published/dlq.json
-           key: dlq-${{ github.ref }}-${{ github.run_id }}
+      - name: Save DLQ cache
+        uses: actions/cache/save@v4
+        if: always()
+        with:
+          path: data/published/dlq.json
+          key: dlq-${{ github.ref }}-${{ github.run_id }}
           
 
           
@@ -460,54 +460,40 @@ jobs:
        GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
        GEMINI_API_SUB_KEY: ${{ secrets.GEMINI_API_SUB_KEY }}
      steps:
-       - uses: actions/checkout@v4
-       - uses: actions/setup-python@v5
-         with:
-           python-version: "3.11"
-           cache: pip
-       - run: pip install -r requirements.txt
-       - name: Restore weekly log cache
-         uses: actions/cache@v4
-         with:
-           path: data/published/weekly_log.json
-           key: weekly-log-${{ github.ref }}
-           restore-keys: weekly-log-
-       - name: Restore DLQ cache
-         uses: actions/cache@v4
-         with:
-           path: data/published/dlq.json
-           key: dlq-${{ github.ref }}
-           restore-keys: dlq-
-       - run: python main.py run all --session narrative --mode tweet
-       - name: Save weekly log cache
-         uses: actions/cache/save@v4
-         if: always()
-         with:
-           path: data/published/weekly_log.json
-           key: weekly-log-${{ github.ref }}-${{ github.run_id }}
-       - name: Save DLQ cache
-         uses: actions/cache/save@v4
-         if: always()
-         with:
-           path: data/published/dlq.json
-           key: dlq-${{ github.ref }}-${{ github.run_id }}
-       - uses: actions/upload-artifact@v4
-         if: always()
-         with:
-           name: narrative-${{ github.run_id }}
-           path: data/outputs/core_data.json
-           retention-days: 3
-
-       - name: Restore DLQ cache
-         uses: actions/cache@v4
-         with:
-           path: data/published/dlq.json
-           key: dlq-${{ github.ref }}
-           restore-keys: dlq-
-
-       - name: Save DLQ cache
-         uses: actions/cache/save@v4
-         if: always()
-         with:
-           path: data/published/dlq.json
-           key: dlq-${{ github.ref }}-${{ github.run_id }}
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+      - run: pip install -r requirements.txt
+      - name: Restore weekly log cache
+        uses: actions/cache@v4
+        with:
+          path: data/published/weekly_log.json
+          key: weekly-log-${{ github.ref }}
+          restore-keys: weekly-log-
+      - name: Restore DLQ cache
+        uses: actions/cache@v4
+        with:
+          path: data/published/dlq.json
+          key: dlq-${{ github.ref }}
+          restore-keys: dlq-
+      - run: python main.py run all --session narrative --mode tweet
+      - name: Save weekly log cache
+        uses: actions/cache/save@v4
+        if: always()
+        with:
+          path: data/published/weekly_log.json
+          key: weekly-log-${{ github.ref }}-${{ github.run_id }}
+      - name: Save DLQ cache
+        uses: actions/cache/save@v4
+        if: always()
+        with:
+          path: data/published/dlq.json
+          key: dlq-${{ github.ref }}-${{ github.run_id }}
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: narrative-${{ github.run_id }}
+          path: data/outputs/core_data.json
+          retention-days: 3
