@@ -87,7 +87,25 @@ def _build_prompt(data: dict) -> str:
   Reduce: {', '.join(ts.get('signal_matrix', {}).get('reduce', []))}
 
 [ETF 배분]
-  {' | '.join(f'{e} {v}%' for e, v in sorted(alloc.items(), key=lambda x: -x[1]))}
+  {' | '.join(f'{e} {v}%' for e, v in sorted(alloc.items(), key=lambda x: -x[1]))}"""
+
+    # B-16: Gemini 뉴스 분석 결과가 있으면 프롬프트에 추가
+    news_analysis = data.get("news_analysis", {})
+    top_issues = news_analysis.get("top_issues", [])
+    if top_issues:
+        issues_text = "\n".join(
+            f"  {i+1}. {iss.get('topic', '?')} ({iss.get('impact', '?')}, "
+            f"confidence={iss.get('confidence', 0):.1f}) — {iss.get('summary', '')}"
+            for i, iss in enumerate(top_issues)
+        )
+        key_risk = news_analysis.get("key_risk", "")
+        prompt += f"""
+
+[뉴스 심층 분석 (AI)]
+{issues_text}
+  핵심 리스크: {key_risk}"""
+
+    prompt += """
 
 위 데이터를 종합하여 한국어 3~5줄 시장 해설을 작성하세요.
 조건: 투자 권유 금지, 팩트 기반, 레짐 전환 근거 명확히."""
