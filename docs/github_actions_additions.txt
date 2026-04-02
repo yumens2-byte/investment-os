@@ -1,0 +1,108 @@
+# ============================================================
+# GitHub Actions yml 추가안 (B-14/B-15/B-17)
+# ============================================================
+# 기존 main.yml에 아래 내용을 추가하세요.
+#
+# 1. schedule 섹션에 cron 추가
+# 2. workflow_dispatch options에 narrative 추가
+# 3. 전체 env에 GEMINI 키 추가
+# 4. narrative 잡 추가
+# 5. 기존 잡에 DLQ 캐시 스텝 추가
+# ============================================================
+
+# ── 1. schedule 섹션에 추가 ──
+# on:
+#   schedule:
+#     ... (기존 6개)
+#     - cron: "30 2 * * 1-5"    # ← 추가: 11:30 KST (UTC 02:30)
+
+# ── 2. workflow_dispatch options에 추가 ──
+# options:
+#   - morning
+#   - intraday
+#   - close
+#   - alert
+#   - full
+#   - weekly
+#   - narrative    # ← 추가
+
+# ── 3. 전체 env에 추가 ──
+# env:
+#   ... (기존)
+#   GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}          # ← 추가
+#   GEMINI_API_SUB_KEY: ${{ secrets.GEMINI_API_SUB_KEY }}  # ← 추가
+
+# ── 4. narrative 잡 (아래 전체를 jobs: 섹션에 추가) ──
+#
+#   narrative:
+#     name: AI Narrative
+#     if: github.event.schedule == '30 2 * * 1-5' || (github.event_name == 'workflow_dispatch' && github.event.inputs.session == 'narrative')
+#     runs-on: ubuntu-latest
+#     timeout-minutes: 15
+#     env:
+#       TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+#       TELEGRAM_FREE_CHANNEL_ID: ${{ secrets.TELEGRAM_FREE_CHANNEL_ID }}
+#       TELEGRAM_PAID_CHANNEL_ID: ${{ secrets.TELEGRAM_PAID_CHANNEL_ID }}
+#       FRED_API_KEY: ${{ secrets.FRED_API_KEY }}
+#       X_API_KEY: ${{ secrets.X_API_KEY }}
+#       X_API_SECRET: ${{ secrets.X_API_SECRET }}
+#       X_ACCESS_TOKEN: ${{ secrets.X_ACCESS_TOKEN }}
+#       X_ACCESS_TOKEN_SECRET: ${{ secrets.X_ACCESS_TOKEN_SECRET }}
+#       GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+#       GEMINI_API_SUB_KEY: ${{ secrets.GEMINI_API_SUB_KEY }}
+#     steps:
+#       - uses: actions/checkout@v4
+#       - uses: actions/setup-python@v5
+#         with:
+#           python-version: "3.11"
+#           cache: pip
+#       - run: pip install -r requirements.txt
+#       - name: Restore weekly log cache
+#         uses: actions/cache@v4
+#         with:
+#           path: data/published/weekly_log.json
+#           key: weekly-log-${{ github.ref }}
+#           restore-keys: weekly-log-
+#       - name: Restore DLQ cache
+#         uses: actions/cache@v4
+#         with:
+#           path: data/published/dlq.json
+#           key: dlq-${{ github.ref }}
+#           restore-keys: dlq-
+#       - run: python main.py run all --session narrative --mode tweet
+#       - name: Save weekly log cache
+#         uses: actions/cache/save@v4
+#         if: always()
+#         with:
+#           path: data/published/weekly_log.json
+#           key: weekly-log-${{ github.ref }}-${{ github.run_id }}
+#       - name: Save DLQ cache
+#         uses: actions/cache/save@v4
+#         if: always()
+#         with:
+#           path: data/published/dlq.json
+#           key: dlq-${{ github.ref }}-${{ github.run_id }}
+#       - uses: actions/upload-artifact@v4
+#         if: always()
+#         with:
+#           name: narrative-${{ github.run_id }}
+#           path: data/outputs/core_data.json
+#           retention-days: 3
+
+# ── 5. 기존 잡에 DLQ 캐시 스텝 추가 (모든 잡에) ──
+# 각 잡의 steps에 아래 2개 스텝 추가:
+#
+#       - name: Restore DLQ cache
+#         uses: actions/cache@v4
+#         with:
+#           path: data/published/dlq.json
+#           key: dlq-${{ github.ref }}
+#           restore-keys: dlq-
+#
+# (잡 끝 부분에)
+#       - name: Save DLQ cache
+#         uses: actions/cache/save@v4
+#         if: always()
+#         with:
+#           path: data/published/dlq.json
+#           key: dlq-${{ github.ref }}-${{ github.run_id }}
