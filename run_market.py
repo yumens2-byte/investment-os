@@ -105,6 +105,24 @@ def run(session: str) -> dict:
         f"RSS소스 {sources_ok}성공/{sources_fail}실패"
     )
 
+    # ── Step 1-G: Gemini 뉴스 심층 분석 (B-16) ───────────────
+    news_analysis = None
+    try:
+        from collectors.news_analyzer import analyze_headlines
+        headlines = news_result.get("headlines", [])
+        if headlines:
+            news_analysis = analyze_headlines(headlines)
+            if news_analysis and news_analysis.get("success"):
+                logger.info(
+                    f"[Step 1-G] Gemini 뉴스 분석 완료 | "
+                    f"감성={news_analysis.get('overall_sentiment', '?')} | "
+                    f"이슈 {len(news_analysis.get('top_issues', []))}건"
+                )
+            else:
+                logger.info("[Step 1-G] Gemini 뉴스 분석 스킵 (fallback)")
+    except Exception as e:
+        logger.warning(f"[Step 1-G] Gemini 뉴스 분석 실패 (영향 없음): {e}")
+
     # ── Step 2: Macro Engine ───────────────────────────────────
     # Tier 1+2 확장 (2026-04-01): fear_greed, crypto, etf_prices,
     # tier2_data를 macro_engine에 전달하여 확장 시그널 산출에 활용
@@ -178,6 +196,7 @@ def run(session: str) -> dict:
         fear_greed=fear_greed,
         crypto=crypto,
         news_summary=news_summary,
+        news_analysis=news_analysis,
         macro_data=fred_data,
         snapshot=snapshot,
         market_regime=market_regime,
