@@ -346,6 +346,19 @@ def run() -> dict:
             record_alert(signal.alert_type, signal.level, str(tweet_id), tweet)
             sent_count += 1
             logger.info(f"[run_alert] 발행 완료: {signal.alert_type}/{signal.level} → {tweet_id}")
+
+            # ── Supabase Alert 적재 ──
+            try:
+                from db.daily_store import store_daily_alert
+                store_daily_alert(
+                    alert_type=signal.alert_type,
+                    alert_level=signal.level,
+                    trigger_value=signal.reason[:100] if signal.reason else "",
+                    tweet_id=str(tweet_id),
+                )
+            except Exception as db_err:
+                logger.warning(f"[run_alert] Alert DB 적재 실패 (무시): {db_err}")
+
         else:
             logger.error(f"[run_alert] 발행 실패: {signal.alert_type}/{signal.level}")
 

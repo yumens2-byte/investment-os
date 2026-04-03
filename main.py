@@ -291,6 +291,11 @@ def build_parser() -> argparse.ArgumentParser:
     sub.add_parser("alert", help="Alert 감지 + 발송 (즉시 실행)")
     sub.add_parser("status", help="최근 실행 결과 요약")
 
+    # ── weekend ──────────────────────────────────────────────────
+    wk = sub.add_parser("weekend", help="주말 콘텐츠 발행 (토: 주간리뷰, 일: 다음주프리뷰)")
+    wk.add_argument("--day", default="auto", choices=["auto", "sat", "sun"],
+                     help="토/일 강제 지정 (기본: 자동 판별)")
+
     return parser
 
 
@@ -345,6 +350,12 @@ def main() -> None:
 
         import run_alert
         result = run_alert.run()
+        print(json.dumps(result, ensure_ascii=False, indent=2))
+
+    elif args.command == "weekend":
+        import run_weekend
+        day = getattr(args, "day", "auto")
+        result = run_weekend.run(day=day)
         print(json.dumps(result, ensure_ascii=False, indent=2))
 
     elif args.command == "status":

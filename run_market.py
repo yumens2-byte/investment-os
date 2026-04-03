@@ -236,6 +236,18 @@ def run(session: str) -> dict:
     except Exception as e:
         logger.warning(f"[Step 8-W] 주간 기록 실패 (영향 없음): {e}")
 
+    # ── Step 8-DB: Supabase 일별 데이터 적재 ──────────────────
+    try:
+        from db.daily_store import store_all_daily_data
+        db_result = store_all_daily_data(
+            data=data,
+            regime_score=composite_score,
+            rss_result=news_result,
+        )
+        logger.info(f"[Step 8-DB] Supabase 적재: {db_result}")
+    except Exception as e:
+        logger.warning(f"[Step 8-DB] Supabase 적재 실패 (영향 없음): {e}")
+
     # ── Step 8-R: ETF 랭킹 변화 감지 + 텔레그램 알림 ───────────
     try:
         from core.rank_tracker import detect_rank_change
