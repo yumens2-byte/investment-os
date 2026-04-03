@@ -175,3 +175,58 @@ def format_paid_report(data: dict) -> str:
     ]
 
     return "\n".join(lines)
+
+
+# ──────────────────────────────────────────────────────────────
+# C-3: ETF 추천 근거 AI 자연어화 (Gemini)
+# ──────────────────────────────────────────────────────────────
+
+def generate_ai_etf_rationale(data: dict) -> str:
+    """
+    Gemini로 ETF 배분 근거를 자연어로 설명.
+    유료 TG 채널에 추가 발행.
+
+    Returns: ETF 근거 자연어 텍스트 (빈 문자열 = 실패)
+    """
+    try:
+        from core.gemini_gateway import call, is_available
+        if not is_available():
+            return ""
+
+        regime = data.get("market_regime", {}).get("market_regime", "Unknown")
+        risk = data.get("market_regime", {}).get("market_risk_level", "MEDIUM")
+        signal = data.get("trading_signal", {}).get("trading_signal", "HOLD")
+        alloc = data.get("etf_allocation", {}).get("allocation", {})
+        signals = data.get("signals", {})
+
+        vix_state = signals.get("vix_state", "Normal")
+        oil_state = signals.get("oil_state", "Moderate")
+        fg_score = signals.get("fear_greed_score", 3)
+
+        alloc_str = ", ".join(f"{e} {w}%" for e, w in
+                              sorted(alloc.items(), key=lambda x: x[1], reverse=True))
+
+        prompt = (
+            f"ETF 포트폴리오 배분 근거를 투자자에게 설명해줘.\n"
+            f"- 레짐: {regime}, 리스크: {risk}, 시그널: {signal}\n"
+            f"- 배분: {alloc_str}\n"
+            f"- VIX 상태: {vix_state}, Oil 상태: {oil_state}, F&G 점수: {fg_score}\n"
+            f"조건:\n"
+            f"- 각 ETF별 1줄씩 (6개), 한국어\n"
+            f"- '왜 이 비중인지' 자연어로 설명\n"
+            f"- 총 200자 이내\n"
+            f"- 텍스트만 출력\n"
+        )
+
+        result = call(prompt=prompt, model="flash-lite", max_tokens=250, temperature=0.7)
+
+        if result.get("success"):
+            text = result["text"].strip()
+            if len(text) > 20:
+                logger.info(f"[PaidReport] AI ETF 근거 생성 ({len(text)}자)")
+                return text
+
+    except Exception as e:
+        logger.warning(f"[PaidReport] AI ETF 근거 실패: {e}")
+
+    return ""
