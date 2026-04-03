@@ -39,7 +39,7 @@ MODEL_MAP = {
 }
 
 # ── 이미지 생성 모델 ──
-IMAGE_MODEL = "gemini-3-flash-preview"
+IMAGE_MODEL = "gemini-2.5-flash-image"
 
 # ── 기본 설정 ──
 MAX_RETRIES = 3
