@@ -205,16 +205,9 @@ def is_available() -> bool:
 
 def generate_image(prompt: str, output_path: str = None) -> dict:
     """
-    Gemini Flash Image로 이미지 생성 — Main/Sub/Sub2 키 자동 전환
-
-    Returns:
-        {
-          "success": True/False,
-          "image_bytes": bytes | None,
-          "image_path": str | None,
-          "key_used": "main" | "sub" | "sub2",
-          "error": str,
-        }
+    Gemini 이미지 생성 — Main/Sub/Sub2 키 자동 전환
+    1순위: generate_image API (이미지 전용 엔드포인트)
+    2순위: generate_content API (멀티모달 엔드포인트)
     """
     from google.genai import types
 
@@ -226,68 +219,91 @@ def generate_image(prompt: str, output_path: str = None) -> dict:
     last_error = ""
 
     for key_label, api_key in keys:
-        for attempt in range(1, MAX_RETRIES + 1):
-            try:
-                client = _get_client(api_key)
-
-                response = client.models.generate_content(
-                    model=IMAGE_MODEL,
-                    contents=prompt,
-                    config=types.GenerateContentConfig(
-                        response_modalities=["IMAGE"],
-                        image_config=types.ImageConfig(
-                            aspect_ratio="1:1",
-                        ),
-                    ),
-                )
-
-                for part in response.candidates[0].content.parts:
-                    if part.inline_data is not None:
-                        img_bytes = part.inline_data.data
-                        if isinstance(img_bytes, str):
-                            import base64
-                            img_bytes = base64.b64decode(img_bytes)
-
-                        if len(img_bytes) > 500:
-                            if output_path:
-                                os.makedirs(os.path.dirname(output_path) or ".", exist_ok=True)
-                                with open(output_path, "wb") as f:
-                                    f.write(img_bytes)
-
-                            logger.info(
-                                f"[GeminiGW] 이미지 생성 성공 | key={key_label} | "
-                                f"attempt={attempt} | size={len(img_bytes)}"
-                            )
-                            return {
-                                "success": True,
-                                "image_bytes": img_bytes,
-                                "image_path": output_path,
-                                "key_used": key_label,
-                                "error": "",
-                            }
-
-                last_error = "응답에 이미지 없음"
-                logger.warning(f"[GeminiGW] 이미지 없음 | key={key_label} | attempt={attempt}")
-                break
-
-            except Exception as e:
-                last_error = str(e)
-                err_str = str(e)
-
-                if "429" in err_str or "quota" in err_str.lower() or "RESOURCE_EXHAUSTED" in err_str:
-                    logger.warning(
-                        f"[GeminiGW] 이미지 429 | key={key_label} | "
-                        f"attempt={attempt} → 다음 키 전환"
+        # ── 1순위: generate_image API (이미지 전용) ──
+        try:
+            client = _get_client(api_key)
+            response = client.models.generate_image(
+                model=IMAGE_MODEL,
+                prompt=prompt,
+                config=types.GenerateImageConfig(
+                    number_of_images=1,
+                ),
+            )
+            if response.generated_images and len(response.generated_images) > 0:
+                gen_img = response.generated_images[0]
+                if output_path:
+                    os.makedirs(os.path.dirname(output_path) or ".", exist_ok=True)
+                    gen_img.image.save(output_path)
+                    logger.info(
+                        f"[GeminiGW] 이미지 생성 성공 (generate_image) | key={key_label}"
                     )
-                    break
-
-                if attempt < MAX_RETRIES:
-                    wait = BACKOFF_BASE ** attempt
-                    logger.warning(
-                        f"[GeminiGW] 이미지 실패 | key={key_label} | "
-                        f"attempt={attempt} | {err_str[:80]} → {wait}초 대기"
+                    return {
+                        "success": True,
+                        "image_bytes": open(output_path, "rb").read(),
+                        "image_path": output_path,
+                        "key_used": key_label,
+                        "error": "",
+                    }
+                else:
+                    import io
+                    buf = io.BytesIO()
+                    gen_img.image.save(buf, format="PNG")
+                    img_bytes = buf.getvalue()
+                    logger.info(
+                        f"[GeminiGW] 이미지 생성 성공 (generate_image) | key={key_label} | size={len(img_bytes)}"
                     )
-                    time.sleep(wait)
+                    return {
+                        "success": True,
+                        "image_bytes": img_bytes,
+                        "image_path": None,
+                        "key_used": key_label,
+                        "error": "",
+                    }
+        except Exception as e1:
+            err1 = str(e1)
+            if "429" in err1 or "quota" in err1.lower() or "RESOURCE_EXHAUSTED" in err1:
+                logger.warning(f"[GeminiGW] 이미지(generate_image) 429 | key={key_label} → 다음 키")
+                continue
+            logger.warning(f"[GeminiGW] 이미지(generate_image) 실패 | key={key_label} | {err1[:80]}")
+
+        # ── 2순위: generate_content API (멀티모달) ──
+        try:
+            client = _get_client(api_key)
+            response = client.models.generate_content(
+                model=IMAGE_MODEL,
+                contents=prompt,
+                config=types.GenerateContentConfig(
+                    response_modalities=["IMAGE"],
+                ),
+            )
+            for part in response.candidates[0].content.parts:
+                if part.inline_data is not None:
+                    img_bytes = part.inline_data.data
+                    if isinstance(img_bytes, str):
+                        import base64
+                        img_bytes = base64.b64decode(img_bytes)
+                    if len(img_bytes) > 500:
+                        if output_path:
+                            os.makedirs(os.path.dirname(output_path) or ".", exist_ok=True)
+                            with open(output_path, "wb") as f:
+                                f.write(img_bytes)
+                        logger.info(
+                            f"[GeminiGW] 이미지 생성 성공 (generate_content) | key={key_label} | size={len(img_bytes)}"
+                        )
+                        return {
+                            "success": True,
+                            "image_bytes": img_bytes,
+                            "image_path": output_path,
+                            "key_used": key_label,
+                            "error": "",
+                        }
+        except Exception as e2:
+            err2 = str(e2)
+            if "429" in err2 or "quota" in err2.lower() or "RESOURCE_EXHAUSTED" in err2:
+                logger.warning(f"[GeminiGW] 이미지(generate_content) 429 | key={key_label} → 다음 키")
+                continue
+            last_error = err2
+            logger.warning(f"[GeminiGW] 이미지(generate_content) 실패 | key={key_label} | {err2[:80]}")
 
     logger.warning(f"[GeminiGW] 이미지 전부 실패 | error={last_error[:100]}")
     return {"success": False, "image_bytes": None, "image_path": None,
