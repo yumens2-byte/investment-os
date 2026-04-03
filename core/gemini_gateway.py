@@ -1,19 +1,22 @@
 """
-core/gemini_gateway.py (B-14)
-================================
-Gemini API 호출 공통 모듈
+core/gemini_gateway.py (B-14 v2.0)
+=====================================
+Gemini API 호출 공통 모듈 — google-genai SDK (신규)
 
 기능:
-  - Main/Sub 키 자동 전환 (429 Rate Limit 시)
+  - Main/Sub/Sub2 키 자동 전환 (429 Rate Limit 시)
   - 지수 백오프 재시도 (최대 3회)
   - DLQ 저장 (전부 실패 시)
   - 모델 선택 (flash-lite / flash / pro)
+  - 이미지 생성 (gemini-2.5-flash-image)
   - JSON 응답 파싱 지원
 
 환경변수:
   GEMINI_API_KEY          — 메인 키
   GEMINI_API_SUB_KEY      — 서브 키 (한도 초과 시 자동 전환)
   GEMINI_API_SUB_SUB_KEY  — 서브2 키 (서브 키도 초과 시 자동 전환)
+
+SDK: google-genai (신규, google-generativeai deprecated 대체)
 """
 import json
 import logging
@@ -35,23 +38,37 @@ MODEL_MAP = {
     "pro": "gemini-2.5-pro",
 }
 
+# ── 이미지 생성 모델 ──
+IMAGE_MODEL = "gemini-2.5-flash-image"
+
 # ── 기본 설정 ──
 MAX_RETRIES = 3
-BACKOFF_BASE = 2  # 지수 백오프: 2초, 4초, 8초
+BACKOFF_BASE = 2
 DEFAULT_MAX_TOKENS = 1024
 
 
 def _get_client(api_key: str):
-    """google-generativeai 클라이언트 생성"""
+    """google-genai Client 생성"""
     try:
-        import google.generativeai as genai
-        genai.configure(api_key=api_key)
-        return genai
+        from google import genai
+        return genai.Client(api_key=api_key)
     except ImportError:
         raise ImportError(
-            "google-generativeai 미설치. "
-            "requirements.txt에 'google-generativeai>=0.8.0' 추가 필요."
+            "google-genai 미설치. "
+            "requirements.txt에 'google-genai>=1.0.0' 추가 필요."
         )
+
+
+def _build_keys() -> list:
+    """Main/Sub/Sub2 키 리스트 구성"""
+    keys = []
+    if GEMINI_API_KEY:
+        keys.append(("main", GEMINI_API_KEY))
+    if GEMINI_API_SUB_KEY:
+        keys.append(("sub", GEMINI_API_SUB_KEY))
+    if GEMINI_API_SUB_SUB_KEY:
+        keys.append(("sub2", GEMINI_API_SUB_SUB_KEY))
+    return keys
 
 
 def call(
@@ -64,24 +81,15 @@ def call(
     fallback_value: Optional[str] = None,
 ) -> dict:
     """
-    Gemini API 호출 (Main → Sub 자동 전환 + DLQ)
-
-    Args:
-        prompt:             사용자 프롬프트
-        model:              "flash-lite" | "flash" | "pro"
-        system_instruction: 시스템 프롬프트
-        max_tokens:         최대 출력 토큰
-        temperature:        창의성 (0.0~1.0)
-        response_json:      True면 JSON 파싱 시도
-        fallback_value:     전부 실패 시 반환할 기본값
+    Gemini API 텍스트 호출 (Main → Sub → Sub2 자동 전환 + DLQ)
 
     Returns:
         {
           "success": True/False,
           "text": "응답 텍스트",
-          "data": {...},          # response_json=True일 때 파싱된 dict
+          "data": {...},
           "model": "gemini-2.5-flash-lite",
-          "key_used": "main" | "sub",
+          "key_used": "main" | "sub" | "sub2",
           "error": None | "에러 메시지",
         }
     """
@@ -89,34 +97,29 @@ def call(
         logger.warning("[GeminiGW] GEMINI_API_KEY 미설정 — 스킵")
         return _fail_result("GEMINI_API_KEY 미설정", fallback_value)
 
-    model_name = MODEL_MAP.get(model, MODEL_MAP["flash-lite"])
-    keys = [("main", GEMINI_API_KEY)]
-    if GEMINI_API_SUB_KEY:
-        keys.append(("sub", GEMINI_API_SUB_KEY))
-    if GEMINI_API_SUB_SUB_KEY:
-        keys.append(("sub2", GEMINI_API_SUB_SUB_KEY))
+    from google.genai import types
 
+    model_name = MODEL_MAP.get(model, MODEL_MAP["flash-lite"])
+    keys = _build_keys()
     last_error = ""
 
     for key_label, api_key in keys:
         for attempt in range(1, MAX_RETRIES + 1):
             try:
-                genai = _get_client(api_key)
-                gen_model = genai.GenerativeModel(
-                    model_name=model_name,
+                client = _get_client(api_key)
+
+                config = types.GenerateContentConfig(
+                    max_output_tokens=max_tokens,
+                    temperature=temperature,
                     system_instruction=system_instruction or None,
                 )
-
-                generation_config = {
-                    "max_output_tokens": max_tokens,
-                    "temperature": temperature,
-                }
                 if response_json:
-                    generation_config["response_mime_type"] = "application/json"
+                    config.response_mime_type = "application/json"
 
-                response = gen_model.generate_content(
-                    prompt,
-                    generation_config=generation_config,
+                response = client.models.generate_content(
+                    model=model_name,
+                    contents=prompt,
+                    config=config,
                 )
 
                 text = response.text.strip()
@@ -130,10 +133,8 @@ def call(
                     "error": None,
                 }
 
-                # JSON 파싱 시도
                 if response_json:
                     try:
-                        # ```json ... ``` 제거
                         clean = text
                         if clean.startswith("```"):
                             clean = clean.split("\n", 1)[-1]
@@ -142,9 +143,7 @@ def call(
                         clean = clean.strip()
                         result["data"] = json.loads(clean)
                     except json.JSONDecodeError as je:
-                        logger.warning(
-                            f"[GeminiGW] JSON 파싱 실패 (텍스트 유지): {je}"
-                        )
+                        logger.warning(f"[GeminiGW] JSON 파싱 실패 (텍스트 유지): {je}")
 
                 logger.info(
                     f"[GeminiGW] 성공 | model={model_name} | key={key_label} "
@@ -161,9 +160,8 @@ def call(
                     f"실패: {last_error[:100]}"
                 )
 
-                if is_rate_limit and key_label == "main" and GEMINI_API_SUB_KEY:
-                    # 429면 Sub 키로 즉시 전환 (재시도 안함)
-                    logger.info("[GeminiGW] 429 → Sub Key 전환")
+                if is_rate_limit:
+                    logger.info(f"[GeminiGW] 429 → 다음 키 전환 ({key_label})")
                     break
 
                 if attempt < MAX_RETRIES:
@@ -171,7 +169,6 @@ def call(
                     logger.info(f"[GeminiGW] {wait}초 대기 후 재시도")
                     time.sleep(wait)
 
-    # ── 전부 실패 → DLQ 저장 ──
     logger.error(f"[GeminiGW] 전부 실패 | model={model_name} | error={last_error[:200]}")
 
     try:
@@ -179,7 +176,7 @@ def call(
         enqueue(
             task_type="gemini_call",
             payload={
-                "prompt": prompt[:500],  # DLQ에는 프롬프트 앞부분만 저장
+                "prompt": prompt[:500],
                 "model": model,
                 "system_instruction": system_instruction[:200],
             },
@@ -192,7 +189,6 @@ def call(
 
 
 def _fail_result(error: str, fallback_value: Optional[str] = None) -> dict:
-    """실패 결과 반환"""
     return {
         "success": False,
         "text": fallback_value or "",
@@ -204,39 +200,25 @@ def _fail_result(error: str, fallback_value: Optional[str] = None) -> dict:
 
 
 def is_available() -> bool:
-    """Gemini API 사용 가능 여부 (키 설정 확인만)"""
     return bool(GEMINI_API_KEY)
-
-
-# ── 이미지 생성 모델 ──
-IMAGE_MODEL = "gemini-2.5-flash-image"
 
 
 def generate_image(prompt: str, output_path: str = None) -> dict:
     """
-    Gemini Flash Image로 이미지 생성 — Main/Sub 키 자동 전환
-
-    Args:
-        prompt: 이미지 생성 프롬프트
-        output_path: 저장 경로 (None이면 bytes만 반환)
+    Gemini Flash Image로 이미지 생성 — Main/Sub/Sub2 키 자동 전환
 
     Returns:
         {
           "success": True/False,
           "image_bytes": bytes | None,
           "image_path": str | None,
-          "key_used": "main" | "sub",
+          "key_used": "main" | "sub" | "sub2",
           "error": str,
         }
     """
-    keys = []
-    if GEMINI_API_KEY:
-        keys.append(("main", GEMINI_API_KEY))
-    if GEMINI_API_SUB_KEY:
-        keys.append(("sub", GEMINI_API_SUB_KEY))
-    if GEMINI_API_SUB_SUB_KEY:
-        keys.append(("sub2", GEMINI_API_SUB_SUB_KEY))
+    from google.genai import types
 
+    keys = _build_keys()
     if not keys:
         return {"success": False, "image_bytes": None, "image_path": None,
                 "key_used": "", "error": "GEMINI_API_KEY 미설정"}
@@ -246,28 +228,25 @@ def generate_image(prompt: str, output_path: str = None) -> dict:
     for key_label, api_key in keys:
         for attempt in range(1, MAX_RETRIES + 1):
             try:
-                genai = _get_client(api_key)
-                model = genai.GenerativeModel(IMAGE_MODEL)
+                client = _get_client(api_key)
 
-                response = model.generate_content(
-                    prompt,
-                    generation_config={
-                        "response_modalities": ["IMAGE", "TEXT"],
-                        "max_output_tokens": 1024,
-                    },
+                response = client.models.generate_content(
+                    model=IMAGE_MODEL,
+                    contents=prompt,
+                    config=types.GenerateContentConfig(
+                        response_modalities=["IMAGE", "TEXT"],
+                    ),
                 )
 
-                # 이미지 파트 추출
                 for part in response.candidates[0].content.parts:
-                    if hasattr(part, "inline_data") and part.inline_data:
-                        import base64
-                        img_data = part.inline_data.data
-                        img_bytes = base64.b64decode(img_data) if isinstance(img_data, str) else img_data
+                    if part.inline_data is not None:
+                        img_bytes = part.inline_data.data
+                        if isinstance(img_bytes, str):
+                            import base64
+                            img_bytes = base64.b64decode(img_bytes)
 
                         if len(img_bytes) > 500:
-                            # 파일 저장
                             if output_path:
-                                import os
                                 os.makedirs(os.path.dirname(output_path) or ".", exist_ok=True)
                                 with open(output_path, "wb") as f:
                                     f.write(img_bytes)
@@ -286,21 +265,19 @@ def generate_image(prompt: str, output_path: str = None) -> dict:
 
                 last_error = "응답에 이미지 없음"
                 logger.warning(f"[GeminiGW] 이미지 없음 | key={key_label} | attempt={attempt}")
-                break  # 이미지 없으면 재시도 의미 없음 → 다음 키로
+                break
 
             except Exception as e:
                 last_error = str(e)
                 err_str = str(e)
 
-                # 429 Rate Limit → 다음 키로 전환
-                if "429" in err_str or "quota" in err_str.lower():
+                if "429" in err_str or "quota" in err_str.lower() or "RESOURCE_EXHAUSTED" in err_str:
                     logger.warning(
                         f"[GeminiGW] 이미지 429 | key={key_label} | "
                         f"attempt={attempt} → 다음 키 전환"
                     )
-                    break  # 이 키는 포기, 다음 키로
+                    break
 
-                # 기타 에러 → 백오프 후 재시도
                 if attempt < MAX_RETRIES:
                     wait = BACKOFF_BASE ** attempt
                     logger.warning(
