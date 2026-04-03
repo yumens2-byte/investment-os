@@ -127,6 +127,16 @@ def run(comic_type: str) -> None:
     logger.info(f"[Pipeline] 시작 — {today} / {comic_type}")
     logger.info(f"{'='*50}")
 
+    # ── 미장 휴무일 체크 ──
+    try:
+        from config.us_market_holidays import should_skip_market_session
+        should_skip, skip_reason = should_skip_market_session()
+        if should_skip:
+            logger.info(f"[Pipeline] {skip_reason} — 코믹 파이프라인 스킵")
+            return None
+    except Exception as e:
+        logger.warning(f"[Pipeline] 휴무일 체크 실패 (무시): {e}")
+
     # ── STEP 1. 시장 데이터 수집 ──────────────────────────
     logger.info("[STEP 1] 시장 데이터 수집")
     core_data = None

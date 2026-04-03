@@ -310,6 +310,13 @@ def main() -> None:
     rc = 0
 
     if args.command == "run":
+        # ── 미장 휴무일 체크 ──
+        from config.us_market_holidays import should_skip_market_session
+        should_skip, skip_reason = should_skip_market_session()
+        if should_skip:
+            logger.info(f"[main] {skip_reason} — 전체 세션 스킵 (FORCE_RUN=true로 강제 실행 가능)")
+            sys.exit(0)
+
         if args.run_target == "market":
             session = _detect_session() if args.session == "auto" else args.session
             rc = cmd_run_market(session)
@@ -328,6 +335,14 @@ def main() -> None:
         rc = cmd_test(args.round)
 
     elif args.command == "alert":
+        # ── 미장 휴무일 체크 ──
+        from config.us_market_holidays import should_skip_market_session
+        should_skip, skip_reason = should_skip_market_session()
+        if should_skip:
+            logger.info(f"[main] {skip_reason} — Alert 스킵")
+            print(json.dumps({"skipped": True, "reason": skip_reason}))
+            sys.exit(0)
+
         import run_alert
         result = run_alert.run()
         print(json.dumps(result, ensure_ascii=False, indent=2))
