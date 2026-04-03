@@ -53,6 +53,7 @@ jobs:
           GEMINI_API_SUB_SUB_KEY: ${{ secrets.GEMINI_API_SUB_SUB_KEY }}
           # dry_run_override 입력이 있으면 그걸 사용, 없으면 Variables 값 사용
           DRY_RUN: ${{ github.event.inputs.dry_run_override != '' && github.event.inputs.dry_run_override || vars.DRY_RUN }}
+          FORCE_RUN: ${{ secrets.FORCE_RUN || 'false' }}
         run: |
           echo "=== Daily Comic Pipeline 시작 ==="
           echo "DRY_RUN=$DRY_RUN"
