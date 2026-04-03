@@ -52,6 +52,7 @@ jobs:
           GEMINI_API_SUB_KEY: ${{ secrets.GEMINI_API_SUB_KEY }}
           GEMINI_API_SUB_SUB_KEY: ${{ secrets.GEMINI_API_SUB_SUB_KEY }}
           DRY_RUN: ${{ github.event.inputs.dry_run_override != '' && github.event.inputs.dry_run_override || vars.DRY_RUN }}
+          FORCE_RUN: ${{ secrets.FORCE_RUN || 'false' }}
         run: |
           echo "=== Weekly Comic Pipeline 시작 ==="
           echo "DRY_RUN=$DRY_RUN"
