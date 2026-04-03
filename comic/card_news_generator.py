@@ -37,9 +37,18 @@ def generate_cards(core_data: dict) -> list[str]:
 
     paths = []
     generators = [_card1_market, _card2_etf, _card3_news]
+    card_labels = ["시장 현황", "ETF 전략", "AI 뉴스 분석"]
 
-    for i, gen in enumerate(generators, 1):
+    for i, (gen, label) in enumerate(zip(generators, card_labels), 1):
         try:
+            # 1순위: Gemini 이미지
+            gemini_path = _generate_card_via_gemini(core_data, i, label)
+            if gemini_path:
+                paths.append(gemini_path)
+                continue
+
+            # 2순위: HTML fallback
+            logger.info(f"[CardNews] Card {i} Gemini 실패 → HTML fallback")
             html = gen(core_data)
             path = _render_html(html, f"card{i}")
             if path:
@@ -49,6 +58,85 @@ def generate_cards(core_data: dict) -> list[str]:
 
     logger.info(f"[CardNews] {len(paths)}/3장 생성 완료")
     return paths
+
+
+def _generate_card_via_gemini(core_data: dict, card_no: int, label: str) -> str | None:
+    """Gemini Flash Image로 카드뉴스 이미지 생성"""
+    try:
+        import base64
+        gemini_key = os.getenv("GEMINI_API_KEY", "")
+        if not gemini_key:
+            return None
+
+        import google.generativeai as genai
+        genai.configure(api_key=gemini_key)
+
+        regime = core_data.get("market_regime", {}).get("market_regime", "—")
+        risk = core_data.get("market_regime", {}).get("market_risk_level", "—")
+        snap = core_data.get("market_snapshot", {})
+        alloc = core_data.get("etf_allocation", {}).get("allocation", {})
+        news = core_data.get("news_analysis", {})
+
+        if card_no == 1:
+            prompt = (
+                f"Create a sleek 1080x1350 financial infographic card titled '오늘의 시장' (Today's Market). "
+                f"Dark gradient background. Professional data visualization style. "
+                f"Show: Regime '{regime}', Risk '{risk}', "
+                f"SPY {snap.get('sp500', '?')}%, VIX {snap.get('vix', '?')}, "
+                f"WTI ${snap.get('oil', '?')}, US10Y {snap.get('us10y', '?')}%. "
+                f"Include 6-axis radar chart for market score. "
+                f"Bottom: '{date.today()} | Investment Comic | 1/3'. "
+                f"Clean Korean text. No real brand logos."
+            )
+        elif card_no == 2:
+            sorted_etfs = sorted(alloc.items(), key=lambda x: -x[1])
+            etf_str = ", ".join(f"{e} {p}%" for e, p in sorted_etfs)
+            prompt = (
+                f"Create a sleek 1080x1350 financial infographic card titled 'ETF 전략' (ETF Strategy). "
+                f"Dark gradient background. Show horizontal bar chart of ETF allocation: {etf_str}. "
+                f"Green bars for high allocation, red for low. "
+                f"Include BUY/REDUCE indicators. "
+                f"Bottom: '{date.today()} | Investment Comic | 2/3'. "
+                f"Clean Korean text. No real brand logos."
+            )
+        else:
+            issues = news.get("top_issues", [])
+            issues_str = ", ".join(i.get("topic", "?") for i in issues[:3])
+            sentiment = news.get("overall_sentiment", "neutral")
+            prompt = (
+                f"Create a sleek 1080x1350 financial infographic card titled 'AI 뉴스 분석' (AI News Analysis). "
+                f"Dark gradient background. Overall sentiment: {sentiment}. "
+                f"Top 3 issues: {issues_str}. "
+                f"Show confidence bars for each issue. Include risk warning section. "
+                f"Bottom: '{date.today()} | Investment Comic | Powered by Gemini AI | 3/3'. "
+                f"Clean Korean text. No real brand logos."
+            )
+
+        model = genai.GenerativeModel("gemini-2.5-flash-preview-04-17")
+        response = model.generate_content(
+            prompt,
+            generation_config={"response_modalities": ["IMAGE", "TEXT"], "max_output_tokens": 1024},
+        )
+
+        for part in response.candidates[0].content.parts:
+            if hasattr(part, "inline_data") and part.inline_data:
+                img_data = part.inline_data.data
+                img_bytes = base64.b64decode(img_data) if isinstance(img_data, str) else img_data
+                if len(img_bytes) > 500:
+                    output_dir = Path("data/images")
+                    output_dir.mkdir(parents=True, exist_ok=True)
+                    today = date.today().strftime("%Y%m%d")
+                    image_path = str(output_dir / f"card{card_no}_{today}.png")
+                    with open(image_path, "wb") as f:
+                        f.write(img_bytes)
+                    logger.info(f"[CardNews] Card {card_no} Gemini 이미지 완료: {image_path}")
+                    return image_path
+
+        logger.warning(f"[CardNews] Card {card_no} Gemini 응답에 이미지 없음")
+        return None
+    except Exception as e:
+        logger.warning(f"[CardNews] Card {card_no} Gemini 실패: {str(e)[:100]}")
+        return None
 
 
 def _card1_market(data: dict) -> str:

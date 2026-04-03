@@ -69,7 +69,13 @@ def generate_meme(alert_type: str, alert_level: str,
     # Gemini로 밈 텍스트 생성
     meme_text = _generate_meme_text(alert_type, alert_level, snapshot, character)
 
-    # HTML 렌더링
+    # ── 1순위: Gemini 이미지 생성 ──
+    gemini_path = _generate_via_gemini_image(alert_type, alert_level, character, meme_text, snapshot)
+    if gemini_path:
+        return gemini_path
+
+    # ── 2순위: HTML+Playwright fallback ──
+    logger.info("[Meme] Gemini 이미지 실패 → HTML fallback")
     html = _build_meme_html(
         character=character,
         meme_text=meme_text,
@@ -80,9 +86,83 @@ def generate_meme(alert_type: str, alert_level: str,
         snapshot=snapshot,
     )
 
-    # Playwright 스크린샷
     image_path = _render_html_to_image(html)
     return image_path
+
+
+def _generate_via_gemini_image(alert_type: str, alert_level: str,
+                               character: str, meme_text: str,
+                               snapshot: dict) -> str | None:
+    """Gemini Flash Image로 밈 이미지 생성"""
+    try:
+        import os
+        gemini_key = os.getenv("GEMINI_API_KEY", "")
+        if not gemini_key:
+            return None
+
+        import google.generativeai as genai
+        genai.configure(api_key=gemini_key)
+
+        vix = snapshot.get("vix", "?")
+        oil = snapshot.get("oil", "?")
+        sp500 = snapshot.get("sp500", "?")
+
+        prompt = (
+            f"Create a dramatic 1080x1080 comic-style meme image for a financial market alert. "
+            f"Style: Dark cinematic comic book art, vibrant colors, clean composition. "
+            f"Character: {character} - "
+        )
+        if "Volatician" in character:
+            prompt += "a mysterious robed wizard with a glowing VIX mask, purple lightning energy. "
+        elif "Baron" in character:
+            prompt += "a menacing dark bear villain in black and crimson armor with a top hat. "
+        else:
+            prompt += "a heroic golden bull warrior in gleaming gold and blue armor. "
+
+        prompt += (
+            f"Text overlay: '{meme_text}' in bold Korean text. "
+            f"Bottom stats bar: VIX {vix} | OIL ${oil} | SPY {sp500}%. "
+            f"Alert badge: '{alert_type} {alert_level}' in corner. "
+            f"Dark gradient background. No real brand logos. Safe for all ages."
+        )
+
+        model = genai.GenerativeModel("gemini-2.5-flash-preview-04-17")
+        response = model.generate_content(
+            prompt,
+            generation_config={
+                "response_modalities": ["IMAGE", "TEXT"],
+                "max_output_tokens": 1024,
+            },
+        )
+
+        # 이미지 파트 추출
+        for part in response.candidates[0].content.parts:
+            if hasattr(part, "inline_data") and part.inline_data:
+                import base64
+                img_data = part.inline_data.data
+                if isinstance(img_data, str):
+                    img_bytes = base64.b64decode(img_data)
+                else:
+                    img_bytes = img_data
+
+                if len(img_bytes) > 500:
+                    output_dir = Path("data/images")
+                    output_dir.mkdir(parents=True, exist_ok=True)
+                    today = date.today().strftime("%Y%m%d")
+                    image_path = str(output_dir / f"meme_{today}.png")
+
+                    with open(image_path, "wb") as f:
+                        f.write(img_bytes)
+
+                    logger.info(f"[Meme] Gemini 이미지 생성 완료: {image_path} ({len(img_bytes)} bytes)")
+                    return image_path
+
+        logger.warning("[Meme] Gemini 이미지 응답에 이미지 없음")
+        return None
+
+    except Exception as e:
+        logger.warning(f"[Meme] Gemini 이미지 생성 실패: {str(e)[:100]}")
+        return None
 
 
 def _resolve_character_key(alert_type: str, alert_level: str,
