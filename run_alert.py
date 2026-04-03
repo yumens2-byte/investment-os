@@ -282,6 +282,15 @@ def run() -> dict:
     sent_count = 0
     results = []
 
+    # core_data 로드 (유료 채널 + B-21A 밈에서 사용)
+    data = {}
+    try:
+        from core.json_builder import load_core_data as _lcd_step3
+        _cd_step3 = _lcd_step3()
+        data = _cd_step3.get("data", {})
+    except Exception:
+        pass  # core_data 없어도 기본 Alert 발행에 영향 없음
+
     for signal in alerts:
         # ── VIX 카운트다운 — 하루 1회 전용 처리 ─────────────────
         if signal.alert_type == "VIX_COUNTDOWN":
