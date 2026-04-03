@@ -142,7 +142,7 @@ def _generate_via_gemini(cuts) -> list | None:
         import google.generativeai as genai
         genai.configure(api_key=os.environ["GEMINI_API_KEY"])
 
-        model = genai.GenerativeModel("gemini-2.5-flash-preview-04-17")
+        model = genai.GenerativeModel("gemini-2.5-flash-image")
         results = []
         fail_count = 0
 

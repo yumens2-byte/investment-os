@@ -94,7 +94,7 @@ def _generate_vs_via_gemini(top_etf, worst_etf, top_alloc, worst_alloc,
             f"Dark gradient background. No real brand logos. Safe for all ages."
         )
 
-        model = genai.GenerativeModel("gemini-2.5-flash-preview-04-17")
+        model = genai.GenerativeModel("gemini-2.5-flash-image")
         response = model.generate_content(
             prompt,
             generation_config={"response_modalities": ["IMAGE", "TEXT"], "max_output_tokens": 1024},

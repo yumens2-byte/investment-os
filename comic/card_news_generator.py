@@ -112,7 +112,7 @@ def _generate_card_via_gemini(core_data: dict, card_no: int, label: str) -> str 
                 f"Clean Korean text. No real brand logos."
             )
 
-        model = genai.GenerativeModel("gemini-2.5-flash-preview-04-17")
+        model = genai.GenerativeModel("gemini-2.5-flash-image")
         response = model.generate_content(
             prompt,
             generation_config={"response_modalities": ["IMAGE", "TEXT"], "max_output_tokens": 1024},

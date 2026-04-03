@@ -126,7 +126,7 @@ def _generate_via_gemini_image(alert_type: str, alert_level: str,
             f"Dark gradient background. No real brand logos. Safe for all ages."
         )
 
-        model = genai.GenerativeModel("gemini-2.5-flash-preview-04-17")
+        model = genai.GenerativeModel("gemini-2.5-flash-image")
         response = model.generate_content(
             prompt,
             generation_config={
