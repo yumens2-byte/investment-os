@@ -202,3 +202,107 @@ def _fail_result(error: str, fallback_value: Optional[str] = None) -> dict:
 def is_available() -> bool:
     """Gemini API 사용 가능 여부 (키 설정 확인만)"""
     return bool(GEMINI_API_KEY)
+
+
+# ── 이미지 생성 모델 ──
+IMAGE_MODEL = "gemini-2.5-flash-image"
+
+
+def generate_image(prompt: str, output_path: str = None) -> dict:
+    """
+    Gemini Flash Image로 이미지 생성 — Main/Sub 키 자동 전환
+
+    Args:
+        prompt: 이미지 생성 프롬프트
+        output_path: 저장 경로 (None이면 bytes만 반환)
+
+    Returns:
+        {
+          "success": True/False,
+          "image_bytes": bytes | None,
+          "image_path": str | None,
+          "key_used": "main" | "sub",
+          "error": str,
+        }
+    """
+    keys = []
+    if GEMINI_API_KEY:
+        keys.append(("main", GEMINI_API_KEY))
+    if GEMINI_API_SUB_KEY:
+        keys.append(("sub", GEMINI_API_SUB_KEY))
+
+    if not keys:
+        return {"success": False, "image_bytes": None, "image_path": None,
+                "key_used": "", "error": "GEMINI_API_KEY 미설정"}
+
+    last_error = ""
+
+    for key_label, api_key in keys:
+        for attempt in range(1, MAX_RETRIES + 1):
+            try:
+                genai = _get_client(api_key)
+                model = genai.GenerativeModel(IMAGE_MODEL)
+
+                response = model.generate_content(
+                    prompt,
+                    generation_config={
+                        "response_modalities": ["IMAGE", "TEXT"],
+                        "max_output_tokens": 1024,
+                    },
+                )
+
+                # 이미지 파트 추출
+                for part in response.candidates[0].content.parts:
+                    if hasattr(part, "inline_data") and part.inline_data:
+                        import base64
+                        img_data = part.inline_data.data
+                        img_bytes = base64.b64decode(img_data) if isinstance(img_data, str) else img_data
+
+                        if len(img_bytes) > 500:
+                            # 파일 저장
+                            if output_path:
+                                import os
+                                os.makedirs(os.path.dirname(output_path) or ".", exist_ok=True)
+                                with open(output_path, "wb") as f:
+                                    f.write(img_bytes)
+
+                            logger.info(
+                                f"[GeminiGW] 이미지 생성 성공 | key={key_label} | "
+                                f"attempt={attempt} | size={len(img_bytes)}"
+                            )
+                            return {
+                                "success": True,
+                                "image_bytes": img_bytes,
+                                "image_path": output_path,
+                                "key_used": key_label,
+                                "error": "",
+                            }
+
+                last_error = "응답에 이미지 없음"
+                logger.warning(f"[GeminiGW] 이미지 없음 | key={key_label} | attempt={attempt}")
+                break  # 이미지 없으면 재시도 의미 없음 → 다음 키로
+
+            except Exception as e:
+                last_error = str(e)
+                err_str = str(e)
+
+                # 429 Rate Limit → 다음 키로 전환
+                if "429" in err_str or "quota" in err_str.lower():
+                    logger.warning(
+                        f"[GeminiGW] 이미지 429 | key={key_label} | "
+                        f"attempt={attempt} → 다음 키 전환"
+                    )
+                    break  # 이 키는 포기, 다음 키로
+
+                # 기타 에러 → 백오프 후 재시도
+                if attempt < MAX_RETRIES:
+                    wait = BACKOFF_BASE ** attempt
+                    logger.warning(
+                        f"[GeminiGW] 이미지 실패 | key={key_label} | "
+                        f"attempt={attempt} | {err_str[:80]} → {wait}초 대기"
+                    )
+                    time.sleep(wait)
+
+    logger.warning(f"[GeminiGW] 이미지 전부 실패 | error={last_error[:100]}")
+    return {"success": False, "image_bytes": None, "image_path": None,
+            "key_used": "", "error": last_error}

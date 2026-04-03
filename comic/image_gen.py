@@ -137,46 +137,35 @@ def generate_images(
 
 
 def _generate_via_gemini(cuts) -> list | None:
-    """Gemini Flash Image로 컷별 이미지 생성"""
+    """Gemini Flash Image로 컷별 이미지 생성 (Main/Sub 키 자동전환)"""
     try:
-        import google.generativeai as genai
-        genai.configure(api_key=os.environ["GEMINI_API_KEY"])
+        from core.gemini_gateway import generate_image, is_available
+        if not is_available():
+            return None
 
-        model = genai.GenerativeModel("gemini-2.5-flash-image")
         results = []
         fail_count = 0
 
         for cut in cuts:
             prompt = f"Comic book panel, vibrant colors, cinematic lighting, clean line art. {cut['image_prompt']}"
             try:
-                response = model.generate_content(
-                    prompt,
-                    generation_config={
-                        "response_modalities": ["IMAGE", "TEXT"],
-                        "max_output_tokens": 1024,
-                    },
-                )
-                # 이미지 파트 추출
-                img_bytes = None
-                for part in response.candidates[0].content.parts:
-                    if hasattr(part, "inline_data") and part.inline_data:
-                        import base64
-                        img_bytes = base64.b64decode(part.inline_data.data) if isinstance(part.inline_data.data, str) else part.inline_data.data
-                        break
-
-                if img_bytes and len(img_bytes) > 100:
+                result = generate_image(prompt=prompt)
+                if result["success"] and result["image_bytes"]:
                     results.append({
-                        "cut_number": cut["cut_number"], "image_bytes": img_bytes,
-                        "cost": 0.0, "is_fallback": False, "gemini": True,
+                        "cut_number": cut["cut_number"],
+                        "image_bytes": result["image_bytes"],
+                        "cost": 0.0,
+                        "is_fallback": False,
+                        "gemini": True,
                     })
-                    logger.info(f"[ImageGen] Gemini Cut #{cut['cut_number']} 완료 ($0)")
+                    logger.info(f"[ImageGen] Gemini Cut #{cut['cut_number']} 완료 (key={result['key_used']})")
                 else:
                     fail_count += 1
-                    logger.warning(f"[ImageGen] Gemini Cut #{cut['cut_number']} 이미지 없음")
+                    logger.warning(f"[ImageGen] Gemini Cut #{cut['cut_number']} 실패: {result['error'][:60]}")
 
             except Exception as e:
                 fail_count += 1
-                logger.warning(f"[ImageGen] Gemini Cut #{cut['cut_number']} 실패: {str(e)[:80]}")
+                logger.warning(f"[ImageGen] Gemini Cut #{cut['cut_number']} 예외: {str(e)[:60]}")
 
         if fail_count == len(cuts):
             logger.warning("[ImageGen] Gemini 전체 실패")

@@ -93,15 +93,11 @@ def generate_meme(alert_type: str, alert_level: str,
 def _generate_via_gemini_image(alert_type: str, alert_level: str,
                                character: str, meme_text: str,
                                snapshot: dict) -> str | None:
-    """Gemini Flash Image로 밈 이미지 생성"""
+    """Gemini Flash Image로 밈 이미지 생성 (Main/Sub 키 자동전환)"""
     try:
-        import os
-        gemini_key = os.getenv("GEMINI_API_KEY", "")
-        if not gemini_key:
+        from core.gemini_gateway import generate_image, is_available
+        if not is_available():
             return None
-
-        import google.generativeai as genai
-        genai.configure(api_key=gemini_key)
 
         vix = snapshot.get("vix", "?")
         oil = snapshot.get("oil", "?")
@@ -126,42 +122,21 @@ def _generate_via_gemini_image(alert_type: str, alert_level: str,
             f"Dark gradient background. No real brand logos. Safe for all ages."
         )
 
-        model = genai.GenerativeModel("gemini-2.5-flash-image")
-        response = model.generate_content(
-            prompt,
-            generation_config={
-                "response_modalities": ["IMAGE", "TEXT"],
-                "max_output_tokens": 1024,
-            },
-        )
+        output_dir = Path("data/images")
+        output_dir.mkdir(parents=True, exist_ok=True)
+        today = date.today().strftime("%Y%m%d")
+        image_path = str(output_dir / f"meme_{today}.png")
 
-        # 이미지 파트 추출
-        for part in response.candidates[0].content.parts:
-            if hasattr(part, "inline_data") and part.inline_data:
-                import base64
-                img_data = part.inline_data.data
-                if isinstance(img_data, str):
-                    img_bytes = base64.b64decode(img_data)
-                else:
-                    img_bytes = img_data
+        result = generate_image(prompt=prompt, output_path=image_path)
+        if result["success"]:
+            logger.info(f"[Meme] Gemini 이미지 생성 완료: {image_path} (key={result['key_used']})")
+            return image_path
 
-                if len(img_bytes) > 500:
-                    output_dir = Path("data/images")
-                    output_dir.mkdir(parents=True, exist_ok=True)
-                    today = date.today().strftime("%Y%m%d")
-                    image_path = str(output_dir / f"meme_{today}.png")
-
-                    with open(image_path, "wb") as f:
-                        f.write(img_bytes)
-
-                    logger.info(f"[Meme] Gemini 이미지 생성 완료: {image_path} ({len(img_bytes)} bytes)")
-                    return image_path
-
-        logger.warning("[Meme] Gemini 이미지 응답에 이미지 없음")
+        logger.warning(f"[Meme] Gemini 이미지 실패: {result['error'][:80]}")
         return None
 
     except Exception as e:
-        logger.warning(f"[Meme] Gemini 이미지 생성 실패: {str(e)[:100]}")
+        logger.warning(f"[Meme] Gemini 이미지 예외: {str(e)[:80]}")
         return None
 
 

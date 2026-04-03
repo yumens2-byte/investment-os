@@ -71,15 +71,11 @@ def generate_vs_card(core_data: dict) -> str | None:
 
 def _generate_vs_via_gemini(top_etf, worst_etf, top_alloc, worst_alloc,
                            top_stance, worst_stance, regime, risk, signal) -> str | None:
-    """Gemini Flash Image로 VS 카드 이미지 생성"""
+    """Gemini Flash Image로 VS 카드 이미지 생성 (Main/Sub 키 자동전환)"""
     try:
-        import os, base64
-        gemini_key = os.getenv("GEMINI_API_KEY", "")
-        if not gemini_key:
+        from core.gemini_gateway import generate_image, is_available
+        if not is_available():
             return None
-
-        import google.generativeai as genai
-        genai.configure(api_key=gemini_key)
 
         prompt = (
             f"Create a dramatic 1200x675 VS battle card for financial ETF comparison. "
@@ -94,30 +90,21 @@ def _generate_vs_via_gemini(top_etf, worst_etf, top_alloc, worst_alloc,
             f"Dark gradient background. No real brand logos. Safe for all ages."
         )
 
-        model = genai.GenerativeModel("gemini-2.5-flash-image")
-        response = model.generate_content(
-            prompt,
-            generation_config={"response_modalities": ["IMAGE", "TEXT"], "max_output_tokens": 1024},
-        )
+        output_dir = Path("data/images")
+        output_dir.mkdir(parents=True, exist_ok=True)
+        today = date.today().strftime("%Y%m%d")
+        image_path = str(output_dir / f"vs_card_{today}.png")
 
-        for part in response.candidates[0].content.parts:
-            if hasattr(part, "inline_data") and part.inline_data:
-                img_data = part.inline_data.data
-                img_bytes = base64.b64decode(img_data) if isinstance(img_data, str) else img_data
-                if len(img_bytes) > 500:
-                    output_dir = Path("data/images")
-                    output_dir.mkdir(parents=True, exist_ok=True)
-                    today = date.today().strftime("%Y%m%d")
-                    image_path = str(output_dir / f"vs_card_{today}.png")
-                    with open(image_path, "wb") as f:
-                        f.write(img_bytes)
-                    logger.info(f"[VSCard] Gemini 이미지 생성 완료: {image_path}")
-                    return image_path
+        result = generate_image(prompt=prompt, output_path=image_path)
+        if result["success"]:
+            logger.info(f"[VSCard] Gemini 이미지 완료: {image_path} (key={result['key_used']})")
+            return image_path
 
-        logger.warning("[VSCard] Gemini 응답에 이미지 없음")
+        logger.warning(f"[VSCard] Gemini 이미지 실패: {result['error'][:80]}")
         return None
+
     except Exception as e:
-        logger.warning(f"[VSCard] Gemini 이미지 실패: {str(e)[:100]}")
+        logger.warning(f"[VSCard] Gemini 이미지 예외: {str(e)[:80]}")
         return None
 
 
