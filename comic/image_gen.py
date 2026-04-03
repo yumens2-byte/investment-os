@@ -99,10 +99,20 @@ def generate_images(
     comic_type=None, episode_no=None
 ):
     """
-    메인 이미지 생성 함수
-    1순위: GPT-4o Image (OPENAI_API_KEY 있을 때)
-    2순위: HTML+Playwright 내부 엔진 (KEY 없거나 전체 실패 시)
+    메인 이미지 생성 함수 (v3.0 — 3단 fallback)
+    1순위: Gemini Flash Image (GEMINI_API_KEY 있을 때, $0 Free Tier)
+    2순위: GPT-4o Image (OPENAI_API_KEY 있을 때, $0.04/컷)
+    3순위: HTML+Playwright 내부 엔진 ($0)
     """
+    # ── 1순위: Gemini Flash Image ──
+    gemini_key = os.getenv("GEMINI_API_KEY", "").strip()
+    if gemini_key:
+        gemini_results = _generate_via_gemini(cuts)
+        if gemini_results:
+            return gemini_results
+        logger.info("[ImageGen] Gemini 이미지 실패 → GPT-4o 시도")
+
+    # ── 2순위: GPT-4o ──
     openai_key = os.getenv("OPENAI_API_KEY", "").strip()
     if not openai_key or openai_key == "sk-test-mock":
         logger.info("[ImageGen] OPENAI_API_KEY 없음 → HTML 내부 엔진")
@@ -124,3 +134,57 @@ def generate_images(
         return _generate_via_html_engine(story, risk_level, market_data, comic_type, episode_no)
 
     return results
+
+
+def _generate_via_gemini(cuts) -> list | None:
+    """Gemini Flash Image로 컷별 이미지 생성"""
+    try:
+        import google.generativeai as genai
+        genai.configure(api_key=os.environ["GEMINI_API_KEY"])
+
+        model = genai.GenerativeModel("gemini-2.5-flash-preview-04-17")
+        results = []
+        fail_count = 0
+
+        for cut in cuts:
+            prompt = f"Comic book panel, vibrant colors, cinematic lighting, clean line art. {cut['image_prompt']}"
+            try:
+                response = model.generate_content(
+                    prompt,
+                    generation_config={
+                        "response_modalities": ["IMAGE", "TEXT"],
+                        "max_output_tokens": 1024,
+                    },
+                )
+                # 이미지 파트 추출
+                img_bytes = None
+                for part in response.candidates[0].content.parts:
+                    if hasattr(part, "inline_data") and part.inline_data:
+                        import base64
+                        img_bytes = base64.b64decode(part.inline_data.data) if isinstance(part.inline_data.data, str) else part.inline_data.data
+                        break
+
+                if img_bytes and len(img_bytes) > 100:
+                    results.append({
+                        "cut_number": cut["cut_number"], "image_bytes": img_bytes,
+                        "cost": 0.0, "is_fallback": False, "gemini": True,
+                    })
+                    logger.info(f"[ImageGen] Gemini Cut #{cut['cut_number']} 완료 ($0)")
+                else:
+                    fail_count += 1
+                    logger.warning(f"[ImageGen] Gemini Cut #{cut['cut_number']} 이미지 없음")
+
+            except Exception as e:
+                fail_count += 1
+                logger.warning(f"[ImageGen] Gemini Cut #{cut['cut_number']} 실패: {str(e)[:80]}")
+
+        if fail_count == len(cuts):
+            logger.warning("[ImageGen] Gemini 전체 실패")
+            return None
+
+        logger.info(f"[ImageGen] Gemini 완료 — {len(results)}컷, 실패={fail_count}, 비용=$0")
+        return results
+
+    except Exception as e:
+        logger.warning(f"[ImageGen] Gemini 초기화 실패: {e}")
+        return None

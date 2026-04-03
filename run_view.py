@@ -220,6 +220,18 @@ def run(mode: str = "tweet", session: str = None) -> dict:
             from publishers.paid_report_formatter import format_paid_report
             paid_text = format_paid_report(data)
             send_message(paid_text, channel="paid")
+
+            # B-21B: 카드뉴스 3장 유료 채널 발행
+            try:
+                from comic.card_news_generator import generate_cards
+                card_paths = generate_cards(data)
+                if card_paths:
+                    from publishers.telegram_publisher import send_photo
+                    for cp in card_paths:
+                        send_photo(cp, caption="", channel="paid")
+                    logger.info(f"[Step 6-TG] B-21B 카드뉴스 {len(card_paths)}장 발행")
+            except Exception as ce:
+                logger.warning(f"[Step 6-TG] B-21B 카드뉴스 실패 (영향 없음): {ce}")
         elif session_type == "narrative":
             # narrative: Gemini AI 시장 해설 → X + TG 무료/유료 (11:30 KST)
             try:

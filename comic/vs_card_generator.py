@@ -89,6 +89,19 @@ def _build_vs_html(top_etf, worst_etf, top_alloc, worst_alloc,
     stance_color_top = "#10b981" if top_stance == "Overweight" else "#f59e0b"
     stance_color_worst = "#ef4444" if worst_stance == "Underweight" else "#f59e0b"
 
+    # SVG 캐릭터 생성
+    max_svg = ""
+    baron_svg = ""
+    try:
+        from comic.assets.character_svg import get_character_svg, get_pose_for_context
+        max_pose = get_pose_for_context("max", regime, risk)
+        baron_pose = get_pose_for_context("baron", regime, risk)
+        max_svg = get_character_svg("max", max_pose, 80)
+        baron_svg = get_character_svg("baron", baron_pose, 80)
+    except Exception:
+        max_svg = '<div style="font-size:80px;">🐂</div>'
+        baron_svg = '<div style="font-size:80px;">🐻</div>'
+
     return f"""<!DOCTYPE html>
 <html><head><meta charset="utf-8">
 <style>
@@ -141,7 +154,7 @@ body {{
 <div class="container">
   <div class="side left">
     <div class="label">TOP ETF</div>
-    <div class="char-emoji">🐂</div>
+    <div class="char-emoji">{max_svg}</div>
     <div class="etf-name" style="color:#10b981;">{top_etf}</div>
     <div class="alloc" style="color:#10b981;">{top_alloc}%</div>
     <div class="stance" style="background:{stance_color_top}22;color:{stance_color_top};border:1px solid {stance_color_top};">{top_stance}</div>
@@ -153,7 +166,7 @@ body {{
   </div>
   <div class="side right">
     <div class="label">WORST ETF</div>
-    <div class="char-emoji">🐻</div>
+    <div class="char-emoji">{baron_svg}</div>
     <div class="etf-name" style="color:#ef4444;">{worst_etf}</div>
     <div class="alloc" style="color:#ef4444;">{worst_alloc}%</div>
     <div class="stance" style="background:{stance_color_worst}22;color:{stance_color_worst};border:1px solid {stance_color_worst};">{worst_stance}</div>

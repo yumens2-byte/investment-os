@@ -183,6 +183,22 @@ def _build_meme_html(character: str, meme_text: str, accent_color: str,
     except (TypeError, ValueError):
         sp500_str = str(sp500)
 
+    # SVG 캐릭터 삽입 (B 고도화)
+    char_svg = ""
+    try:
+        from comic.assets.character_svg import (
+            get_character_svg, get_character_for_regime, get_pose_for_context
+        )
+        char_key_map = {
+            "The Volatician": "vol", "Baron Bearsworth": "baron", "Max Bullhorn": "max",
+            "Max vs Baron": "max",
+        }
+        char_id = char_key_map.get(character, "max")
+        pose = get_pose_for_context(char_id, "", "HIGH" if "VIX" in alert_type else "MEDIUM")
+        char_svg = get_character_svg(char_id, pose, 120)
+    except Exception:
+        char_svg = f'<div style="font-size:120px;">{emoji}</div>'
+
     return f"""<!DOCTYPE html>
 <html><head><meta charset="utf-8">
 <style>
@@ -199,10 +215,10 @@ body {{
   background: {accent_color}33; filter: blur(100px);
   top: 50%; left: 50%; transform: translate(-50%, -50%);
 }}
-.emoji {{ font-size: 120px; margin-bottom: 20px; z-index: 1; }}
-.character {{
-  font-size: 28px; font-weight: 300; letter-spacing: 4px;
-  text-transform: uppercase; margin-bottom: 30px; z-index: 1;
+.character-svg {{ z-index: 1; margin-bottom: 10px; }}
+.character-label {{
+  font-size: 22px; font-weight: 300; letter-spacing: 4px;
+  text-transform: uppercase; margin-bottom: 20px; z-index: 1;
   {char_style}
 }}
 .meme-text {{
@@ -228,8 +244,8 @@ body {{
 </style></head><body>
   <div class="glow"></div>
   <div class="badge">{alert_type} {alert_level}</div>
-  <div class="emoji">{emoji}</div>
-  <div class="character">{character}</div>
+  <div class="character-svg">{char_svg}</div>
+  <div class="character-label">{character}</div>
   <div class="meme-text">{meme_text}</div>
   <div class="stats">
     <div>VIX <span>{vix}</span></div>
