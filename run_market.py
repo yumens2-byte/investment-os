@@ -163,6 +163,37 @@ def run(session: str) -> dict:
     }
     composite_score = regime_result["composite_risk_score"]
 
+    # ── Step 3.5: Gemini 레짐 크로스체크 (C-8) ─────────────────
+    try:
+        from engines.regime_engine import gemini_cross_check
+        cross_check = gemini_cross_check(
+            regime_result=regime_result,
+            market_score=market_score,
+            signals=signals,
+            news_analysis=news_analysis,
+        )
+        if cross_check.get("checked") and not cross_check.get("agree"):
+            logger.warning(
+                f"[Step 3.5] ⚠️ Gemini 레짐 불일치: "
+                f"rule={regime_result['market_regime']} → "
+                f"제안={cross_check.get('suggested_regime')} | "
+                f"{cross_check.get('reason')}"
+            )
+            # TG 알림 (불일치 시)
+            try:
+                from publishers.telegram_publisher import send_message
+                send_message(
+                    f"⚠️ [레짐 크로스체크 불일치]\n"
+                    f"Rule: {regime_result['market_regime']}\n"
+                    f"Gemini 제안: {cross_check.get('suggested_regime')}\n"
+                    f"사유: {cross_check.get('reason')}\n"
+                    f"confidence: {cross_check.get('confidence', 0):.1f}"
+                )
+            except Exception:
+                pass
+    except Exception as e:
+        logger.warning(f"[Step 3.5] Gemini 크로스체크 실패 (무시): {e}")
+
     # ── Step 4: ETF Engine ─────────────────────────────────────
     logger.info("[Step 4] ETF Engine 실행")
     from engines.etf_engine import run_etf_engine

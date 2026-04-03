@@ -90,7 +90,7 @@ def run(mode: str = "tweet", session: str = None) -> dict:
 
     # ── Step 3: 트윗 텍스트 생성 ───────────────────────────────
     logger.info("[Step 3] 트윗 포맷 생성")
-    from publishers.x_formatter import format_market_snapshot_tweet, format_thread_posts, format_image_tweet
+    from publishers.x_formatter import format_market_snapshot_tweet, format_thread_posts, format_image_tweet, generate_ai_tweet, generate_ai_thread
 
     # session 인자가 있으면 우선 사용 (full 세션 등 외부 강제 지정)
     _inner_session = data.get("output_helpers", {}).get("session_type", "postmarket")
@@ -110,11 +110,12 @@ def run(mode: str = "tweet", session: str = None) -> dict:
         image_tweet_text = primary_text
         posts            = [primary_text]
     elif mode == "thread":
-        posts = format_thread_posts(data)
+        posts = generate_ai_thread(data)  # C-12: AI 스레드
         primary_text = posts[0] if posts else ""
         image_tweet_text = None
     else:
-        primary_text = format_market_snapshot_tweet(data, session_label)
+        # C-1: AI 트윗 생성 (Gemini) — 실패 시 기존 하드코딩 fallback
+        primary_text = generate_ai_tweet(data, session_label)
         image_tweet_text = format_image_tweet(data, session_type)
         posts = [primary_text]
 
@@ -217,9 +218,18 @@ def run(mode: str = "tweet", session: str = None) -> dict:
                 logger.warning("[Step 6-TG] 이미지 없음 — 유료 채널 텍스트만 발행")
                 send_message(free_text, channel="paid")
             # 유료 채널 추가 — ETF 상세 전략 + 포지션 사이징 가이드
-            from publishers.paid_report_formatter import format_paid_report
+            from publishers.paid_report_formatter import format_paid_report, generate_ai_etf_rationale
             paid_text = format_paid_report(data)
             send_message(paid_text, channel="paid")
+
+            # C-3: AI ETF 배분 근거 자연어 발행 (유료 채널)
+            try:
+                ai_rationale = generate_ai_etf_rationale(data)
+                if ai_rationale:
+                    send_message(f"💡 <b>AI 투자 근거 분석</b>\n\n{ai_rationale}", channel="paid")
+                    logger.info("[Step 6-TG] C-3 AI ETF 근거 유료 발행 완료")
+            except Exception as e:
+                logger.warning(f"[Step 6-TG] C-3 AI ETF 근거 실패 (무시): {e}")
 
             # B-21B: 카드뉴스 3장 유료 채널 발행
             try:

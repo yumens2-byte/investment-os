@@ -250,3 +250,115 @@ def run_regime_engine(market_score: dict, signals: dict, snapshot: dict) -> dict
         f"[RegimeEngine] 결과: {regime} | {risk_level} | 점수={composite_score}"
     )
     return result
+
+
+# ──────────────────────────────────────────────────────────────
+# C-8: Gemini 레짐 크로스체크 (2026-04-03)
+# ──────────────────────────────────────────────────────────────
+
+def gemini_cross_check(
+    regime_result: dict,
+    market_score: dict,
+    signals: dict,
+    news_analysis: dict = None,
+) -> dict:
+    """
+    rule-based 레짐 판단 후 Gemini가 크로스체크.
+    Gemini는 레짐을 변경하지 않음 — 불일치 시 경고만 발생.
+
+    Returns:
+        {
+          "agree": True/False,
+          "confidence": 0.0~1.0,
+          "reason": "동의/불일치 이유",
+          "suggested_regime": "제안 레짐 (불일치 시)",
+          "checked": True/False (실행 여부),
+        }
+    """
+    try:
+        from core.gemini_gateway import call, is_available
+        if not is_available():
+            return {"agree": True, "reason": "Gemini 미설정", "checked": False}
+
+        regime = regime_result.get("market_regime", "Unknown")
+        risk_level = regime_result.get("market_risk_level", "MEDIUM")
+        score = regime_result.get("composite_risk_score", 50)
+
+        # Market Score 요약
+        g = market_score.get("growth_score", 2)
+        i = market_score.get("inflation_score", 2)
+        l = market_score.get("liquidity_score", 2)
+        r = market_score.get("risk_score", 2)
+        s = market_score.get("financial_stability_score", 2)
+        c = market_score.get("commodity_pressure_score", 2)
+
+        # 핵심 시그널
+        vix = signals.get("vix_state", "Normal")
+        oil = signals.get("oil_state", "Moderate")
+        fg = signals.get("fear_greed_score", 3)
+        sent = signals.get("sentiment_state", "Neutral")
+
+        # 뉴스 분석
+        news_sentiment = ""
+        top_issues = ""
+        if news_analysis:
+            news_sentiment = news_analysis.get("overall_sentiment", "")
+            issues = news_analysis.get("top_issues", [])
+            if issues:
+                top_issues = ", ".join(
+                    iss.get("topic", "") for iss in issues[:3] if isinstance(iss, dict)
+                )
+
+        prompt = (
+            f"시장 분석가로서 레짐 판단을 검증해줘.\n"
+            f"- rule-based 판단: {regime} ({risk_level}, 점수 {score}/100)\n"
+            f"- Market Score: Growth={g}, Inflation={i}, Liquidity={l}, "
+            f"Risk={r}, Stability={s}, Commodity={c}\n"
+            f"- 핵심 시그널: VIX={vix}, Oil={oil}, F&G={fg}, 감성={sent}\n"
+            f"- 뉴스 감성: {news_sentiment}, 주요 이슈: {top_issues}\n"
+            f"JSON으로 응답:\n"
+            f'{{"agree": true/false, "confidence": 0.0~1.0, '
+            f'"reason": "1줄 한국어", "suggested_regime": "레짐명"}}'
+        )
+
+        result = call(
+            prompt=prompt,
+            model="flash-lite",
+            max_tokens=100,
+            temperature=0.3,
+            response_json=True,
+        )
+
+        if result.get("success") and result.get("data"):
+            check = result["data"]
+            agree = check.get("agree", True)
+            confidence = check.get("confidence", 0.5)
+            reason = check.get("reason", "")
+            suggested = check.get("suggested_regime", regime)
+
+            if agree:
+                logger.info(
+                    f"[RegimeEngine] Gemini 검증 ✅ 동의 | "
+                    f"confidence={confidence:.1f} | {reason}"
+                )
+            else:
+                logger.warning(
+                    f"[RegimeEngine] Gemini 검증 ⚠️ 불일치 | "
+                    f"rule={regime} → Gemini 제안={suggested} | "
+                    f"confidence={confidence:.1f} | {reason}"
+                )
+
+            return {
+                "agree": agree,
+                "confidence": confidence,
+                "reason": reason,
+                "suggested_regime": suggested,
+                "checked": True,
+            }
+
+        logger.warning("[RegimeEngine] Gemini 검증 응답 파싱 실패")
+
+    except Exception as e:
+        logger.warning(f"[RegimeEngine] Gemini 크로스체크 실패 (무시): {e}")
+
+    return {"agree": True, "reason": "검증 실패 — rule-based 유지", "checked": False}
