@@ -11,8 +11,9 @@ Gemini API 호출 공통 모듈
   - JSON 응답 파싱 지원
 
 환경변수:
-  GEMINI_API_KEY      — 메인 키
-  GEMINI_API_SUB_KEY  — 서브 키 (한도 초과 시 자동 전환)
+  GEMINI_API_KEY          — 메인 키
+  GEMINI_API_SUB_KEY      — 서브 키 (한도 초과 시 자동 전환)
+  GEMINI_API_SUB_SUB_KEY  — 서브2 키 (서브 키도 초과 시 자동 전환)
 """
 import json
 import logging
@@ -25,6 +26,7 @@ logger = logging.getLogger(__name__)
 # ── 환경변수 ──
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "")
 GEMINI_API_SUB_KEY = os.getenv("GEMINI_API_SUB_KEY", "")
+GEMINI_API_SUB_SUB_KEY = os.getenv("GEMINI_API_SUB_SUB_KEY", "")
 
 # ── 모델 매핑 ──
 MODEL_MAP = {
@@ -91,6 +93,8 @@ def call(
     keys = [("main", GEMINI_API_KEY)]
     if GEMINI_API_SUB_KEY:
         keys.append(("sub", GEMINI_API_SUB_KEY))
+    if GEMINI_API_SUB_SUB_KEY:
+        keys.append(("sub2", GEMINI_API_SUB_SUB_KEY))
 
     last_error = ""
 
@@ -230,6 +234,8 @@ def generate_image(prompt: str, output_path: str = None) -> dict:
         keys.append(("main", GEMINI_API_KEY))
     if GEMINI_API_SUB_KEY:
         keys.append(("sub", GEMINI_API_SUB_KEY))
+    if GEMINI_API_SUB_SUB_KEY:
+        keys.append(("sub2", GEMINI_API_SUB_SUB_KEY))
 
     if not keys:
         return {"success": False, "image_bytes": None, "image_path": None,
