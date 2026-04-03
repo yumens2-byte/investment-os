@@ -284,6 +284,7 @@ def format_image_tweet(data: dict, session: str = "morning") -> str:
 def generate_ai_tweet(data: dict, session_label: str = "Market Snapshot") -> str:
     """
     Gemini로 매 세션 다른 톤/표현의 트윗 생성.
+    글자수 초과 시 2회 재시도 (요약 요청).
     실패 시 기존 하드코딩 트윗 fallback.
 
     Returns: 트윗 텍스트 (280자 이내)
@@ -311,7 +312,7 @@ def generate_ai_tweet(data: dict, session_label: str = "Market Snapshot") -> str
 
         # ETF Top3
         top3 = []
-        if alloc:
+        if alloc and isinstance(alloc, dict):
             sorted_etfs = sorted(alloc.items(), key=lambda x: x[1], reverse=True)
             top3 = [f"{e}({w}%)" for e, w in sorted_etfs[:3]]
 
@@ -323,29 +324,68 @@ def generate_ai_tweet(data: dict, session_label: str = "Market Snapshot") -> str
             f"- F&G: {fg_val} ({fg_label})\n"
             f"- Top ETF: {', '.join(top3)}\n"
             f"조건:\n"
-            f"- 140~200자, 한국어\n"
+            f"- 반드시 140~200자 이내, 한국어\n"
             f"- 이모지 2~3개 포함\n"
             f"- 매번 다른 톤으로 (진지한/유머러스/긴급/여유로운 중 랜덤)\n"
             f"- 해시태그 3개 포함 (#ETF #투자 + 레짐태그)\n"
-            f"- 트윗 텍스트만 출력, 설명 없이\n"
+            f"- 트윗 텍스트만 출력, 설명이나 부연 없이 트윗 본문만\n"
         )
 
+        # 1차 시도
         result = call(prompt=prompt, model="flash-lite", max_tokens=200, temperature=0.9)
 
         if result.get("success"):
-            ai_tweet = result["text"].strip()
-            # 따옴표 제거
-            ai_tweet = ai_tweet.strip('"').strip("'").strip("`")
+            ai_tweet = _clean_tweet(result["text"])
             if 50 < len(ai_tweet) <= 280:
-                logger.info(f"[XFormatter] AI 트윗 생성 ({len(ai_tweet)}자) | source=gemini")
+                logger.info(f"[XFormatter] AI 트윗 생성 ({len(ai_tweet)}자) | source=gemini | attempt=1")
                 return ai_tweet
-            else:
-                logger.warning(f"[XFormatter] AI 트윗 길이 부적합 ({len(ai_tweet)}자) → fallback")
+
+            # ── 글자수 초과 → 2회 재시도 (요약 요청) ──
+            for retry in range(2):
+                retry_prompt = (
+                    f"아래 트윗이 {len(ai_tweet)}자로 너무 깁니다. "
+                    f"반드시 200자 이내로 줄여줘. 핵심 수치와 해시태그만 남기고 축약.\n"
+                    f"설명 없이 축약된 트윗 본문만 출력:\n\n"
+                    f"{ai_tweet}"
+                )
+                retry_result = call(
+                    prompt=retry_prompt,
+                    model="flash-lite",
+                    max_tokens=200,
+                    temperature=0.5,
+                )
+                if retry_result.get("success"):
+                    shortened = _clean_tweet(retry_result["text"])
+                    if 50 < len(shortened) <= 280:
+                        logger.info(
+                            f"[XFormatter] AI 트윗 재시도 성공 ({len(shortened)}자) | "
+                            f"source=gemini | attempt={retry + 2}"
+                        )
+                        return shortened
+                    ai_tweet = shortened  # 다음 재시도에 사용
+
+            logger.warning(
+                f"[XFormatter] AI 트윗 3회 시도 모두 길이 초과 "
+                f"({len(ai_tweet)}자) → fallback"
+            )
 
     except Exception as e:
         logger.warning(f"[XFormatter] AI 트윗 생성 실패 → fallback: {e}")
 
     return format_market_snapshot_tweet(data, session_label)
+
+
+def _clean_tweet(text: str) -> str:
+    """AI 응답에서 트윗 텍스트만 추출"""
+    tweet = text.strip()
+    # 따옴표/백틱 제거
+    tweet = tweet.strip('"').strip("'").strip("`")
+    # ```로 감싸진 경우 제거
+    if tweet.startswith("```"):
+        tweet = tweet.split("\n", 1)[-1]
+    if tweet.endswith("```"):
+        tweet = tweet.rsplit("```", 1)[0]
+    return tweet.strip()
 
 
 # ──────────────────────────────────────────────────────────────
