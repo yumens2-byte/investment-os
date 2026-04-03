@@ -349,6 +349,7 @@ jobs:
           restore-keys: alert-history-
 
       - run: pip install -r requirements.txt
+      - run: playwright install chromium --with-deps
       - run: python main.py alert
 
       # Alert 이력 캐시 저장 (다음 실행 시 복원)
