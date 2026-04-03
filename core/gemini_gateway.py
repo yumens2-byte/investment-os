@@ -222,10 +222,10 @@ def generate_image(prompt: str, output_path: str = None) -> dict:
         # ── 1순위: generate_image API (이미지 전용) ──
         try:
             client = _get_client(api_key)
-            response = client.models.generate_image(
+            response = client.models.generate_images(
                 model=IMAGE_MODEL,
                 prompt=prompt,
-                config=types.GenerateImageConfig(
+                config=types.GenerateImagesConfig(
                     number_of_images=1,
                 ),
             )
