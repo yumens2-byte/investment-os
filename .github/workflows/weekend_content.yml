@@ -1,0 +1,58 @@
+# ============================================
+# Investment OS — Weekend Content (B-20)
+# ============================================
+# 토요일 01:00 UTC (KST 10:00) — 주간 리뷰
+# 일요일 01:00 UTC (KST 10:00) — 다음 주 프리뷰
+
+name: Weekend Content
+
+on:
+  schedule:
+    - cron: "0 1 * * 6"   # 토요일 01:00 UTC = KST 10:00
+    - cron: "0 1 * * 0"   # 일요일 01:00 UTC = KST 10:00
+  workflow_dispatch:
+    inputs:
+      day:
+        description: "콘텐츠 유형"
+        required: true
+        default: "auto"
+        type: choice
+        options:
+          - auto
+          - sat
+          - sun
+
+jobs:
+  weekend_content:
+    name: Weekend Content
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      DRY_RUN: ${{ secrets.DRY_RUN || 'true' }}
+      FORCE_RUN: ${{ secrets.FORCE_RUN || 'false' }}
+      GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+      GEMINI_API_SUB_KEY: ${{ secrets.GEMINI_API_SUB_KEY }}
+      GEMINI_API_SUB_SUB_KEY: ${{ secrets.GEMINI_API_SUB_SUB_KEY }}
+      TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+      TELEGRAM_FREE_CHANNEL_ID: ${{ secrets.TELEGRAM_FREE_CHANNEL_ID }}
+      X_API_KEY: ${{ secrets.X_API_KEY }}
+      X_API_SECRET: ${{ secrets.X_API_SECRET }}
+      X_ACCESS_TOKEN: ${{ secrets.X_ACCESS_TOKEN }}
+      X_ACCESS_TOKEN_SECRET: ${{ secrets.X_ACCESS_TOKEN_SECRET }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: |
+          pip install -r requirements.txt
+          pip install playwright
+          playwright install --with-deps chromium
+
+      - name: Run Weekend Content
+        run: |
+          python main.py weekend --day ${{ github.event.inputs.day || 'auto' }}
