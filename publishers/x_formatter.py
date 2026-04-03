@@ -316,8 +316,12 @@ def generate_ai_tweet(data: dict, session_label: str = "Market Snapshot") -> str
             sorted_etfs = sorted(alloc.items(), key=lambda x: x[1], reverse=True)
             top3 = [f"{e}({w}%)" for e, w in sorted_etfs[:3]]
 
+        # 톤 랜덤 선택 (Gemini가 여러 톤을 한꺼번에 쓰는 문제 방지)
+        import random
+        tone = random.choice(["진지한", "유머러스", "긴급", "여유로운"])
+
         prompt = (
-            f"투자 분석 X 트윗을 작성해줘. 캐릭터 Max Bullhorn(강세), Baron Bearsworth(약세)를 활용.\n"
+            f"투자 분석 X 트윗 1개만 작성해줘.\n"
             f"- 세션: {session_label}\n"
             f"- SPY: {sp500:+.2f}%, VIX: {vix:.1f}, WTI: ${oil:.1f}, US10Y: {us10y:.2f}%\n"
             f"- 레짐: {regime}, 리스크: {risk}, 시그널: {signal}\n"
@@ -326,9 +330,9 @@ def generate_ai_tweet(data: dict, session_label: str = "Market Snapshot") -> str
             f"조건:\n"
             f"- 반드시 140~200자 이내, 한국어\n"
             f"- 이모지 2~3개 포함\n"
-            f"- 매번 다른 톤으로 (진지한/유머러스/긴급/여유로운 중 랜덤)\n"
+            f"- 톤: {tone} (이 톤 하나로만 작성)\n"
             f"- 해시태그 3개 포함 (#ETF #투자 + 레짐태그)\n"
-            f"- 트윗 텍스트만 출력, 설명이나 부연 없이 트윗 본문만\n"
+            f"- 트윗 본문만 출력. 톤 라벨, 설명, 부연, 선택지 없이 트윗 1개만\n"
         )
 
         # 1차 시도
@@ -377,6 +381,7 @@ def generate_ai_tweet(data: dict, session_label: str = "Market Snapshot") -> str
 
 def _clean_tweet(text: str) -> str:
     """AI 응답에서 트윗 텍스트만 추출"""
+    import re
     tweet = text.strip()
     # 따옴표/백틱 제거
     tweet = tweet.strip('"').strip("'").strip("`")
@@ -385,6 +390,14 @@ def _clean_tweet(text: str) -> str:
         tweet = tweet.split("\n", 1)[-1]
     if tweet.endswith("```"):
         tweet = tweet.rsplit("```", 1)[0]
+    # 톤 라벨이 포함된 첫 줄 제거
+    # 예: "**톤: 긴급**", "**[진지한 톤]**", "[유머러스 톤]"
+    lines = tweet.strip().split("\n")
+    if lines and re.match(r'^\s*\*{0,2}\[?.*톤.*\]?\*{0,2}\s*$', lines[0]):
+        lines = lines[1:]
+    tweet = "\n".join(lines).strip()
+    # "막:" 같은 불필요한 prefix 제거
+    tweet = re.sub(r'^막:\s*', '', tweet)
     return tweet.strip()
 
 
