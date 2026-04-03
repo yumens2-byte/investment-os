@@ -95,6 +95,8 @@ def store_daily_analysis(data: dict, regime_score: int = 0) -> bool:
         regime = data.get("market_regime", {})
         signal = data.get("trading_signal", {})
         allocation = data.get("etf_allocation", {})
+        if isinstance(allocation, dict) and "allocation" in allocation:
+            allocation = allocation["allocation"]
         score = data.get("market_score", {})
         risk_data = data.get("portfolio_risk", {})
 

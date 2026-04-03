@@ -296,7 +296,7 @@ def generate_ai_tweet(data: dict, session_label: str = "Market Snapshot") -> str
         snap = data.get("market_snapshot", {})
         regime_info = data.get("market_regime", {})
         trading_info = data.get("trading_signal", {})
-        alloc = data.get("etf_allocation", {})
+        alloc = data.get("etf_allocation", {}).get("allocation", data.get("etf_allocation", {}))
         fg = data.get("fear_greed", {})
 
         sp500 = snap.get("sp500", 0.0)
@@ -367,7 +367,7 @@ def generate_ai_thread(data: dict) -> list:
         snap = data.get("market_snapshot", {})
         regime_info = data.get("market_regime", {})
         trading_info = data.get("trading_signal", {})
-        alloc = data.get("etf_allocation", {})
+        alloc = data.get("etf_allocation", {}).get("allocation", data.get("etf_allocation", {}))
         news = data.get("news_analysis", {})
         signals_data = data.get("signals", {})
 
