@@ -235,6 +235,18 @@ def run(mode: str = "tweet", session: str = None) -> dict:
                     tweet = format_narrative_tweet(narrative_text)
                     _pub_narr(tweet)
 
+                    # B-21C: VS 배틀 카드 생성 + X 이미지 트윗
+                    try:
+                        from comic.vs_card_generator import generate_vs_card
+                        vs_path = generate_vs_card(data)
+                        if vs_path:
+                            from publishers.x_publisher import publish_tweet_with_image as _pub_vs
+                            vs_tweet = format_narrative_tweet(narrative_text)
+                            _pub_vs(vs_tweet, vs_path)
+                            logger.info("[Step 6-TG] B-21C VS 카드 발행 완료")
+                    except Exception as ve:
+                        logger.warning(f"[Step 6-TG] B-21C VS 카드 생성 실패 (영향 없음): {ve}")
+
                     tg_text = format_narrative_telegram(narrative_text, data)
                     send_message(tg_text, channel="free")
                     send_message(tg_text, channel="paid")

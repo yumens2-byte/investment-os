@@ -464,6 +464,30 @@ def run() -> dict:
         except Exception as e:
             logger.warning(f"[run_alert] 유료 채널 알람 예외 (영향 없음): {e}")
 
+        # ── B-21A: 1컷 시장 밈 이미지 생성 + 발행 ────────────
+        try:
+            from comic.meme_generator import generate_meme
+            meme_path = generate_meme(
+                alert_type=signal.alert_type,
+                alert_level=signal.level,
+                snapshot=snapshot,
+                core_data=data,
+            )
+            if meme_path:
+                from publishers.x_publisher import publish_tweet_with_image
+                meme_tweet = f"{tweet[:200]}"  # 기존 Alert 텍스트 축약
+                pub_r = publish_tweet_with_image(meme_tweet, meme_path)
+                if pub_r.get("success"):
+                    logger.info(f"[run_alert] B-21A 밈 발행 완료: {signal.alert_type}")
+                # TG 무료 채널에도 밈 이미지 발송
+                try:
+                    from publishers.telegram_publisher import send_photo
+                    send_photo(meme_path, caption=f"⚡ {signal.alert_type} Alert", channel="free")
+                except Exception:
+                    pass
+        except Exception as e:
+            logger.warning(f"[run_alert] B-21A 밈 생성 예외 (영향 없음): {e}")
+
         results.append({
             "type": signal.alert_type,
             "level": signal.level,

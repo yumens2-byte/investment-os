@@ -153,6 +153,34 @@ def run(comic_type: str) -> None:
     except Exception as e:
         logger.info(f"[STEP 1-B] core_data 없음 (정상 — VIX 기반 fallback): {e}")
 
+    # ── STEP 1-C: 이벤트 체크 (B-23) ────────────────────
+    event_context = None
+    try:
+        from core.event_checker import check_today
+        event_result = check_today()
+        if event_result.get("is_d_day"):
+            event_context = event_result.get("event_context")
+            logger.info(f"[STEP 1-C] D-day 이벤트: {event_result['event']['name']}")
+        elif event_result.get("is_d_minus_1"):
+            logger.info(f"[STEP 1-C] D-1 이벤트: 내일 {event_result['event']['name']}")
+            # D-1 예고 카드 생성 + 발행
+            try:
+                from core.event_checker import generate_preview_card, format_preview_tweet
+                preview_path = generate_preview_card(event_result["event"], core_data)
+                if preview_path:
+                    from publishers.x_publisher import publish_tweet_with_image
+                    from publishers.telegram_publisher import send_photo
+                    preview_tweet = format_preview_tweet(event_result["event"])
+                    publish_tweet_with_image(preview_tweet, preview_path)
+                    send_photo(preview_path, caption=f"📢 {event_result['event']['name']} 예고", channel="free")
+                    logger.info("[STEP 1-C] D-1 예고 카드 발행 완료")
+            except Exception as pe:
+                logger.warning(f"[STEP 1-C] D-1 예고 카드 발행 실패 (영향 없음): {pe}")
+        else:
+            logger.info("[STEP 1-C] 이벤트 없음")
+    except Exception as e:
+        logger.info(f"[STEP 1-C] 이벤트 체크 실패 (영향 없음): {e}")
+
     # ── STEP 5 선행: 중복 체크 ────────────────────────────
     # (이미지 생성 비용 낭비 방지를 위해 스토리 생성 전에 체크)
     logger.info("[STEP 5-pre] 중복 발행 체크")
@@ -173,6 +201,7 @@ def run(comic_type: str) -> None:
             episode_no      = episode_no,
             recent_episodes = recent_episodes,
             core_data       = core_data,
+            event_context   = event_context,
         )
         logger.info(f"[STEP 2] 완료 — Ep.{episode_no}: '{story['title']}'")
     except Exception as e:

@@ -76,8 +76,9 @@ def _build_user_prompt(
     episode_no: int,
     recent_episodes: list[dict],
     core_data: dict = None,
+    event_context: dict = None,
 ) -> str:
-    """유저 프롬프트 조립 — B-19: core_data 시그널/뉴스 반영"""
+    """유저 프롬프트 조립 — B-19: core_data + B-23B: event_context"""
 
     prev_summary = ""
     if recent_episodes:
@@ -92,6 +93,19 @@ def _build_user_prompt(
     market_context = _build_market_context(market_data, core_data)
     char_guide = _build_character_guide(risk_level, core_data)
 
+    # B-23B: 이벤트 컨텍스트 추가
+    event_section = ""
+    if event_context:
+        event_section = f"""
+
+## 🚨 SPECIAL EVENT (D-day)
+- Event: {event_context.get('event_name', '?')}
+- Event Type: {event_context.get('event_type', '?')}
+- Character Override: {event_context.get('character', '?')} MUST appear prominently
+- Flavor: {event_context.get('flavor', '')}
+- This episode MUST center around this event. The event is the main plot driver.
+- {event_context.get('character', 'The Volatician')} controls the battlefield today."""
+
     return f"""## Today's Comic Brief
 - Date: {date.today()}
 - Episode: #{episode_no}
@@ -100,7 +114,7 @@ def _build_user_prompt(
 - Character Guide: {char_guide}
 
 {market_context}
-
+{event_section}
 {prev_summary}
 
 Generate a {cut_count}-cut comic story. Output JSON only."""
@@ -206,6 +220,7 @@ def generate_story(
     episode_no: int,
     recent_episodes: list[dict],
     core_data: dict = None,
+    event_context: dict = None,
 ) -> dict:
     """
     스토리 생성 — Gemini Main → Gemini Sub → Claude fallback
@@ -213,9 +228,13 @@ def generate_story(
     Returns:
         {title, caption, context_summary, cuts: [{cut_number, scene, dialogue, image_prompt, mood}]}
     """
+    # B-23B: 이벤트 D-day시 risk_level 강제 변경
+    if event_context and event_context.get("force_risk"):
+        risk_level = event_context["force_risk"]
+
     user_prompt = _build_user_prompt(
         risk_level, comic_type, market_data,
-        episode_no, recent_episodes, core_data,
+        episode_no, recent_episodes, core_data, event_context,
     )
 
     max_tokens = MAX_TOKENS_DAILY if comic_type == "daily" else MAX_TOKENS_WEEKLY
