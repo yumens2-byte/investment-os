@@ -6,6 +6,9 @@ publishers/paid_report_formatter.py
 ① ETF 상세 전략 리포트 — 6종 Stance/Score/이유 전체
 ② 포지션 사이징 가이드 — 배율 + 섹터별 비중 해설
 """
+import logging
+
+logger = logging.getLogger(__name__)
 
 
 def format_paid_report(data: dict) -> str:
