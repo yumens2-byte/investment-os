@@ -47,4 +47,4 @@ google-genai>=1.0.0
 
 
 #feedparser
-pip install feedparser  
+feedparser
