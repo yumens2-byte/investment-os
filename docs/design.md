@@ -131,6 +131,7 @@ Base Score (Regime) + 당일 변동률 보정 + SMA5/SMA20 트렌드 보정
 | C-11 | 다국어 (한→영/일) | `translator.py` | +16 |
 | C-12 | AI 스레드 | `x_formatter.py` | +1 |
 | C-13 | Vision 차트 분석 | `chart_analyzer.py` | +2 |
+| **C-7** | **EDT Universe 주간 소설** | `comic_novel.py` | **Claude** |
 
 ---
 
@@ -142,6 +143,7 @@ Base Score (Regime) + 당일 변동률 보정 + SMA5/SMA20 트렌드 보정
 | daily_analysis | 분석 결과 (레짐/시그널/ETF) | analysis_date |
 | daily_news | 뉴스 분석 (RSS + Gemini) | news_date |
 | daily_alerts | Alert 발동 이력 | alert_date |
+| **comic_novels** | **C-7 소설 캐시 (멱등성)** | **publish_date** |
 
 ---
 
@@ -155,6 +157,18 @@ Base Score (Regime) + 당일 변동률 보정 + SMA5/SMA20 트렌드 보정
 주의: RPD는 API 키 단위가 아니라 **프로젝트 단위**.
 같은 프로젝트에서 키 3개 만들면 20 RPD 공유.
 다른 프로젝트(다른 Google 계정)에서 만들어야 독립 할당.
+
+---
+
+## 7.5 C-7 EDT Universe 소설 (Supabase 캐시)
+
+```
+플로우: Supabase 캐시 확인 → [HIT] DB 로드 → 발행
+                            → [MISS] Notion 조회 → Claude 소설화 → 캐시 저장 → 발행
+재시도: Claude/Notion 호출 0 (DB 캐시만 사용)
+스케줄: 매주 일요일 22:00 KST
+RPD: +0 (Claude API, Gemini 미사용)
+```
 
 ---
 

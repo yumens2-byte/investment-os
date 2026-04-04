@@ -59,6 +59,9 @@ FRED_API_KEY=
 DRY_RUN=true          # true=모의발행, false=실발행
 FORCE_RUN=false       # true=휴무일/주말에도 강제 실행
 MULTILINGUAL_ENABLED=true  # C-11 다국어 ON/OFF
+
+# Notion (C-7 소설 에피소드)
+NOTION_API_KEY=Integration_Secret
 ```
 
 ---
@@ -121,6 +124,7 @@ python test_e2e_pipeline.py          # E2E 파이프라인 (68건)
 |------------|-----|------|
 | 01:00 토 | 10:00 토 | 주간 리뷰 + 투자 교육 (C-4) |
 | 01:00 일 | 10:00 일 | 다음 주 프리뷰 + 금융 상식 (C-4B) |
+| **13:00 일** | **22:00 일** | **EDT Universe 주간 소설 (C-7)** |
 
 ### 3.3 comic_daily.yml / comic_weekly.yml
 

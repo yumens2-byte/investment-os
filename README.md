@@ -11,7 +11,7 @@
 - **주말 콘텐츠** — 주간 리뷰/다음 주 프리뷰 + 투자 교육(C-4) + 금융 상식(C-4B)
 - **코믹 콘텐츠** — VS 배틀카드, 카드뉴스 3장, 밈 생성
 - X + 텔레그램 무료/유료 채널 자동 발행
-- Supabase 일일 데이터 적재 (4테이블)
+- Supabase 일일 데이터 적재 (4테이블 + comic_novels)
 - GitHub Actions 9세션 + 4 yml 완전 자동 운영
 
 ## 기술 스택
@@ -77,6 +77,7 @@ investment-os/
 │   ├── next_week_preview.py   # 일요일 — 다음 주 프리뷰
 │   ├── education_series.py    # 토요일 — 투자 교육 (C-4, 30개)
 │   └── finance_basics.py      # 일요일 — 금융 상식 (C-4B, 25개)
+    └── comic_novel.py         # C-7 EDT Universe 소설형 에피소드
 │
 ├── core/                      # 핵심 유틸리티
 │   ├── gemini_gateway.py      # Gemini 3키 자동전환 + Vision
@@ -87,7 +88,7 @@ investment-os/
 │
 ├── db/                        # 데이터베이스
 │   ├── supabase_client.py     # Supabase 연결
-│   └── daily_store.py         # 일일 데이터 적재 (4테이블)
+│   └── daily_store.py         # 일일 데이터 적재 (4테이블) + comic_novels 캐시
 │
 ├── config/                    # 설정
 │   ├── settings.py            # 버전, 환경변수
@@ -98,7 +99,8 @@ investment-os/
     ├── main.yml               # 평일 6세션 (morning~narrative)
     ├── weekend_content.yml    # 주말 토/일
     ├── comic_daily.yml        # 일일 코믹
-    └── comic_weekly.yml       # 주간 코믹
+    ├── comic_weekly.yml       # 주간 코믹
+    └── comic_novel.yml        # C-7 일요일 소설
 ```
 
 ## 운영 스케줄 (KST)
@@ -121,6 +123,7 @@ investment-os/
 |------|------|
 | 토 10:00 | 주간 리뷰 + 투자 교육 (C-4) |
 | 일 10:00 | 다음 주 프리뷰 + 금융 상식 (C-4B) |
+| **일 22:00** | **EDT Universe 주간 소설 (C-7)** |
 
 ## 실행
 
@@ -157,6 +160,7 @@ FORCE_RUN=true python main.py run all --session morning --mode tweet
 | C-11 | 다국어 (한→영/일) | +16 |
 | C-12 | AI 스레드 자동 생성 | +1 |
 | C-13 | Gemini Vision 차트 분석 | +2 |
+| **C-7** | **EDT Universe 주간 소설 (일요일)** | **Claude** |
 
 ## 고도화 (완료)
 
@@ -217,6 +221,9 @@ FRED_API_KEY=
 DRY_RUN=true
 FORCE_RUN=false
 MULTILINGUAL_ENABLED=true
+
+# Notion (C-7 소설 에피소드)
+NOTION_API_KEY=
 ```
 
 ## 문서
