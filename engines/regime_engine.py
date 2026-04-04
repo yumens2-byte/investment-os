@@ -117,7 +117,7 @@ def _detect_shock_regime(signals: dict, market_score: dict) -> Tuple[str, str]:
 # 3. 기본 Regime 결정
 # ──────────────────────────────────────────────────────────────
 
-def _determine_base_regime(market_score: dict, signals: dict) -> Tuple[str, str]:
+def _determine_base_regime(market_score: dict, signals: dict, news_analysis: dict = None) -> Tuple[str, str]:
     """
     Market Score 기반 기본 Regime 결정.
     Returns: (regime, reason)
@@ -127,6 +127,9 @@ def _determine_base_regime(market_score: dict, signals: dict) -> Tuple[str, str]
       - VIX Elevated 가드: VIX 25+ 이면 Risk-On 차단
       - Oil 직접 가드: WTI $95+ 이면 Risk-On 차단
       → 단일 일간 반등(SPY +3%)으로 Risk-On 오판 방지
+
+    E-5 (2026-04-04):
+      - Gemini Bearish 가드: AI 뉴스 분석에서 bearish 판단 시 Risk-On 차단
     """
     growth = market_score.get("growth_score", 2)
     inflation = market_score.get("inflation_score", 2)
@@ -170,6 +173,11 @@ def _determine_base_regime(market_score: dict, signals: dict) -> Tuple[str, str]
         risk_on_blocked = True
         block_reasons.append("Vol Backwardation")
 
+    # (5) E-5: Gemini 뉴스 bearish — AI 분석에서 bearish 판단 시 Risk-On 차단
+    if news_analysis and news_analysis.get("overall_sentiment") == "bearish":
+        risk_on_blocked = True
+        block_reasons.append("Gemini Bearish")
+
     # ── 레짐 판정 ──────────────────────────────────────────
 
     # Stagflation: 인플레이션 높고 성장 약한 경우
@@ -211,7 +219,7 @@ def _determine_base_regime(market_score: dict, signals: dict) -> Tuple[str, str]
 # 4. 통합 진입점
 # ──────────────────────────────────────────────────────────────
 
-def run_regime_engine(market_score: dict, signals: dict, snapshot: dict) -> dict:
+def run_regime_engine(market_score: dict, signals: dict, snapshot: dict, news_analysis: dict = None) -> dict:
     """
     Market Score + Signals → Market Regime 결정.
 
@@ -237,7 +245,8 @@ def run_regime_engine(market_score: dict, signals: dict, snapshot: dict) -> dict
             risk_level = "MEDIUM"
         logger.info(f"[RegimeEngine] Shock Override: {regime}")
     else:
-        regime, reason = _determine_base_regime(market_score, signals)
+        # E-5: news_analysis 전달하여 Gemini bearish 가드 적용
+        regime, reason = _determine_base_regime(market_score, signals, news_analysis)
 
     result = {
         "market_regime": regime,

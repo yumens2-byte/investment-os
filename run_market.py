@@ -155,7 +155,8 @@ def run(session: str) -> dict:
     # ── Step 3: Regime Engine ──────────────────────────────────
     logger.info("[Step 3] Regime Engine 실행")
     from engines.regime_engine import run_regime_engine
-    regime_result = run_regime_engine(market_score, signals, snapshot)
+    # E-5: news_analysis 전달하여 Gemini bearish 가드 적용
+    regime_result = run_regime_engine(market_score, signals, snapshot, news_analysis=news_analysis)
     market_regime = {
         "market_regime": regime_result["market_regime"],
         "market_risk_level": regime_result["market_risk_level"],
@@ -196,12 +197,23 @@ def run(session: str) -> dict:
 
     # ── Step 4: ETF Engine ─────────────────────────────────────
     logger.info("[Step 4] ETF Engine 실행")
+
+    # E-1: SMA5/SMA20 수집 (중기 트렌드 보정)
+    sma_data = {}
+    try:
+        from collectors.yahoo_finance import collect_etf_sma
+        sma_data = collect_etf_sma()
+        logger.info(f"[Step 4-SMA] ETF SMA 수집 완료: {len(sma_data)}개")
+    except Exception as e:
+        logger.warning(f"[Step 4-SMA] SMA 수집 실패 (당일 변동률만 적용): {e}")
+
     from engines.etf_engine import run_etf_engine
     etf_result = run_etf_engine(
         regime=regime_result["market_regime"],
         risk_level=regime_result["market_risk_level"],
         market_score=market_score,
         etf_prices=etf_prices,
+        sma_data=sma_data,
     )
 
     # ── Step 5: Risk Engine ────────────────────────────────────

@@ -167,6 +167,86 @@ def collect_etf_prices() -> dict:
     return result
 
 
+def collect_etf_sma() -> dict:
+    """
+    E-1: ETF 6종목의 SMA5/SMA20 수집 — 중기 트렌드 판별.
+
+    yfinance period="1mo" (약 22영업일) 종가 수집 → SMA5/SMA20 계산.
+    SMA5 > SMA20 → "golden_cross" (상승 추세)
+    SMA5 < SMA20 → "dead_cross" (하락 추세)
+    else → "flat"
+
+    Returns:
+        {
+          "QQQM": {"sma5": 180.5, "sma20": 178.2, "trend": "golden_cross"},
+          "XLK":  {"sma5": 200.1, "sma20": 202.3, "trend": "dead_cross"},
+          ...
+        }
+    """
+    logger.info("[YF_SMA] ETF SMA 수집 시작")
+    result = {}
+
+    for etf in ETF_CORE:
+        try:
+            symbol = TICKER_MAP.get(etf, etf)
+            ticker = yf.Ticker(symbol)
+            hist = ticker.history(period="1mo")
+
+            if hist is None or len(hist) < 5:
+                # requests fallback
+                closes = _fetch_closes_fallback(symbol, 22)
+                if not closes or len(closes) < 5:
+                    result[etf] = {"sma5": 0, "sma20": 0, "trend": "flat"}
+                    continue
+            else:
+                closes = hist["Close"].tolist()
+
+            # SMA 계산
+            sma5 = sum(closes[-5:]) / min(5, len(closes[-5:])) if len(closes) >= 5 else 0
+            sma20 = sum(closes[-20:]) / min(20, len(closes[-20:])) if len(closes) >= 20 else sma5
+
+            # 트렌드 판별
+            if sma5 > 0 and sma20 > 0:
+                diff_pct = (sma5 - sma20) / sma20 * 100
+                if diff_pct > 0.5:
+                    trend = "golden_cross"
+                elif diff_pct < -0.5:
+                    trend = "dead_cross"
+                else:
+                    trend = "flat"
+            else:
+                trend = "flat"
+
+            result[etf] = {
+                "sma5": round(sma5, 2),
+                "sma20": round(sma20, 2),
+                "trend": trend,
+            }
+        except Exception as e:
+            logger.warning(f"[YF_SMA] {etf} SMA 수집 실패 (무시): {e}")
+            result[etf] = {"sma5": 0, "sma20": 0, "trend": "flat"}
+
+    trends = {etf: d["trend"] for etf, d in result.items()}
+    logger.info(f"[YF_SMA] 수집 완료: {trends}")
+    return result
+
+
+def _fetch_closes_fallback(symbol: str, days: int = 22) -> list:
+    """SMA용 종가 리스트 fallback (requests 직접 호출)"""
+    try:
+        import requests as req
+        url = (
+            f"https://query1.finance.yahoo.com/v8/finance/chart/{symbol}"
+            f"?range={days}d&interval=1d"
+        )
+        resp = req.get(url, headers={"User-Agent": "Mozilla/5.0"}, timeout=10)
+        data = resp.json()
+        closes = data["chart"]["result"][0]["indicators"]["quote"][0]["close"]
+        return [c for c in closes if c is not None]
+    except Exception:
+        return []
+
+
 def collect_fx_rates() -> dict:
     """
     FX 환율 3종 수집 (yfinance 무료 — 추가 API 비용 없음)

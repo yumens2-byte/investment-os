@@ -63,23 +63,33 @@ def compute_etf_score(
     regime: str,
     etf_prices: Dict[str, dict],
     market_score: dict,
+    sma_data: Dict[str, dict] = None,
 ) -> Dict[str, int]:
     """
     ETF 점수 산출.
-    Base score (regime) + momentum 보정.
+    Base score (regime) + 당일 momentum 보정 + SMA 트렌드 보정 (E-1).
     """
     base = _get_base_score(regime)
     scored = {}
+    if sma_data is None:
+        sma_data = {}
 
     for etf in ETF_CORE:
         score = base.get(etf, 3)
         change_pct = etf_prices.get(etf, {}).get("change_pct", 0.0)
 
-        # 당일 변동률 보정: ±0.5 점 조정
+        # 당일 변동률 보정: ±1 점 조정
         if change_pct > 1.5:
             score = min(5, score + 1)
         elif change_pct < -1.5:
             score = max(1, score - 1)
+
+        # E-1: SMA5/SMA20 트렌드 보정 — 중기 추세 반영
+        sma_trend = sma_data.get(etf, {}).get("trend", "flat")
+        if sma_trend == "golden_cross":
+            score = min(5, score + 1)   # 상승 추세 보너스
+        elif sma_trend == "dead_cross":
+            score = max(1, score - 1)   # 하락 추세 페널티
 
         scored[etf] = score
 
@@ -260,11 +270,12 @@ def run_etf_engine(
     risk_level: str,
     market_score: dict,
     etf_prices: Dict[str, dict],
+    sma_data: Dict[str, dict] = None,
 ) -> dict:
     """ETF 분석 전 과정 실행 후 etf_analysis / etf_strategy / etf_allocation 반환"""
     logger.info(f"[ETFEngine] 분석 시작: Regime={regime}, Risk={risk_level}")
 
-    etf_score = compute_etf_score(regime, etf_prices, market_score)
+    etf_score = compute_etf_score(regime, etf_prices, market_score, sma_data=sma_data)
     etf_rank = compute_etf_rank(etf_score)
     timing_signal = get_timing_signal(etf_rank, etf_prices, risk_level)
     strategy = compute_etf_strategy(etf_rank, timing_signal, risk_level)

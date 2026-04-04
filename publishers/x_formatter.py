@@ -281,6 +281,17 @@ def format_image_tweet(data: dict, session: str = "morning") -> str:
 # C-1: AI 트윗 생성 (Gemini)
 # ──────────────────────────────────────────────────────────────
 
+def _select_tone(risk: str, regime: str) -> str:
+    """F-4: 레짐/리스크 연동 톤 선택 — 시장 상황에 맞는 톤만 허용"""
+    import random
+    if risk == "HIGH" or regime in ("Liquidity Crisis", "Recession Risk"):
+        return random.choice(["긴급", "경계"])
+    elif risk == "MEDIUM" or "Shock" in regime or "Stagflation" in regime:
+        return random.choice(["진지한", "신중한", "분석적"])
+    else:  # LOW / Normal
+        return random.choice(["낙관적", "여유로운", "유머러스"])
+
+
 def generate_ai_tweet(data: dict, session_label: str = "Market Snapshot") -> str:
     """
     Gemini로 매 세션 다른 톤/표현의 트윗 생성.
@@ -316,9 +327,9 @@ def generate_ai_tweet(data: dict, session_label: str = "Market Snapshot") -> str
             sorted_etfs = sorted(alloc.items(), key=lambda x: x[1], reverse=True)
             top3 = [f"{e}({w}%)" for e, w in sorted_etfs[:3]]
 
-        # 톤 랜덤 선택 (Gemini가 여러 톤을 한꺼번에 쓰는 문제 방지)
+        # F-4: 레짐/리스크 연동 톤 선택 (시장 상황에 맞는 톤만 허용)
         import random
-        tone = random.choice(["진지한", "유머러스", "긴급", "여유로운"])
+        tone = _select_tone(risk, regime)
 
         prompt = (
             f"투자 분석 X 트윗 1개만 작성해줘.\n"
