@@ -321,7 +321,7 @@ def run(mode: str = "tweet", session: str = None) -> dict:
 
     # ── Step 6-ML: 다국어 발행 (C-11) ─────────────────────────
     try:
-        from publishers.translator import publish_multilingual, TELEGRAM_EN_CHANNEL_ID, TELEGRAM_JP_CHANNEL_ID
+        from publishers.translator import publish_multilingual, MULTILINGUAL_ENABLED
         if TELEGRAM_EN_CHANNEL_ID or TELEGRAM_JP_CHANNEL_ID:
             # 무료 채널 텍스트를 기준으로 번역
             _ml_text = format_free_signal(data, session=session_type) if session_type != "narrative" else ""
