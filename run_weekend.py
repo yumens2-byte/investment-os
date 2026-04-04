@@ -173,6 +173,10 @@ def _run_sunday() -> dict:
 
     if not result.get("success"):
         logger.warning(f"[run_weekend] 프리뷰 생성 실패: {result.get('error')}")
+
+        # ── C-4B: 프리뷰 실패해도 금융 상식은 독립 실행 ──
+        _run_finance_basics()
+
         return {"success": False, "day": "sun", "type": "next_week_preview", "error": result.get("error")}
 
     # ── X 발행 ──
@@ -201,6 +205,9 @@ def _run_sunday() -> dict:
     except Exception as e:
         logger.warning(f"[run_weekend] TG 발행 실패: {e}")
 
+    # ── C-4B: 매주 일요일 금융 기본 상식 ──
+    _run_finance_basics()
+
     return {
         "success": True,
         "day": "sun",
@@ -209,6 +216,31 @@ def _run_sunday() -> dict:
         "image_path": image_path,
         "events_count": len(result.get("events", [])),
     }
+
+
+def _run_finance_basics():
+    """C-4B: 매주 일요일 금융 기본 상식 발행"""
+    try:
+        from weekend.finance_basics import generate_finance_basics
+        logger.info("[run_weekend] C-4B 금융 상식 콘텐츠 생성 시작")
+        fb = generate_finance_basics()
+        if fb.get("success"):
+            try:
+                from publishers.x_publisher import publish_tweet as _pub_fb
+                _pub_fb(fb["tweet"])
+                logger.info(f"[run_weekend] C-4B X 발행: #{fb['episode']} {fb['topic']}")
+            except Exception as xe:
+                logger.warning(f"[run_weekend] C-4B X 발행 실패: {xe}")
+            try:
+                from publishers.telegram_publisher import send_message as _send_fb
+                _send_fb(fb["telegram"], channel="free")
+                logger.info(f"[run_weekend] C-4B TG 발행 완료: #{fb['episode']}")
+            except Exception as te:
+                logger.warning(f"[run_weekend] C-4B TG 발행 실패: {te}")
+        else:
+            logger.info(f"[run_weekend] C-4B 금융 상식 스킵: {fb.get('reason', '?')}")
+    except Exception as fe:
+        logger.warning(f"[run_weekend] C-4B 금융 상식 실패 (영향 없음): {fe}")
 
 
 def _setup_logging():
