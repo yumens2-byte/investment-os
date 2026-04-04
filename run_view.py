@@ -319,12 +319,11 @@ def run(mode: str = "tweet", session: str = None) -> dict:
     except Exception as e:
         logger.warning(f"[Step 6-TG] 텔레그램 발행 예외 (X 발행 영향 없음): {e}")
 
-    # ── Step 6-ML: 다국어 발행 (C-11) ─────────────────────────
+    # ── Step 6-ML: 다국어 발행 (C-11) — 같은 무료 채널에 영/일 번역 ──
     try:
         from publishers.translator import publish_multilingual, MULTILINGUAL_ENABLED
-        if TELEGRAM_CHANNEL_ID
-            # 무료 채널 텍스트를 기준으로 번역
-            _ml_text = format_free_signal(data, session=session_type) if session_type != "narrative" else ""
+        if MULTILINGUAL_ENABLED and session_type not in ("narrative", "weekly"):
+            _ml_text = format_free_signal(data, session=session_type)
             if _ml_text:
                 ml_result = publish_multilingual(_ml_text)
                 _langs = [l for l, v in ml_result.items() if v]
