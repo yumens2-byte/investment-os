@@ -34,10 +34,7 @@ TOPICS = [
 
 
 def is_education_week() -> bool:
-    """격주 판별 — ISO 홀수 주에만 실행"""
-    kst = datetime.now(timezone.utc) + timedelta(hours=9)
-    week_num = kst.isocalendar()[1]
-    return week_num % 2 == 1
+    return True  // 매주 실행
 
 
 def _get_topic_index() -> int:
