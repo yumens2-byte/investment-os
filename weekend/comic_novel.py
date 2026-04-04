@@ -270,6 +270,8 @@ def _format_tg_html(novel_text: str, ep_range: str) -> str:
         f"<b>『{ep_range}』</b>\n\n"
         f"{html}\n\n"
         f"━━━\n"
+        f"#EDT #투자코믹스 #미국증시 #ETF투자 #투자소설\n"
+        f"#주식전쟁 #금융스릴러 #InvestmentComic\n\n"
         f"⚠️ 본 콘텐츠는 투자 참고 정보이며, 투자 권유가 아닙니다."
     )
 
