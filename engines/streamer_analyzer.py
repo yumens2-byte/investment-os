@@ -68,18 +68,30 @@ def analyze_streamer_content(videos: list) -> dict:
 
     # ── Gemini 호출 ──
     try:
-        from core.gemini_gateway import call_gemini
-        raw = call_gemini(prompt, purpose="streamer_analysis")
+        from core.gemini_gateway import call as gemini_call
+        gw_result = gemini_call(
+            prompt=prompt,
+            model="flash-lite",
+            response_json=True,
+            max_tokens=500,
+            temperature=0.5,
+        )
 
-        if not raw:
+        if not gw_result.get("success"):
+            logger.warning(f"[StreamerAnalyzer] Gemini 실패: {gw_result.get('error', '?')}")
             return _fallback_analysis(videos)
 
-        # JSON 파싱
-        cleaned = raw.strip()
-        if cleaned.startswith("```"):
-            cleaned = cleaned.split("\n", 1)[-1].rsplit("```", 1)[0].strip()
-
-        result = json.loads(cleaned)
+        # response_json=True → data에 파싱된 dict
+        result = gw_result.get("data")
+        if not result:
+            # data 파싱 실패 시 text에서 재시도
+            raw_text = gw_result.get("text", "")
+            if not raw_text:
+                return _fallback_analysis(videos)
+            cleaned = raw_text.strip()
+            if cleaned.startswith("```"):
+                cleaned = cleaned.split("\n", 1)[-1].rsplit("```", 1)[0].strip()
+            result = json.loads(cleaned)
 
         # 트윗 길이 검증
         tweet = result.get("tweet", "")
