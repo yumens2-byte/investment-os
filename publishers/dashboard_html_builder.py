@@ -1,8 +1,8 @@
 """
 publishers/dashboard_html_builder.py
 ======================================
-HTML/Playwright 기반 풀버전 대시보드 이미지 생성기 (session=full 전용)
-v2.2.1 — Crypto 기준 높이 압축, ETF 상단 정렬
+HTML/Playwright 기반 대시보드 이미지 생성기
+v3.0.0 — F-2: 전 세션 HTML 통일 (morning/close/intraday/full/weekly)
 
 데이터 소스: core_data.json["data"] 필드만 사용
 추측값: 0건
@@ -18,7 +18,7 @@ from typing import Optional
 
 logger = logging.getLogger(__name__)
 
-VERSION = "v2.2.1"
+VERSION = "v3.0.0"
 
 REGIME_COLOR = {
     "Risk-On": "#22ee88", "Risk-Off": "#ff4466", "Oil Shock": "#ffbb00",
@@ -50,7 +50,7 @@ def _fg_color(v):
     return "#22ee88"
 
 
-def _build_html(data: dict, dt_utc: datetime) -> str:
+def _build_full_html(data: dict, dt_utc: datetime, session_label: str = "Full <em>Brief</em>") -> str:
     kst = dt_utc + timedelta(hours=9)
     et  = dt_utc - timedelta(hours=4)
 
@@ -248,7 +248,7 @@ body{{width:1080px;overflow:hidden;background:#070b11;font-family:'Barlow',sans-
 <div class="rb"></div>
 <div class="hd">
   <div class="hl"><div class="dg"></div><span class="hb">EDT INVESTMENT</span><span class="hs">· INVESTMENT OS</span></div>
-  <div class="hc">Full <em>Brief</em></div>
+  <div class="hc">{session_label}</div>
   <div class="hr"><span class="ht">{kst.strftime('%H:%M')}</span><span class="hz">KST</span><span class="hx">{kst.strftime('%b %d')} · ET {et.strftime('%H:%M')}</span></div>
 </div>
 <div class="main">
@@ -323,6 +323,260 @@ body{{width:1080px;overflow:hidden;background:#070b11;font-family:'Barlow',sans-
 </html>"""
 
 
+# ──────────────────────────────────────────────────────────────
+# F-2: 세션별 HTML 빌더 (v3.0.0)
+# ──────────────────────────────────────────────────────────────
+
+SESSION_LABELS = {
+    "morning": "Morning <em>Brief</em>",
+    "intraday": "Intraday <em>Update</em>",
+    "close": "Close <em>Summary</em>",
+    "full": "Full <em>Brief</em>",
+    "weekly": "Weekly <em>Review</em>",
+    "narrative": "Market <em>Narrative</em>",
+}
+
+
+def _build_compact_html(data: dict, dt_utc: datetime, session: str) -> str:
+    """
+    F-2: morning/close/intraday용 컴팩트 대시보드.
+    기존 full CSS 재활용, 레이아웃만 변경.
+    """
+    kst = dt_utc + timedelta(hours=9)
+    et  = dt_utc - timedelta(hours=4)
+    session_label = SESSION_LABELS.get(session, "Market <em>Brief</em>")
+
+    snap    = data.get("market_snapshot", {})
+    regime  = data.get("market_regime", {})
+    ms      = data.get("market_score", {})
+    strat   = data.get("etf_strategy", {}).get("stance", {})
+    alloc   = data.get("etf_allocation", {}).get("allocation", {})
+    helpers = data.get("output_helpers", {})
+    timing  = data.get("etf_analysis", {}).get("timing_signal", {})
+    tsig    = data.get("trading_signal", {})
+    fg      = data.get("fear_greed", {})
+
+    sp500_chg  = snap.get("sp500", 0) or 0
+    nasdaq_chg = snap.get("nasdaq", 0) or 0
+    vix        = snap.get("vix", 0) or 0
+    us10y      = snap.get("us10y", 0) or 0
+    oil        = snap.get("oil", 0) or 0
+    dxy        = snap.get("dollar_index", 0) or 0
+
+    regime_name = regime.get("market_regime", "Transition")
+    risk_level  = regime.get("market_risk_level", "MEDIUM")
+    rc  = REGIME_COLOR.get(regime_name, "#668899")
+    rkc = RISK_COLOR.get(risk_level, "#ffbb33")
+
+    signal = tsig.get("trading_signal", "HOLD")
+    sigc   = SIGNAL_COLOR.get(signal, "#ffee44")
+    confidence = tsig.get("signal_confidence", 0)
+    conf_str = f" ({confidence}%)" if confidence > 0 else ""
+    brief  = helpers.get("one_line_summary", "—")
+
+    sm = tsig.get("signal_matrix", {})
+    buy_list = sm.get("buy_watch", [])
+    hold_list = sm.get("hold", [])
+    reduce_list = sm.get("reduce", [])
+
+    max_alloc = max(alloc.values()) if alloc else 30
+
+    try:
+        from config.settings import SYSTEM_VERSION, CODENAME
+    except Exception:
+        SYSTEM_VERSION = VERSION
+        CODENAME = "EDT Investment"
+
+    # ── 공유 데이터 블록 ──
+    def _snap_block():
+        items = [
+            ("S&P 500", f"{sp500_chg:+.2f}%", _dn_up(sp500_chg)),
+            ("Nasdaq", f"{nasdaq_chg:+.2f}%", _dn_up(nasdaq_chg)),
+            ("VIX", f"{vix:.2f}", "#ff4466" if vix>=25 else ("#ffbb33" if vix>=20 else "#33ff99")),
+            ("US 10Y", f"{us10y:.2f}%", "#bbddee"),
+            ("WTI", f"${oil:.2f}", "#ffbb33" if oil>=90 else "#bbddee"),
+            ("DXY", f"{dxy:.2f}", "#bbddee"),
+        ]
+        return "\n".join(
+            f'<div class="mr"><div class="mn">{n}</div><div class="mv" style="color:{c}">{v}</div></div>'
+            for n, v, c in items
+        )
+
+    def _etf_block():
+        rows = []
+        for etf in ETFS:
+            s = strat.get(etf,"Neutral"); sc = STANCE_COLOR.get(s,"#99bbdd")
+            sig = timing.get(etf,"HOLD"); sigcc = SIGNAL_COLOR.get(sig,"#ffee44")
+            pct = alloc.get(etf,0); bw = int(pct/max_alloc*100) if max_alloc>0 else 0
+            rows.append(f'<div class="er"><div class="et">{etf}</div><div class="em"><div class="es" style="color:{sc}">{s}</div><div class="ei" style="color:{sigcc}">{sig}</div></div><div class="ew"><div class="eb"><div class="ef" style="width:{bw}%;background:{sc}"></div></div><div class="ep">{pct}%</div></div></div>')
+        return "\n".join(rows)
+
+    def _score_block():
+        scores = [
+            ("Growth", ms.get("growth_score",0)), ("Risk", ms.get("risk_score",0)),
+            ("Inflation", ms.get("inflation_score",0)), ("Liquidity", ms.get("liquidity_score",0)),
+            ("Commodity", ms.get("commodity_pressure_score",0)), ("Stability", ms.get("financial_stability_score",0)),
+        ]
+        return "\n".join(
+            f'<div class="sr"><div class="sn">{l}</div><div class="sb"><div class="sf" style="width:{int(v/5*100)}%;background:{_sc(v)}"></div></div><div class="sv" style="color:{_sc(v)}">{v}/5</div></div>'
+            for l, v in scores
+        )
+
+    def _signal_block():
+        parts = [f'<div class="mr"><div class="mn">Signal</div><div class="mv" style="color:{sigc}">{signal}{conf_str}</div></div>']
+        if buy_list:
+            parts.append(f'<div class="mr"><div class="mn" style="color:#33ff99">BUY Watch</div><div class="mv" style="color:#33ff99;font-size:12px">{" · ".join(buy_list)}</div></div>')
+        if reduce_list:
+            parts.append(f'<div class="mr"><div class="mn" style="color:#ff4466">Reduce</div><div class="mv" style="color:#ff4466;font-size:12px">{" · ".join(reduce_list)}</div></div>')
+        return "\n".join(parts)
+
+    # ── 세션별 본문 ──
+    if session == "intraday":
+        # 1칼럼 초컴팩트
+        cols = "1fr"
+        body = f"""
+<div class="col">
+  <div class="s">{_snap_block()}</div>
+  <div class="s">
+    <div class="sl">Regime · Signal</div>
+    <div class="rb2" style="background:{rc}1a;border:2px solid {rc}55"><div class="rv" style="color:{rc};font-size:12px">{regime_name.upper()} | {risk_level} | <span style="color:{sigc}">{signal}{conf_str}</span></div></div>
+  </div>
+  <div class="s"><div class="sl">ETF Strategy</div>{_etf_block()}</div>
+</div>"""
+    elif session == "close":
+        # 2칼럼: 왼쪽=오늘 결과, 오른쪽=ETF+내일 전망
+        cols = "1fr 1fr"
+        news = data.get("news_summary", {})
+        impl = news.get("implication", "")
+        impl_html = f'<div class="s"><div class="sl">News Implication</div><div class="br">{impl}</div></div>' if impl else ""
+        body = f"""
+<div class="col">
+  <div class="s"><div class="sl">오늘 결과</div>{_snap_block()}</div>
+  <div class="s"><div class="sl">Market Regime</div>
+    <div class="rb2" style="background:{rc}1a;border:2px solid {rc}55"><div class="rv" style="color:{rc};text-shadow:0 0 8px {rc}44">{regime_name.upper()}</div></div>
+  </div>
+  <div class="s"><div class="sl">Market Score</div>{_score_block()}</div>
+  {impl_html}
+</div>
+<div class="col">
+  <div class="s"><div class="sl">내일 전망</div>{_signal_block()}</div>
+  <div class="s"><div class="sl">ETF Strategy · Allocation</div>{_etf_block()}</div>
+  <div class="s"><div class="sl">Summary</div><div class="br">{brief}</div></div>
+</div>"""
+    else:
+        # morning: 2칼럼 — 왼쪽=Snapshot+Regime, 오른쪽=ETF+Signal
+        cols = "1fr 1fr"
+        fg_value = fg.get("value", 0) or 0
+        fg_label = fg.get("label", "—")
+        fg_emoji = fg.get("emoji", "")
+        fg_chg   = fg.get("change", 0) or 0
+        fg_c     = _fg_color(fg_value)
+        body = f"""
+<div class="col">
+  <div class="s">{_snap_block()}</div>
+  <div class="s"><div class="sl">Market Regime</div>
+    <div class="rb2" style="background:{rc}1a;border:2px solid {rc}55"><div class="rv" style="color:{rc};text-shadow:0 0 8px {rc}44">{regime_name.upper()}</div></div>
+    <div class="mr" style="margin-top:2px"><div class="mn">Risk</div><div class="mv" style="color:{rkc}">{risk_level}</div></div>
+  </div>
+  <div class="s"><div class="sl">Market Score</div>{_score_block()}</div>
+  <div class="s"><div class="sl">Fear & Greed</div>
+    <div class="fg"><div class="fgv" style="color:{fg_c}">{fg_value}</div><div><div class="fgl" style="color:{fg_c}">{fg_emoji} {fg_label}</div><div class="fgs">chg {fg_chg:+d}</div></div></div>
+  </div>
+</div>
+<div class="col">
+  <div class="s"><div class="sl">오늘의 전략</div>{_signal_block()}</div>
+  <div class="s"><div class="sl">ETF Strategy · Allocation</div>{_etf_block()}</div>
+  <div class="s"><div class="sl">Summary</div><div class="br">{brief}</div></div>
+</div>"""
+
+    # ── 조립 ──
+    return f"""<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<link href="https://fonts.googleapis.com/css2?family=Barlow:wght@400;500;600;700;800;900&family=IBM+Plex+Mono:wght@400;500;600;700&display=swap" rel="stylesheet">
+<style>
+*{{margin:0;padding:0;box-sizing:border-box;}}
+body{{width:1080px;overflow:hidden;background:#070b11;font-family:'Barlow',sans-serif;color:#eef6ff;}}
+.root{{display:flex;flex-direction:column;}}
+.rb{{height:3px;background:linear-gradient(90deg,#ff1010,#ff5500,#ff9900,#ffcc00,#aaee00,#11cc55,#00cccc,#0088ff,#7700ff,#ff0099);flex-shrink:0;}}
+.hd{{background:#0c1420;border-bottom:1px solid #2e4868;padding:5px 14px;display:flex;align-items:center;flex-shrink:0;}}
+.hl{{display:flex;align-items:center;gap:5px;}}
+.hd .dg{{width:6px;height:6px;border-radius:50%;background:#33ff99;box-shadow:0 0 6px #33ff99;}}
+.hb{{font-family:'IBM Plex Mono',monospace;font-size:10px;font-weight:600;letter-spacing:2px;color:#99bbdd;}}
+.hs{{font-family:'IBM Plex Mono',monospace;font-size:9px;color:#7799bb;}}
+.hc{{flex:1;text-align:center;font-size:16px;font-weight:900;color:#fff;}}
+.hc em{{color:#ffbb33;font-style:normal;}}
+.hr{{display:flex;align-items:baseline;gap:4px;}}
+.ht{{font-family:'IBM Plex Mono',monospace;font-size:18px;font-weight:700;color:#f0f8ff;}}
+.hz{{font-family:'IBM Plex Mono',monospace;font-size:10px;font-weight:600;color:#99bbdd;}}
+.hx{{font-family:'IBM Plex Mono',monospace;font-size:9px;color:#99bbdd;margin-left:4px;}}
+.main{{display:grid;grid-template-columns:{cols};}}
+.col{{display:flex;flex-direction:column;}}.col+.col{{border-left:1px solid #1e3048;}}
+.s{{padding:3px 8px;border-bottom:1px solid #1e3048;}}.s:last-child{{border-bottom:none;}}
+.sl{{font-family:'IBM Plex Mono',monospace;font-size:8px;letter-spacing:1.5px;color:#7799bb;text-transform:uppercase;margin-bottom:2px;display:flex;align-items:center;gap:4px;}}.sl::after{{content:'';flex:1;height:1px;background:#1e3048;}}
+.mr{{display:flex;align-items:center;padding:2px 5px;background:rgba(255,255,255,.03);border:1px solid #1e3048;border-radius:3px;margin-bottom:1px;}}
+.mn{{flex:1;font-size:11px;font-weight:500;display:flex;align-items:center;gap:3px;}}
+.mv{{font-family:'IBM Plex Mono',monospace;font-size:14px;font-weight:700;}}
+.dot{{width:5px;height:5px;border-radius:50%;flex-shrink:0;}}
+.fg{{display:flex;align-items:center;gap:6px;padding:2px 4px;background:rgba(255,255,255,.03);border:1px solid #1e3048;border-radius:3px;}}
+.fgv{{font-family:'IBM Plex Mono',monospace;font-size:20px;font-weight:800;line-height:1;}}
+.fgl{{font-size:10px;font-weight:600;}}
+.fgs{{font-family:'IBM Plex Mono',monospace;font-size:8px;color:#7799bb;}}
+.rb2{{padding:5px 7px;border-radius:4px;text-align:center;}}
+.rv{{font-family:'Barlow',sans-serif;font-size:14px;font-weight:900;letter-spacing:2px;}}
+.sr{{display:flex;align-items:center;gap:4px;margin-bottom:1px;}}
+.sn{{width:58px;font-size:9px;color:#99bbdd;}}
+.sb{{flex:1;height:3px;background:#1e3048;border-radius:2px;overflow:hidden;}}
+.sf{{height:100%;border-radius:2px;}}
+.sv{{font-family:'IBM Plex Mono',monospace;font-size:10px;font-weight:700;width:24px;text-align:right;}}
+.er{{display:flex;align-items:center;padding:2px 5px;background:rgba(255,255,255,.03);border:1px solid #1e3048;border-radius:3px;margin-bottom:1px;}}
+.et{{font-family:'IBM Plex Mono',monospace;font-size:12px;font-weight:800;color:#eef6ff;width:38px;}}
+.em{{display:flex;flex-direction:column;width:72px;}}
+.es{{font-size:8px;font-weight:600;}}
+.ei{{font-family:'IBM Plex Mono',monospace;font-size:10px;font-weight:800;}}
+.ew{{flex:1;display:flex;align-items:center;gap:3px;}}
+.eb{{flex:1;height:3px;background:#1e3048;border-radius:2px;overflow:hidden;}}
+.ef{{height:100%;border-radius:2px;}}
+.ep{{font-family:'IBM Plex Mono',monospace;font-size:10px;font-weight:700;color:#eef6ff;width:24px;text-align:right;}}
+.br{{font-size:10px;color:#99bbdd;line-height:1.6;}}
+.ft{{background:#050a10;border-top:1px solid #1e3048;padding:2px 12px;display:flex;align-items:center;gap:5px;flex-shrink:0;}}
+.ftl{{font-family:'IBM Plex Mono',monospace;font-size:7px;color:#7799bb;letter-spacing:1.5px;}}
+.ftg{{font-family:'IBM Plex Mono',monospace;font-size:6px;padding:1px 3px;border-radius:2px;border:1px solid #1e3048;color:#557799;}}
+.ftr{{font-family:'IBM Plex Mono',monospace;font-size:7px;color:#7799bb;margin-left:auto;}}
+</style>
+</head>
+<body>
+<div class="root">
+<div class="rb"></div>
+<div class="hd">
+  <div class="hl"><div class="dg"></div><span class="hb">EDT INVESTMENT</span><span class="hs">· INVESTMENT OS</span></div>
+  <div class="hc">{session_label}</div>
+  <div class="hr"><span class="ht">{kst.strftime('%H:%M')}</span><span class="hz">KST</span><span class="hx">{kst.strftime('%b %d')} · ET {et.strftime('%H:%M')}</span></div>
+</div>
+<div class="main">
+{body}
+</div>
+<div class="ft">
+  <span class="ftl">{CODENAME} · {SYSTEM_VERSION}</span>
+  <span class="ftg">FRED·YAHOO·RSS</span>
+  <span class="ftg">NOT FINANCIAL ADVICE</span>
+  <span class="ftr">{kst.strftime('%b %d, %Y')} · {kst.strftime('%H:%M')} KST</span>
+</div>
+</div>
+</body>
+</html>"""
+
+
+def _build_html(data: dict, dt_utc: datetime, session: str = "full") -> str:
+    """F-2: 세션별 HTML 디스패처"""
+    if session in ("full", "weekly", "narrative"):
+        label = SESSION_LABELS.get(session, "Full <em>Brief</em>")
+        return _build_full_html(data, dt_utc, session_label=label)
+    else:
+        return _build_compact_html(data, dt_utc, session)
+
+
 async def _render_async(url: str, out_path: str) -> bool:
     try:
         from playwright.async_api import async_playwright
@@ -360,10 +614,10 @@ def build_html_dashboard(data: dict, session: str = "full", dt_utc: Optional[dat
             except Exception:
                 output_dir = Path("data/images")
         output_dir = Path(output_dir); output_dir.mkdir(parents=True, exist_ok=True)
-        fname = f"dashboard_full_{dt_utc.strftime('%Y%m%d_%H%M')}.png"
+        fname = f"dashboard_{session}_{dt_utc.strftime('%Y%m%d_%H%M')}.png"
         fpath = str(output_dir / fname)
-        logger.info(f"[HtmlDash] {VERSION} HTML 빌드 시작")
-        html = _build_html(data, dt_utc)
+        logger.info(f"[HtmlDash] {VERSION} HTML 빌드 시작 — session={session}")
+        html = _build_html(data, dt_utc, session=session)
         with tempfile.NamedTemporaryFile(mode="w", suffix=".html", delete=False, encoding="utf-8") as f:
             f.write(html); tmp_path = f.name
         logger.info("[HtmlDash] Playwright 렌더링 시작")

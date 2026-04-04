@@ -40,8 +40,8 @@ def generate_image(
 
     logger.info(f"[ImageGen] 이미지 생성 시작 — session={session}")
 
-    if session == "full":
-        # v1.8.0 신규: HTML/Playwright 풀버전 대시보드
+    # F-2: 전 세션 HTML/Playwright 우선 시도
+    try:
         from publishers.dashboard_html_builder import build_html_dashboard
         path = build_html_dashboard(
             data=data,
@@ -49,9 +49,16 @@ def generate_image(
             dt_utc=dt_utc,
             output_dir=output_dir,
         )
-    else:
-        # 기존: matplotlib 대시보드 (morning/intraday/close/weekly)
-        # ★ 절대 수정 금지 — 기존 로직 완전 유지
+        if path:
+            logger.info(f"[ImageGen] HTML 대시보드 생성 완료: {path}")
+            return path
+        logger.warning("[ImageGen] HTML 렌더링 실패 → matplotlib fallback")
+    except Exception as e:
+        logger.warning(f"[ImageGen] HTML 렌더링 예외 → matplotlib fallback: {e}")
+
+    # matplotlib fallback (Playwright 미설치 등)
+    # ★ dashboard_builder.py 절대 수정 금지 — 기존 로직 완전 유지
+    try:
         from publishers.dashboard_builder import build_dashboard
         path = build_dashboard(
             data=data,
@@ -59,6 +66,9 @@ def generate_image(
             dt_utc=dt_utc,
             output_dir=output_dir,
         )
+    except Exception as e:
+        logger.error(f"[ImageGen] matplotlib fallback도 실패: {e}")
+        path = None
 
     if path:
         logger.info(f"[ImageGen] 생성 완료: {path}")
