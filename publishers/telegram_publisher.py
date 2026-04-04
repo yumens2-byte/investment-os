@@ -18,6 +18,8 @@ logger = logging.getLogger(__name__)
 BOT_TOKEN    = os.getenv("TELEGRAM_BOT_TOKEN", "")
 FREE_CHAT_ID = os.getenv("TELEGRAM_FREE_CHANNEL_ID", "")
 PAID_CHAT_ID = os.getenv("TELEGRAM_PAID_CHANNEL_ID", "")
+EN_CHAT_ID   = os.getenv("TELEGRAM_EN_CHANNEL_ID", "")   # C-11: 영어 채널
+JP_CHAT_ID   = os.getenv("TELEGRAM_JP_CHANNEL_ID", "")   # C-11: 일본어 채널
 # 텔레그램은 무료 서비스 — DRY_RUN 무관하게 항상 실제 전송
 # X(Twitter)의 DRY_RUN과 독립적으로 동작
 API_BASE     = f"https://api.telegram.org/bot{BOT_TOKEN}"
@@ -32,6 +34,10 @@ def _chat_ids(channel: str) -> list[str]:
         return [c for c in [FREE_CHAT_ID, PAID_CHAT_ID] if c]
     if channel == "paid":
         return [PAID_CHAT_ID] if PAID_CHAT_ID else []
+    if channel == "en":    # C-11: 영어 채널
+        return [EN_CHAT_ID] if EN_CHAT_ID else []
+    if channel == "ja":    # C-11: 일본어 채널
+        return [JP_CHAT_ID] if JP_CHAT_ID else []
     return [FREE_CHAT_ID] if FREE_CHAT_ID else []
 
 
