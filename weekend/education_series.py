@@ -15,34 +15,52 @@ logger = logging.getLogger(__name__)
 
 # 주제 풀 (15개 → 약 30주 순환)
 TOPICS = [
+    # ── 입문 (10개) ──
     {"topic": "ETF란 무엇인가? — 주식 vs ETF vs 펀드 비교", "level": "입문"},
     {"topic": "VIX 지수 완벽 가이드 — 공포 지수의 모든 것", "level": "입문"},
-    {"topic": "레짐이란? — 강세/약세/변동성/위기 구분법", "level": "중급"},
     {"topic": "Fear & Greed Index 읽는 법", "level": "입문"},
-    {"topic": "매크로 지표 읽기 — 금리/유가/달러", "level": "중급"},
-    {"topic": "수익률 곡선과 경기침체 신호", "level": "중급"},
-    {"topic": "포지션 사이징 — 리스크에 따른 투자 비율", "level": "중급"},
-    {"topic": "섹터 로테이션 전략", "level": "중급"},
-    {"topic": "배당 ETF vs 성장 ETF", "level": "입문"},
-    {"topic": "환율이 미국 주식에 미치는 영향", "level": "중급"},
-    {"topic": "채권 TLT/TIPS 투자 가이드", "level": "중급"},
-    {"topic": "실적 시즌의 ETF 전략", "level": "고급"},
-    {"topic": "트레일링 스톱 vs 지정가 주문", "level": "입문"},
-    {"topic": "문화/유행에 따른 섹터 투자", "level": "고급"},
-    {"topic": "위기 시 현금 확보 전략", "level": "중급"},
+    {"topic": "배당 ETF vs 성장 ETF — 나에게 맞는 선택", "level": "입문"},
+    {"topic": "트레일링 스톱 vs 지정가 주문 — 주문 유형 마스터", "level": "입문"},
+    {"topic": "S&P500과 나스닥의 차이 — 지수 투자 기초", "level": "입문"},
+    {"topic": "분산투자의 원칙 — 계란을 한 바구니에 담지 마라", "level": "입문"},
+    {"topic": "PER·PBR·ROE — 기업 가치 3대 지표", "level": "입문"},
+    {"topic": "적립식 vs 거치식 투자 — DCA 전략의 힘", "level": "입문"},
+    {"topic": "미국 시장 거래 시간과 프리/애프터 마켓", "level": "입문"},
+    # ── 중급 (12개) ──
+    {"topic": "레짐이란? — 강세/약세/변동성/위기 구분법", "level": "중급"},
+    {"topic": "매크로 지표 읽기 — 금리/유가/달러 삼각관계", "level": "중급"},
+    {"topic": "수익률 곡선과 경기침체 신호 — 장단기 금리차", "level": "중급"},
+    {"topic": "포지션 사이징 — 리스크에 따른 투자 비율 조절", "level": "중급"},
+    {"topic": "섹터 로테이션 전략 — 경기 사이클별 유망 섹터", "level": "중급"},
+    {"topic": "환율이 미국 주식에 미치는 영향 — 원달러 환율", "level": "중급"},
+    {"topic": "채권 TLT/TIPS 투자 가이드 — 금리와 채권의 관계", "level": "중급"},
+    {"topic": "위기 시 현금 확보 전략 — 방어적 포트폴리오", "level": "중급"},
+    {"topic": "FOMC와 금리 결정 — 연준이 시장에 미치는 영향", "level": "중급"},
+    {"topic": "CPI와 인플레이션 — 물가가 주식에 미치는 영향", "level": "중급"},
+    {"topic": "고용지표 읽기 — NFP/실업률/실업수당 청구", "level": "중급"},
+    {"topic": "리밸런싱 전략 — 포트폴리오를 언제 어떻게 조정할까", "level": "중급"},
+    # ── 고급 (8개) ──
+    {"topic": "실적 시즌의 ETF 전략 — 어닝 서프라이즈 활용", "level": "고급"},
+    {"topic": "문화/유행에 따른 섹터 투자 — 테마 ETF", "level": "고급"},
+    {"topic": "변동성 매매 전략 — VIX 선물과 UVXY/SVXY", "level": "고급"},
+    {"topic": "옵션 기초 — 콜/풋으로 포트폴리오 헤지하기", "level": "고급"},
+    {"topic": "블랙스완과 테일리스크 — 극단적 시장 대비법", "level": "고급"},
+    {"topic": "GDP와 경기순환 — 경제 성장이 시장에 미치는 영향", "level": "고급"},
+    {"topic": "유동성과 연준 자산 — QE/QT가 시장에 미치는 영향", "level": "고급"},
+    {"topic": "글로벌 매크로 전략 — 미국/유럽/아시아 연동 분석", "level": "고급"},
 ]
 
 
 def is_education_week() -> bool:
-    return True  // 매주 실행
+    """매주 실행 (격주 제한 없음)"""
+    return True
 
 
 def _get_topic_index() -> int:
-    """현재 주차 기준 주제 인덱스 (순환)"""
+    """현재 주차 기준 주제 인덱스 (매주 순환)"""
     kst = datetime.now(timezone.utc) + timedelta(hours=9)
     week_num = kst.isocalendar()[1]
-    # 홀수 주만 실행하므로 week_num // 2 로 순번 결정
-    return (week_num // 2) % len(TOPICS)
+    return week_num % len(TOPICS)
 
 
 def generate_education_content() -> dict:
