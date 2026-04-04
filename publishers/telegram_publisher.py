@@ -361,6 +361,29 @@ def format_free_signal(data: dict, session: str = "morning") -> str:
         news_summary = data.get("news_summary", {})
         implication = news_summary.get("implication", "")
 
+        # G-1: 레짐 streak + snapshot delta
+        streak_str = ""
+        delta_str = ""
+        try:
+            from db.supabase_query import get_regime_streak, get_snapshot_delta
+            streak = get_regime_streak()
+            if streak.get("streak_days", 0) >= 2:
+                streak_str = f" (← {streak['streak_days']}일째 지속)"
+
+            delta = get_snapshot_delta(days=1)
+            if delta.get("has_data"):
+                parts = []
+                if "vix" in delta:
+                    d = delta["vix"]["delta"]
+                    parts.append(f"VIX {'▼' if d < 0 else '▲'}{abs(d):.1f}")
+                if "oil_wti" in delta:
+                    d = delta["oil_wti"]["delta"]
+                    parts.append(f"Oil {'▼' if d < 0 else '▲'}{abs(d):.1f}")
+                if parts:
+                    delta_str = f"\n📈 전일 대비: {' | '.join(parts)}"
+        except Exception:
+            pass  # G-1 조회 실패 시 기존 포맷 유지
+
         lines = [
             "🔔 <b>Close Summary</b>  |  미국 장 마감",
             "",
@@ -368,7 +391,11 @@ def format_free_signal(data: dict, session: str = "morning") -> str:
             f"{sp_col} SPY <b>{sp_sign}{abs(sp500):.2f}%</b>  |  VIX <b>{vix:.1f}</b>",
             f"💵 WTI <b>${oil:.1f}</b>  |  US10Y <b>{us10y:.2f}%</b>",
             "",
-            f"✅ 레짐: <b>{regime}</b>  {risk_e}",
+            f"✅ 레짐: <b>{regime}</b>  {risk_e}{streak_str}",
+        ]
+        if delta_str:
+            lines.append(delta_str)
+        lines += [
             "",
             "🔮 <b>내일 전망</b>",
             f"📌 전략: <b>{signal}</b> 유지{conf_str}",
