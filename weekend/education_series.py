@@ -134,23 +134,15 @@ def generate_education_content() -> dict:
                 f"{emoji_nums[i]} {p}" for i, p in enumerate(points[:3])
             )
 
-            # 트윗 포맷
+            # 트윗 포맷 (X Premium — 25,000자 제한, 축약 불필요)
             tweet = (
                 f"🎓 투자 교실 #{episode} | {title}\n\n"
                 f"{intro}\n\n"
                 f"📌 핵심:\n{points_tweet}\n\n"
-                f"💡 요약: {takeaway}\n\n"
+                f"💡 예시: {example}\n\n"
+                f"🎯 요약: {takeaway}\n\n"
                 f"#투자교실 #ETF교육 #투자공부"
             )
-
-            # 280자 초과 시 축약
-            if len(tweet) > 280:
-                tweet = (
-                    f"🎓 투자 교실 #{episode} | {title}\n\n"
-                    f"📌 핵심:\n{points_tweet}\n\n"
-                    f"💡 {takeaway}\n\n"
-                    f"#투자교실 #ETF교육"
-                )
 
             # TG 포맷
             telegram = (
