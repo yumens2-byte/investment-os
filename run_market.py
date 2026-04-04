@@ -123,6 +123,27 @@ def run(session: str) -> dict:
     except Exception as e:
         logger.warning(f"[Step 1-G] Gemini 뉴스 분석 실패 (영향 없음): {e}")
 
+    # ── Step 1-YT: 유튜버 영상 요약 (C-16) ────────────────────
+    streamer_result = None
+    try:
+        from collectors.youtube_rss import collect_youtube_summaries
+        from engines.streamer_analyzer import analyze_streamer_content
+        yt_data = collect_youtube_summaries()
+        if yt_data.get("success") and yt_data.get("videos"):
+            streamer_result = analyze_streamer_content(yt_data["videos"])
+            if streamer_result.get("success"):
+                logger.info(
+                    f"[Step 1-YT] 유튜버 요약 완료 | "
+                    f"방향={streamer_result.get('direction', '?')} | "
+                    f"영상 {streamer_result.get('video_count', 0)}건"
+                )
+            else:
+                logger.info("[Step 1-YT] 유튜버 요약 스킵")
+        else:
+            logger.info("[Step 1-YT] 최근 영상 없음 → 스킵")
+    except Exception as e:
+        logger.warning(f"[Step 1-YT] 유튜버 요약 실패 (영향 없음): {e}")
+
     # ── Step 2: Macro Engine ───────────────────────────────────
     # Tier 1+2 확장 (2026-04-01): fear_greed, crypto, etf_prices,
     # tier2_data를 macro_engine에 전달하여 확장 시그널 산출에 활용
@@ -281,6 +302,15 @@ def run(session: str) -> dict:
             data["output_helpers"]["top_headlines"] = headlines[:3]
     except Exception:
         pass
+
+    # C-16: 유튜버 요약 결과 주입
+    if streamer_result and streamer_result.get("success"):
+        data["streamer_consensus"] = {
+            "direction": streamer_result.get("direction", "neutral"),
+            "summary_points": streamer_result.get("summary_points", []),
+            "tweet": streamer_result.get("tweet", ""),
+            "video_count": streamer_result.get("video_count", 0),
+        }
 
     # ── Step 7: Validation ─────────────────────────────────────
     logger.info("[Step 7] Validation 실행")

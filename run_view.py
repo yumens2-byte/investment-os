@@ -166,6 +166,18 @@ def run(mode: str = "tweet", session: str = None) -> dict:
 
     tweet_id = pub_result.get("tweet_id") or pub_result.get("tweet_ids", [""])[0]
 
+    # ── Step 6-YT: C-16 유튜버 요약 트윗 (morning만) ──────────
+    if session_type == "morning":
+        try:
+            streamer = data.get("streamer_consensus", {})
+            streamer_tweet = streamer.get("tweet", "")
+            if streamer_tweet:
+                from publishers.x_publisher import publish_tweet as _pub_yt
+                _pub_yt(streamer_tweet)
+                logger.info(f"[Step 6-YT] 유튜버 요약 트윗 발행 ({streamer.get('direction', '?')})")
+        except Exception as e:
+            logger.warning(f"[Step 6-YT] 유튜버 트윗 발행 실패 (영향 없음): {e}")
+
     # ── Step 6-TG: 텔레그램 발행 (전체 세션) ─────────────────────
     logger.info(f"[Step 6-TG] 텔레그램 발행 시작 (session={session_type})")
     try:
