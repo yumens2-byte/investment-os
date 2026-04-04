@@ -76,6 +76,7 @@ def _determine_trading_signal(
     """
     포트폴리오 전체 Trading Signal 결정.
     BUY / ADD / HOLD / REDUCE / HEDGE / SELL
+    + E-3: signal_confidence (30~95%) 산출
     """
     buy_watch = [
         etf for etf in ETF_CORE
@@ -109,8 +110,14 @@ def _determine_trading_signal(
             signal = "HOLD"
             reason = "저위험 — 광범위 모멘텀 제한적"
 
+    # E-3: 시그널 신뢰도 산출
+    confidence = _compute_signal_confidence(
+        risk_level, len(buy_watch), len(hold), len(reduce)
+    )
+
     return {
         "trading_signal": signal,
+        "signal_confidence": confidence,
         "signal_reason": reason,
         "signal_matrix": {
             "buy_watch": buy_watch,
@@ -118,6 +125,34 @@ def _determine_trading_signal(
             "reduce": reduce,
         },
     }
+
+
+def _compute_signal_confidence(
+    risk_level: str, buy_count: int, hold_count: int, reduce_count: int
+) -> int:
+    """
+    E-3: 시그널 신뢰도 (30~95%).
+    ETF 시그널 일치도 + 리스크 레벨 기반.
+
+    일치도 높을수록 = 같은 방향 ETF가 많을수록 신뢰도 ↑
+    """
+    total = max(1, buy_count + hold_count + reduce_count)
+
+    if risk_level == "HIGH":
+        # HEDGE 시그널 — reduce가 많을수록 신뢰도 높음
+        agreement = reduce_count / total
+        base = 50 + int(agreement * 40)  # 50~90
+    elif risk_level == "LOW":
+        # BUY/HOLD — buy가 많을수록 신뢰도 높음
+        agreement = buy_count / total
+        base = 50 + int(agreement * 40)  # 50~90
+    else:  # MEDIUM
+        # HOLD/ADD — 방향성 혼재 시 낮은 신뢰도
+        dominant = max(buy_count, hold_count, reduce_count)
+        agreement = dominant / total
+        base = 40 + int(agreement * 35)  # 40~75
+
+    return max(30, min(95, base))
 
 
 # ──────────────────────────────────────────────────────────────

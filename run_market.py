@@ -137,6 +137,15 @@ def run(session: str) -> dict:
     except Exception as e:
         logger.warning(f"[Step 2-T2] Tier 2 데이터 수집 실패 (영향 없음): {e}")
 
+    # D-2: Put/Call Ratio 수집
+    pcr_data = {}
+    try:
+        from collectors.yahoo_finance import collect_put_call_ratio
+        pcr_data = collect_put_call_ratio()
+        logger.info(f"[Step 2-PCR] PCR={pcr_data.get('pcr',0)} ({pcr_data.get('pcr_state','?')})")
+    except Exception as e:
+        logger.warning(f"[Step 2-PCR] PCR 수집 실패 (VIX만 적용): {e}")
+
     from engines.macro_engine import run_macro_engine
     macro_result = run_macro_engine(
         snapshot,
@@ -146,6 +155,7 @@ def run(session: str) -> dict:
         crypto=crypto,               # T1-2: BTC → risk appetite 보조
         etf_prices=etf_prices,       # T1-4: XLF/GLD → 금융안정 보강
         tier2_data=tier2_data,       # T2-1,2,5: Breadth/VolTerm/EM
+        pcr_data=pcr_data,           # T1-5: Put/Call Ratio (D-2)
         # T1-3: snapshot 내 sp500/nasdaq 등락률은 이미 snapshot에 포함
         # T2-3,4: fred_data 내 initial_claims/inflation_exp는 이미 fred_data에 포함
     )
@@ -207,6 +217,15 @@ def run(session: str) -> dict:
     except Exception as e:
         logger.warning(f"[Step 4-SMA] SMA 수집 실패 (당일 변동률만 적용): {e}")
 
+    # D-4: ETF 거래량 트렌드 수집 (자금 흐름 보정)
+    volume_data = {}
+    try:
+        from collectors.yahoo_finance import collect_etf_volume_trend
+        volume_data = collect_etf_volume_trend()
+        logger.info(f"[Step 4-VOL] ETF 거래량 수집 완료: {len(volume_data)}개")
+    except Exception as e:
+        logger.warning(f"[Step 4-VOL] 거래량 수집 실패 (가격만 적용): {e}")
+
     from engines.etf_engine import run_etf_engine
     etf_result = run_etf_engine(
         regime=regime_result["market_regime"],
@@ -214,6 +233,7 @@ def run(session: str) -> dict:
         market_score=market_score,
         etf_prices=etf_prices,
         sma_data=sma_data,
+        volume_data=volume_data,
     )
 
     # ── Step 5: Risk Engine ────────────────────────────────────

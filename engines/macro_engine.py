@@ -291,6 +291,24 @@ def _score_xlf_gld_relative(etf_prices: dict) -> dict:
     }
 
 
+def _score_put_call_ratio(pcr_data: dict) -> dict:
+    """
+    [T1-5] CBOE Put/Call Ratio → 옵션 시장 심리 시그널 (D-2)
+    ──────────────────────────────────────────────────────
+    PCR > 1.2 → Extreme Bearish (score 4) — 과도한 풋 매수
+    PCR > 1.0 → Bearish (score 3) — 풋 우세
+    PCR 0.7~1.0 → Neutral (score 2) — 균형
+    PCR < 0.7 → Bullish/과열 (score 1) — 과도한 콜 매수
+    """
+    if not pcr_data or pcr_data.get("pcr", 0) <= 0:
+        return {"pcr_score": 2, "pcr_state": "Unknown", "pcr_value": 0.0}
+
+    return {
+        "pcr_score": pcr_data.get("pcr_score", 2),
+        "pcr_state": pcr_data.get("pcr_state", "Unknown"),
+        "pcr_value": pcr_data.get("pcr", 0.0),
+    }
+
 
 # ──────────────────────────────────────────────────────────────
 # 1-C. Tier 2 확장 시그널 (2026-04-01 추가)
@@ -817,6 +835,7 @@ def run_macro_engine(
     crypto: dict = None,
     etf_prices: dict = None,
     tier2_data: dict = None,
+    pcr_data: dict = None,
 ) -> dict:
     """
     시장 스냅샷 + FRED + 뉴스 감성 + 확장 데이터 → 신호 + Market Score 반환.
@@ -868,11 +887,12 @@ def run_macro_engine(
     signals.update(_score_yield_curve(yield_curve_inverted))
     signals.update(_score_news_sentiment(news_sentiment))
 
-    # ── Tier 1 확장 4개 시그널 산출 (2026-04-01 추가) ──
+    # ── Tier 1 확장 5개 시그널 산출 (2026-04-01 + D-2) ──
     signals.update(_score_fear_greed(fear_greed))          # T1-1
     signals.update(_score_crypto_risk(crypto))             # T1-2
     signals.update(_score_equity_momentum(snapshot))        # T1-3
     signals.update(_score_xlf_gld_relative(etf_prices))    # T1-4
+    signals.update(_score_put_call_ratio(pcr_data))        # T1-5 (D-2)
 
     # ── Tier 2 확장 5개 시그널 산출 (2026-04-01 추가) ──
     # 각 함수는 데이터가 None이어도 안전하게 중립값 반환

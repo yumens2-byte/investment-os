@@ -292,13 +292,17 @@ def format_free_signal(data: dict, session: str = "morning") -> str:
         # 뉴스 헤드라인 추출
         headlines = data.get("output_helpers", {}).get("top_headlines", [])
 
+        # E-3: 시그널 신뢰도
+        confidence = data.get("trading_signal", {}).get("signal_confidence", 0)
+        conf_str = f" ({confidence}%)" if confidence > 0 else ""
+
         lines = [
             "🌅 <b>Morning Brief</b>",
             "",
             f"{risk_e} {regime}  |  Risk <b>{risk}</b>",
             "",
             "📋 <b>오늘의 전략</b>",
-            f"{sig_e} SIGNAL: <b>{signal}</b>",
+            f"{sig_e} SIGNAL: <b>{signal}</b>{conf_str}",
         ]
         if buy:
             lines.append(f"🔍 Watch: <b>{' · '.join(buy)}</b>")
@@ -308,6 +312,19 @@ def format_free_signal(data: dict, session: str = "morning") -> str:
             lines.append(f"📉 Reduce: {' · '.join(reduce)}")
         if reason:
             lines.append(f"\n💡 <i>{reason}</i>")
+
+        # F-1: 오늘 경제 이벤트 (event_calendar 연동)
+        try:
+            from core.event_checker import check_today
+            event_info = check_today()
+            if event_info.get("has_event") and event_info.get("event"):
+                ev = event_info["event"]
+                ev_name = ev.get("name", "")
+                if ev_name:
+                    prefix = "📅 <b>오늘</b>" if event_info.get("is_d_day") else "📅 <b>내일</b>"
+                    lines += ["", f"{prefix}: {ev_name}"]
+        except Exception:
+            pass
 
         # BTC 추가
         if btc:
@@ -334,8 +351,16 @@ def format_free_signal(data: dict, session: str = "morning") -> str:
 
         lines += ["", tags]
 
-    # ── Close Summary — 결과 중심 ────────────────────
+    # ── Close Summary — 결과 중심 + 내일 전망 (F-1) ────────────
     elif session == "close":
+        # F-1: 시그널 신뢰도
+        confidence = data.get("trading_signal", {}).get("signal_confidence", 0)
+        conf_str = f" ({confidence}%)" if confidence > 0 else ""
+
+        # F-1: 뉴스 요약
+        news_summary = data.get("news_summary", {})
+        implication = news_summary.get("implication", "")
+
         lines = [
             "🔔 <b>Close Summary</b>  |  미국 장 마감",
             "",
@@ -343,10 +368,18 @@ def format_free_signal(data: dict, session: str = "morning") -> str:
             f"{sp_col} SPY <b>{sp_sign}{abs(sp500):.2f}%</b>  |  VIX <b>{vix:.1f}</b>",
             f"💵 WTI <b>${oil:.1f}</b>  |  US10Y <b>{us10y:.2f}%</b>",
             "",
-            f"✅ 레짐 유지: <b>{regime}</b>  {risk_e}",
-            f"📌 내일 전략: <b>{signal}</b> 유지",
+            f"✅ 레짐: <b>{regime}</b>  {risk_e}",
+            "",
+            "🔮 <b>내일 전망</b>",
+            f"📌 전략: <b>{signal}</b> 유지{conf_str}",
         ]
-        if summary:
+        if buy:
+            lines.append(f"🔍 주목: <b>{' · '.join(buy)}</b>")
+        if reduce:
+            lines.append(f"📉 경계: {' · '.join(reduce)}")
+        if implication:
+            lines.append(f"\n💡 <i>{implication}</i>")
+        elif summary:
             lines.append(f"\n<i>{summary}</i>")
         lines += ["", tags]
 

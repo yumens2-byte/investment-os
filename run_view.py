@@ -315,6 +315,17 @@ def run(mode: str = "tweet", session: str = None) -> dict:
             free_text = format_free_signal(data, session=session_type)
             send_message(free_text, channel="free")
 
+            # D-3: morning 세션에 오늘 실적 발표 기업 추가
+            if session_type == "morning":
+                try:
+                    from engines.earnings_checker import get_today_earnings
+                    earnings = get_today_earnings()
+                    if earnings.get("success") and earnings.get("tg_line"):
+                        send_message(earnings["tg_line"], channel="free")
+                        logger.info(f"[Step 6-TG] D-3 실적 캘린더: {len(earnings.get('earnings',[]))}개")
+                except Exception as ee:
+                    logger.warning(f"[Step 6-TG] D-3 실적 캘린더 실패 (무시): {ee}")
+
         logger.info("[Step 6-TG] 텔레그램 발행 완료")
     except Exception as e:
         logger.warning(f"[Step 6-TG] 텔레그램 발행 예외 (X 발행 영향 없음): {e}")

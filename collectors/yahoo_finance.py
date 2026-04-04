@@ -231,6 +231,123 @@ def collect_etf_sma() -> dict:
     return result
 
 
+# ──────────────────────────────────────────────────────────────
+# D-2: CBOE Put/Call Ratio 수집 (2026-04-04)
+# ──────────────────────────────────────────────────────────────
+
+def collect_put_call_ratio() -> dict:
+    """
+    D-2: CBOE Equity Put/Call Ratio 수집.
+
+    PCR > 1.2 → Extreme Bearish (과도한 풋 매수)
+    PCR > 1.0 → Bearish (풋 우세)
+    PCR 0.7~1.0 → Neutral
+    PCR < 0.7 → Bullish/과열 경고 (과도한 콜 매수)
+
+    Returns:
+        {"pcr": 0.85, "pcr_state": "Neutral", "pcr_score": 2}
+    """
+    logger.info("[YF_PCR] Put/Call Ratio 수집 시작")
+
+    try:
+        symbol = "^CPCE"
+        ticker = yf.Ticker(symbol)
+        hist = ticker.history(period="5d")
+
+        pcr = None
+        if hist is not None and len(hist) > 0:
+            pcr = round(float(hist["Close"].iloc[-1]), 3)
+        else:
+            # requests fallback
+            try:
+                _, pcr_val = _safe_fetch_price(symbol)
+                if pcr_val is not None:
+                    pcr = round(pcr_val, 3)
+            except Exception:
+                pass
+
+        if pcr is None or pcr <= 0:
+            logger.warning("[YF_PCR] PCR 수집 실패 → 기본값")
+            return {"pcr": 0.0, "pcr_state": "Unknown", "pcr_score": 2}
+
+        # 상태 판정
+        if pcr > 1.2:
+            state, score = "Extreme Bearish", 4
+        elif pcr > 1.0:
+            state, score = "Bearish", 3
+        elif pcr >= 0.7:
+            state, score = "Neutral", 2
+        else:
+            state, score = "Bullish (Complacency)", 1
+
+        logger.info(f"[YF_PCR] PCR={pcr} → {state} (score={score})")
+        return {"pcr": pcr, "pcr_state": state, "pcr_score": score}
+
+    except Exception as e:
+        logger.warning(f"[YF_PCR] 수집 실패 (무시): {e}")
+        return {"pcr": 0.0, "pcr_state": "Unknown", "pcr_score": 2}
+
+
+# ──────────────────────────────────────────────────────────────
+# D-4: ETF 섹터별 자금 흐름 (거래량 트렌드) (2026-04-04)
+# ──────────────────────────────────────────────────────────────
+
+def collect_etf_volume_trend() -> dict:
+    """
+    D-4: ETF 6종목의 20일 평균 거래량 대비 오늘 거래량 비율.
+
+    ratio > 1.3 → "inflow" (자금 유입 추정, 비중 상향 근거)
+    ratio < 0.7 → "outflow" (자금 유출 추정, 비중 하향 근거)
+    else → "normal"
+
+    Returns:
+        {
+          "XLE": {"today_vol": 25000000, "avg_vol": 18000000, "ratio": 1.39, "flow": "inflow"},
+          "QQQM": {"today_vol": 5000000, "avg_vol": 8000000, "ratio": 0.63, "flow": "outflow"},
+          ...
+        }
+    """
+    logger.info("[YF_VOL] ETF 거래량 트렌드 수집 시작")
+    result = {}
+
+    for etf in ETF_CORE:
+        try:
+            symbol = TICKER_MAP.get(etf, etf)
+            ticker = yf.Ticker(symbol)
+            hist = ticker.history(period="1mo")
+
+            if hist is None or len(hist) < 5 or "Volume" not in hist.columns:
+                result[etf] = {"today_vol": 0, "avg_vol": 0, "ratio": 1.0, "flow": "normal"}
+                continue
+
+            volumes = hist["Volume"].tolist()
+            today_vol = volumes[-1] if volumes else 0
+            avg_vol = sum(volumes[:-1]) / max(1, len(volumes) - 1) if len(volumes) > 1 else today_vol
+
+            ratio = today_vol / max(1, avg_vol)
+
+            if ratio > 1.3:
+                flow = "inflow"
+            elif ratio < 0.7:
+                flow = "outflow"
+            else:
+                flow = "normal"
+
+            result[etf] = {
+                "today_vol": int(today_vol),
+                "avg_vol": int(avg_vol),
+                "ratio": round(ratio, 2),
+                "flow": flow,
+            }
+        except Exception as e:
+            logger.warning(f"[YF_VOL] {etf} 거래량 수집 실패 (무시): {e}")
+            result[etf] = {"today_vol": 0, "avg_vol": 0, "ratio": 1.0, "flow": "normal"}
+
+    flows = {etf: d["flow"] for etf, d in result.items()}
+    logger.info(f"[YF_VOL] 수집 완료: {flows}")
+    return result
+
+
 def _fetch_closes_fallback(symbol: str, days: int = 22) -> list:
     """SMA용 종가 리스트 fallback (requests 직접 호출)"""
     try:
