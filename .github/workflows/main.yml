@@ -45,7 +45,6 @@ env:
   X_ACCESS_TOKEN: ${{ secrets.X_ACCESS_TOKEN }}
   X_ACCESS_TOKEN_SECRET: ${{ secrets.X_ACCESS_TOKEN_SECRET }}
   DRY_RUN: ${{ secrets.DRY_RUN }}
-  FORCE_RUN: ${{ secrets.FORCE_RUN || 'false' }}
   LOG_LEVEL: INFO
   TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
   TELEGRAM_FREE_CHANNEL_ID: ${{ secrets.TELEGRAM_FREE_CHANNEL_ID }}
