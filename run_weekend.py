@@ -74,6 +74,33 @@ def _run_saturday() -> dict:
 
     if not result.get("success"):
         logger.warning(f"[run_weekend] 주간 리뷰 생성 실패: {result.get('error')}")
+
+        # ── C-4: 주간 리뷰 실패해도 격주 교육은 독립 실행 ──
+        try:
+            from weekend.education_series import is_education_week, generate_education_content
+            if is_education_week():
+                logger.info("[run_weekend] C-4 격주 교육 콘텐츠 생성 시작")
+                edu = generate_education_content()
+                if edu.get("success"):
+                    try:
+                        from publishers.x_publisher import publish_tweet as _pub_edu
+                        _pub_edu(edu["tweet"])
+                        logger.info(f"[run_weekend] C-4 X 발행: #{edu['episode']} {edu['topic']}")
+                    except Exception as xe:
+                        logger.warning(f"[run_weekend] C-4 X 발행 실패: {xe}")
+                    try:
+                        from publishers.telegram_publisher import send_message as _send_edu
+                        _send_edu(edu["telegram"], channel="free")
+                        logger.info(f"[run_weekend] C-4 TG 발행 완료: #{edu['episode']}")
+                    except Exception as te:
+                        logger.warning(f"[run_weekend] C-4 TG 발행 실패: {te}")
+                else:
+                    logger.info(f"[run_weekend] C-4 교육 스킵: {edu.get('reason', '?')}")
+            else:
+                logger.info("[run_weekend] C-4 격주 아님 — 교육 콘텐츠 스킵")
+        except Exception as ee:
+            logger.warning(f"[run_weekend] C-4 교육 실패 (영향 없음): {ee}")
+
         return {"success": False, "day": "sat", "type": "weekly_review", "error": result.get("error")}
 
     # ── X 발행 ──
