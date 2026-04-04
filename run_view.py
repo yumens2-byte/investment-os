@@ -231,6 +231,22 @@ def run(mode: str = "tweet", session: str = None) -> dict:
             except Exception as e:
                 logger.warning(f"[Step 6-TG] C-3 AI ETF 근거 실패 (무시): {e}")
 
+            # C-13: Gemini Vision 차트 분석 (유료 채널)
+            if image_path:
+                try:
+                    from engines.chart_analyzer import analyze_chart
+                    chart = analyze_chart(image_path, data)
+                    if chart.get("success"):
+                        send_message(chart["telegram"], channel="paid")
+                        logger.info(
+                            f"[Step 6-TG] C-13 차트 분석 발행 완료 | "
+                            f"trend={chart['trend']}"
+                        )
+                    else:
+                        logger.info(f"[Step 6-TG] C-13 차트 분석 스킵: {chart.get('reason', '?')}")
+                except Exception as ve:
+                    logger.warning(f"[Step 6-TG] C-13 차트 분석 실패 (영향 없음): {ve}")
+
             # B-21B: 카드뉴스 3장 유료 채널 발행
             try:
                 from comic.card_news_generator import generate_cards
@@ -302,6 +318,20 @@ def run(mode: str = "tweet", session: str = None) -> dict:
         logger.info("[Step 6-TG] 텔레그램 발행 완료")
     except Exception as e:
         logger.warning(f"[Step 6-TG] 텔레그램 발행 예외 (X 발행 영향 없음): {e}")
+
+    # ── Step 6-ML: 다국어 발행 (C-11) ─────────────────────────
+    try:
+        from publishers.translator import publish_multilingual, TELEGRAM_EN_CHANNEL_ID, TELEGRAM_JP_CHANNEL_ID
+        if TELEGRAM_EN_CHANNEL_ID or TELEGRAM_JP_CHANNEL_ID:
+            # 무료 채널 텍스트를 기준으로 번역
+            _ml_text = format_free_signal(data, session=session_type) if session_type != "narrative" else ""
+            if _ml_text:
+                ml_result = publish_multilingual(_ml_text)
+                _langs = [l for l, v in ml_result.items() if v]
+                if _langs:
+                    logger.info(f"[Step 6-ML] 다국어 발행 완료: {', '.join(_langs)}")
+    except Exception as me:
+        logger.warning(f"[Step 6-ML] 다국어 발행 실패 (영향 없음): {me}")
 
     # ── Step 7: 이력 기록 ──────────────────────────────────────
     if pub_result.get("success"):
