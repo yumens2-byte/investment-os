@@ -374,3 +374,36 @@ def update_novel_status(publish_date: str, status: str) -> bool:
     except Exception as e:
         logger.warning(f"[DailyStore] comic_novels 상태 변경 실패: {e}")
         return False
+
+
+def get_last_novel_episode_no() -> int:
+    """
+    C-7: comic_novels에서 마지막 적재된 에피소드 번호 조회.
+    episode_range "EP.03~EP.05" → 5 반환.
+    데이터 없으면 0 반환.
+    """
+    import re as _re
+    try:
+        client = _get_client()
+        result = client.table("comic_novels") \
+            .select("episode_range") \
+            .order("publish_date", desc=True) \
+            .limit(1) \
+            .execute()
+
+        if not result.data or len(result.data) == 0:
+            return 0
+
+        ep_range = result.data[0].get("episode_range", "")
+        # "EP.03~EP.05" → 마지막 숫자 5 추출
+        # "EP.10~EP.12" → 12
+        # "EP.01~EP.02" → 2
+        nums = _re.findall(r'(\d+)', ep_range)
+        if nums:
+            last_no = max(int(n) for n in nums)
+            logger.info(f"[DailyStore] 마지막 소설 에피소드: {last_no} ({ep_range})")
+            return last_no
+        return 0
+    except Exception as e:
+        logger.warning(f"[DailyStore] 마지막 에피소드 조회 실패: {e}")
+        return 0

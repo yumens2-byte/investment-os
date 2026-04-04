@@ -42,63 +42,73 @@ def _get_week_label() -> str:
 
 def get_episodes_from_notion() -> list:
     """
-    Notion 허브 하위 페이지 중 '에피소드'가 포함된 페이지 검색.
-    최근 7일 이내 수정된 에피소드만 필터링.
+    Notion 허브 하위 페이지 중 에피소드 페이지 검색.
+    Supabase에 마지막 적재된 에피소드 번호 이후만 필터링.
+    제목 형식: "[에피소드N]" 또는 "Ep N" 모두 지원.
     """
     if not NOTION_API_KEY:
         logger.warning("[ComicNovel] NOTION_API_KEY 미설정")
         return []
 
+    # ── 마지막 적재 에피소드 번호 조회 ──
+    last_ep = 0
+    try:
+        from db.daily_store import get_last_novel_episode_no
+        last_ep = get_last_novel_episode_no()
+        logger.info(f"[ComicNovel] 마지막 적재 에피소드: EP.{last_ep:02d}")
+    except Exception as e:
+        logger.warning(f"[ComicNovel] 마지막 에피소드 조회 실패 (전체 조회): {e}")
+
     try:
         import requests
-        # Notion Search API로 에피소드 검색
-        resp = requests.post(
-            "https://api.notion.com/v1/search",
-            headers=_notion_headers(),
-            json={
-                "query": "에피소드",
-                "filter": {"property": "object", "value": "page"},
-                "sort": {"direction": "descending", "timestamp": "last_edited_time"},
-                "page_size": 10,
-            },
-            timeout=15,
-        )
-        if resp.status_code != 200:
-            logger.warning(f"[ComicNovel] Notion 검색 실패: {resp.status_code}")
-            return []
-
-        results = resp.json().get("results", [])
-        episodes = []
-        cutoff = datetime.now(timezone.utc) - timedelta(days=8)
-
-        for page in results:
-            title_parts = page.get("properties", {}).get("title", {}).get("title", [])
-            title = "".join(t.get("plain_text", "") for t in title_parts) if title_parts else ""
-
-            if "에피소드" not in title:
+        # Notion Search API로 에피소드 검색 (두 형식 모두 커버)
+        all_episodes = []
+        for query_keyword in ["에피소드", "Ep"]:
+            resp = requests.post(
+                "https://api.notion.com/v1/search",
+                headers=_notion_headers(),
+                json={
+                    "query": query_keyword,
+                    "filter": {"property": "object", "value": "page"},
+                    "sort": {"direction": "descending", "timestamp": "last_edited_time"},
+                    "page_size": 20,
+                },
+                timeout=15,
+            )
+            if resp.status_code != 200:
                 continue
 
-            # 에피소드 번호 추출
-            ep_match = re.search(r'에피소드\s*(\d+)', title)
-            if not ep_match:
-                continue
+            results = resp.json().get("results", [])
+            for page in results:
+                title_parts = page.get("properties", {}).get("title", {}).get("title", [])
+                title = "".join(t.get("plain_text", "") for t in title_parts) if title_parts else ""
 
-            last_edited = page.get("last_edited_time", "")
-            if last_edited:
-                edit_dt = datetime.fromisoformat(last_edited.replace("Z", "+00:00"))
-                if edit_dt < cutoff:
+                # 에피소드 번호 추출 (두 형식 지원)
+                # "[에피소드10]" 또는 "Ep 01" 또는 "Ep.10"
+                ep_match = re.search(r'(?:에피소드|Ep\s*\.?\s*)(\d+)', title)
+                if not ep_match:
                     continue
 
-            episodes.append({
-                "page_id": page["id"],
-                "episode_no": int(ep_match.group(1)),
-                "title": title,
-                "last_edited": last_edited,
-            })
+                ep_no = int(ep_match.group(1))
 
-        episodes.sort(key=lambda x: x["episode_no"])
-        logger.info(f"[ComicNovel] Notion에서 {len(episodes)}개 에피소드 발견")
-        return episodes
+                # 이미 적재된 에피소드는 스킵
+                if ep_no <= last_ep:
+                    continue
+
+                # 중복 제거 (page_id 기준)
+                if any(e["page_id"] == page["id"] for e in all_episodes):
+                    continue
+
+                all_episodes.append({
+                    "page_id": page["id"],
+                    "episode_no": ep_no,
+                    "title": title,
+                    "last_edited": page.get("last_edited_time", ""),
+                })
+
+        all_episodes.sort(key=lambda x: x["episode_no"])
+        logger.info(f"[ComicNovel] Notion에서 {len(all_episodes)}개 신규 에피소드 발견 (EP.{last_ep:02d} 이후)")
+        return all_episodes
 
     except Exception as e:
         logger.warning(f"[ComicNovel] Notion 조회 실패: {e}")
