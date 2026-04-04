@@ -261,3 +261,121 @@ def generate_image(prompt: str, output_path: str = None) -> dict:
     logger.warning(f"[GeminiGW] 이미지 전부 실패 | error={last_error[:100]}")
     return {"success": False, "image_bytes": None, "image_path": None,
             "key_used": "", "error": last_error}
+
+
+# ──────────────────────────────────────────────────────────────
+# C-13: Gemini Vision — 이미지 입력 분석 (2026-04-04)
+# ──────────────────────────────────────────────────────────────
+
+def analyze_image(
+    image_path: str,
+    prompt: str,
+    model: str = "flash-lite",
+    response_json: bool = True,
+    max_tokens: int = 500,
+    temperature: float = 0.3,
+) -> dict:
+    """
+    이미지 + 텍스트 프롬프트 → Gemini Vision 분석.
+    Main/Sub/Sub2 키 자동 전환.
+
+    Args:
+        image_path: PNG/JPG 파일 경로
+        prompt: 분석 프롬프트 (텍스트)
+        model: 모델명 (flash-lite 등)
+        response_json: True면 JSON 파싱 시도
+        max_tokens: 최대 토큰
+        temperature: 창의성
+
+    Returns:
+        {
+          "success": True/False,
+          "text": "응답 텍스트",
+          "data": {...} (response_json=True일 때),
+          "key_used": "main"|"sub"|"sub2",
+          "error": None|"에러",
+        }
+    """
+    from google.genai import types
+
+    if not GEMINI_API_KEY:
+        return _fail_result("GEMINI_API_KEY 미설정")
+
+    # 이미지 파일 읽기
+    try:
+        with open(image_path, "rb") as f:
+            image_bytes = f.read()
+    except Exception as e:
+        return _fail_result(f"이미지 파일 읽기 실패: {e}")
+
+    if len(image_bytes) < 100:
+        return _fail_result("이미지 파일이 너무 작음")
+
+    # mime type 판별
+    mime = "image/png" if image_path.lower().endswith(".png") else "image/jpeg"
+    model_name = MODEL_MAP.get(model, MODEL_MAP["flash-lite"])
+    keys = _build_keys()
+
+    for key_label, api_key in keys:
+        try:
+            client = _get_client(api_key)
+
+            contents = [
+                types.Part.from_bytes(data=image_bytes, mime_type=mime),
+                prompt,
+            ]
+
+            config = types.GenerateContentConfig(
+                max_output_tokens=max_tokens,
+                temperature=temperature,
+            )
+
+            response = client.models.generate_content(
+                model=model_name,
+                contents=contents,
+                config=config,
+            )
+
+            text = response.text.strip() if response.text else ""
+
+            if not text:
+                logger.warning(f"[GeminiGW] Vision 빈 응답 | key={key_label}")
+                continue
+
+            result = {
+                "success": True,
+                "text": text,
+                "data": None,
+                "model": model_name,
+                "key_used": key_label,
+                "error": None,
+            }
+
+            # JSON 파싱
+            if response_json:
+                try:
+                    import json
+                    clean = text.strip()
+                    if clean.startswith("```"):
+                        clean = clean.split("\n", 1)[-1]
+                    if clean.endswith("```"):
+                        clean = clean.rsplit("```", 1)[0]
+                    result["data"] = json.loads(clean.strip())
+                except (json.JSONDecodeError, ValueError):
+                    result["data"] = None
+
+            logger.info(
+                f"[GeminiGW] Vision 성공 | model={model_name} | "
+                f"key={key_label} | len={len(text)}"
+            )
+            return result
+
+        except Exception as e:
+            err = str(e)
+            if "429" in err or "quota" in err.lower() or "RESOURCE_EXHAUSTED" in err:
+                logger.warning(f"[GeminiGW] Vision 429 | key={key_label} → 다음 키")
+                continue
+            logger.warning(f"[GeminiGW] Vision 실패 | key={key_label} | {err[:80]}")
+            return _fail_result(err)
+
+    return _fail_result("Vision 전부 실패 (429)")
