@@ -4,7 +4,7 @@ publishers/translator.py (C-11)
 Gemini 기반 다국어 번역 모듈
 
 한국어 TG 콘텐츠를 영어/일본어로 번역하여
-다국어 TG 채널에 발행.
+동일 무료 채널에 함께 발행.
 
 Gemini 실패 시 스킵 (한국어 발행에 영향 없음).
 """
@@ -13,9 +13,8 @@ import os
 
 logger = logging.getLogger(__name__)
 
-# 다국어 TG 채널 ID (환경변수)
-TELEGRAM_EN_CHANNEL_ID = os.getenv("TELEGRAM_EN_CHANNEL_ID", "")
-TELEGRAM_JP_CHANNEL_ID = os.getenv("TELEGRAM_JP_CHANNEL_ID", "")
+# 다국어 발행 ON/OFF (환경변수, 기본 true)
+MULTILINGUAL_ENABLED = os.getenv("MULTILINGUAL_ENABLED", "true").lower() in ("true", "1", "yes")
 
 
 def translate_text(text: str, target_lang: str) -> str:
@@ -35,6 +34,7 @@ def translate_text(text: str, target_lang: str) -> str:
             return ""
 
         lang_name = {"en": "English", "ja": "Japanese"}.get(target_lang, "English")
+        lang_flag = {"en": "🇺🇸", "ja": "🇯🇵"}.get(target_lang, "")
 
         prompt = (
             f"아래 한국어 투자 분석 콘텐츠를 {lang_name}로 번역해줘.\n"
@@ -57,7 +57,6 @@ def translate_text(text: str, target_lang: str) -> str:
 
         if result.get("success"):
             translated = result["text"].strip()
-            # 따옴표/백틱 제거
             translated = translated.strip('"').strip("'").strip("`")
             if len(translated) > 20:
                 logger.info(
@@ -75,7 +74,7 @@ def translate_text(text: str, target_lang: str) -> str:
 
 def publish_multilingual(korean_text: str) -> dict:
     """
-    한국어 TG 텍스트를 영어/일본어로 번역하여 다국어 채널에 발행.
+    한국어 TG 텍스트를 영어/일본어로 번역하여 동일 무료 채널에 발행.
 
     Args:
         korean_text: 한국어 원문 (TG 포맷)
@@ -85,32 +84,30 @@ def publish_multilingual(korean_text: str) -> dict:
     """
     results = {"en": False, "ja": False}
 
-    if not (TELEGRAM_EN_CHANNEL_ID or TELEGRAM_JP_CHANNEL_ID):
-        logger.info("[Translator] 다국어 채널 미설정 → 스킵")
+    if not MULTILINGUAL_ENABLED:
+        logger.info("[Translator] 다국어 비활성화 → 스킵")
         return results
 
     from publishers.telegram_publisher import send_message
 
-    # 영어 번역 + 발행
-    if TELEGRAM_EN_CHANNEL_ID:
-        en_text = translate_text(korean_text, "en")
-        if en_text:
-            try:
-                send_message(en_text, channel="en")
-                results["en"] = True
-                logger.info("[Translator] EN 채널 발행 완료")
-            except Exception as e:
-                logger.warning(f"[Translator] EN 채널 발행 실패: {e}")
+    # 영어 번역 + 같은 무료 채널 발행
+    en_text = translate_text(korean_text, "en")
+    if en_text:
+        try:
+            send_message(f"🇺🇸 <b>English</b>\n\n{en_text}", channel="free")
+            results["en"] = True
+            logger.info("[Translator] EN 발행 완료 (무료 채널)")
+        except Exception as e:
+            logger.warning(f"[Translator] EN 발행 실패: {e}")
 
-    # 일본어 번역 + 발행
-    if TELEGRAM_JP_CHANNEL_ID:
-        ja_text = translate_text(korean_text, "ja")
-        if ja_text:
-            try:
-                send_message(ja_text, channel="ja")
-                results["ja"] = True
-                logger.info("[Translator] JP 채널 발행 완료")
-            except Exception as e:
-                logger.warning(f"[Translator] JP 채널 발행 실패: {e}")
+    # 일본어 번역 + 같은 무료 채널 발행
+    ja_text = translate_text(korean_text, "ja")
+    if ja_text:
+        try:
+            send_message(f"🇯🇵 <b>日本語</b>\n\n{ja_text}", channel="free")
+            results["ja"] = True
+            logger.info("[Translator] JP 발행 완료 (무료 채널)")
+        except Exception as e:
+            logger.warning(f"[Translator] JP 발행 실패: {e}")
 
     return results
