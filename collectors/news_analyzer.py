@@ -1,17 +1,15 @@
 """
-collectors/news_analyzer.py (B-16)
+collectors/news_analyzer.py (B-16 + C-9)
 =====================================
 Gemini 기반 뉴스 심층 분석
 
 RSS 헤드라인을 Gemini Flash-Lite에 일괄 전달하여:
-  - 핵심 이슈 Top 3 (topic + impact + confidence)
+  - 핵심 이슈 Top 5 (topic + impact + confidence + impact_score)
   - 종합 감성 (bullish / bearish / neutral)
   - 핵심 리스크 요약
 
-기존 키워드 감성(rss_extended.py)은 유지 — fallback + 보조.
-Gemini 실패 시 빈 분석 결과 반환 (시스템 영향 없음).
-
-모델: Gemini 2.5 Flash-Lite (1,000 RPD — 하루 6세션 충분)
+C-9 (2026-04-04): Top3 → Top5 확장 + impact_score 추가
+기존 소비자(Top3 사용처) 하위 호환 유지.
 """
 import logging
 from typing import List
@@ -67,7 +65,7 @@ def analyze_headlines(headlines: List[str]) -> dict:
         prompt=prompt,
         model="flash-lite",
         system_instruction=SYSTEM_INSTRUCTION,
-        max_tokens=800,
+        max_tokens=1000,  # C-9: Top5 확장으로 증가
         temperature=0.3,  # 분석은 낮은 창의성
         response_json=True,
         fallback_value=None,
@@ -100,16 +98,19 @@ def _build_prompt(headlines: List[str]) -> str:
 Return JSON with this exact structure:
 {{
   "top_issues": [
-    {{"topic": "short topic name", "impact": "bullish|bearish|neutral", "confidence": 0.0-1.0, "summary": "Korean 1-line summary"}},
-    {{"topic": "...", "impact": "...", "confidence": ..., "summary": "..."}},
-    {{"topic": "...", "impact": "...", "confidence": ..., "summary": "..."}}
+    {{"topic": "short topic name", "impact": "bullish|bearish|neutral", "confidence": 0.0-1.0, "impact_score": 1-10, "summary": "Korean 1-line summary"}},
+    {{"topic": "...", "impact": "...", "confidence": ..., "impact_score": ..., "summary": "..."}},
+    {{"topic": "...", "impact": "...", "confidence": ..., "impact_score": ..., "summary": "..."}},
+    {{"topic": "...", "impact": "...", "confidence": ..., "impact_score": ..., "summary": "..."}},
+    {{"topic": "...", "impact": "...", "confidence": ..., "impact_score": ..., "summary": "..."}}
   ],
   "overall_sentiment": "bullish|bearish|neutral",
   "key_risk": "Korean 1-line key risk summary"
 }}
 
 Requirements:
-- top_issues: exactly 3 most market-moving issues
+- top_issues: exactly 5 most market-moving issues, ranked by market impact (1st = highest impact)
+- impact_score: 1~10 (1=minimal, 5=moderate, 8+=significant, 10=extreme market-moving)
 - summary: must be in Korean
 - key_risk: must be in Korean
 - impact: bullish = positive for stocks, bearish = negative, neutral = unclear
@@ -117,18 +118,19 @@ Requirements:
 
 
 def _parse_response(data: dict, headline_count: int) -> dict:
-    """Gemini JSON 응답을 정규화"""
+    """Gemini JSON 응답을 정규화 (C-9: Top5 + impact_score)"""
     top_issues = data.get("top_issues", [])
 
-    # top_issues 검증 및 정규화
+    # top_issues 검증 및 정규화 (최대 5개, 최소 3개 하위 호환)
     validated_issues = []
-    for issue in top_issues[:3]:
+    for issue in top_issues[:5]:
         if not isinstance(issue, dict):
             continue
         validated_issues.append({
             "topic": str(issue.get("topic", "Unknown"))[:50],
             "impact": str(issue.get("impact", "neutral")).lower(),
             "confidence": min(1.0, max(0.0, float(issue.get("confidence", 0.5)))),
+            "impact_score": min(10, max(1, int(issue.get("impact_score", 5)))),
             "summary": str(issue.get("summary", ""))[:80],
         })
 
