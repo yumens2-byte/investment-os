@@ -1,0 +1,48 @@
+# .github/workflows/comic_novel.yml
+# C-7: EDT Universe 소설형 에피소드 — 매주 일요일 22:00 KST
+name: 📝 Comic Novel (Sunday)
+
+on:
+  schedule:
+    - cron: '0 13 * * 0'  # UTC 13:00 = KST 22:00 일요일
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: 'DRY_RUN (true=모의, false=실발행)'
+        required: false
+        default: 'true'
+
+env:
+  DRY_RUN: ${{ github.event.inputs.dry_run || 'true' }}
+  ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+  NOTION_API_KEY: ${{ secrets.NOTION_API_KEY }}
+  X_API_KEY: ${{ secrets.X_API_KEY }}
+  X_API_SECRET: ${{ secrets.X_API_SECRET }}
+  X_ACCESS_TOKEN: ${{ secrets.X_ACCESS_TOKEN }}
+  X_ACCESS_TOKEN_SECRET: ${{ secrets.X_ACCESS_TOKEN_SECRET }}
+  TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+  TELEGRAM_FREE_CHANNEL_ID: ${{ secrets.TELEGRAM_FREE_CHANNEL_ID }}
+  SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+  SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
+
+jobs:
+  comic-novel:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Run Comic Novel Pipeline
+        run: |
+          python -c "
+          from weekend.comic_novel import publish_novel_episode
+          import json
+          result = publish_novel_episode()
+          print(json.dumps(result, ensure_ascii=False, indent=2))
+          "
