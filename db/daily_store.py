@@ -294,3 +294,83 @@ def _safe_int(val) -> int | None:
         return int(val)
     except (ValueError, TypeError):
         return None
+
+
+# ──────────────────────────────────────────────────────────────
+# C-7: comic_novels 테이블 캐시 (2026-04-04)
+# ──────────────────────────────────────────────────────────────
+
+def save_novel(
+    publish_date: str,
+    week_label: str,
+    episode_range: str,
+    title: str,
+    novel_text: str,
+    x_thread: list,
+    tg_html: str,
+    source_pages: list = None,
+) -> bool:
+    """C-7: 소설 콘텐츠 Supabase 캐시 저장 (UPSERT)"""
+    try:
+        client = _get_client()
+        row = {
+            "publish_date": publish_date,
+            "week_label": week_label,
+            "episode_range": episode_range,
+            "title": title,
+            "novel_text": novel_text,
+            "x_thread": json.dumps(x_thread, ensure_ascii=False),
+            "tg_html": tg_html,
+            "source_pages": json.dumps(source_pages or [], ensure_ascii=False),
+            "status": "generated",
+        }
+        client.table("comic_novels").upsert(
+            row, on_conflict="publish_date"
+        ).execute()
+        logger.info(f"[DailyStore] comic_novels 저장: {publish_date} ({episode_range})")
+        return True
+    except Exception as e:
+        logger.error(f"[DailyStore] comic_novels 저장 실패: {e}")
+        return False
+
+
+def get_novel(publish_date: str) -> dict | None:
+    """C-7: 당일 캐시된 소설 조회. 없으면 None."""
+    try:
+        client = _get_client()
+        result = client.table("comic_novels").select("*").eq(
+            "publish_date", publish_date
+        ).execute()
+
+        if result.data and len(result.data) > 0:
+            row = result.data[0]
+            # JSON 필드 파싱
+            x_thread = row.get("x_thread", "[]")
+            if isinstance(x_thread, str):
+                x_thread = json.loads(x_thread)
+            return {
+                "novel_text": row.get("novel_text", ""),
+                "x_thread": x_thread,
+                "tg_html": row.get("tg_html", ""),
+                "episode_range": row.get("episode_range", ""),
+                "title": row.get("title", ""),
+                "status": row.get("status", "generated"),
+            }
+        return None
+    except Exception as e:
+        logger.warning(f"[DailyStore] comic_novels 조회 실패: {e}")
+        return None
+
+
+def update_novel_status(publish_date: str, status: str) -> bool:
+    """C-7: 소설 발행 상태 업데이트 (generated → published)"""
+    try:
+        client = _get_client()
+        client.table("comic_novels").update(
+            {"status": status}
+        ).eq("publish_date", publish_date).execute()
+        logger.info(f"[DailyStore] comic_novels 상태 변경: {publish_date} → {status}")
+        return True
+    except Exception as e:
+        logger.warning(f"[DailyStore] comic_novels 상태 변경 실패: {e}")
+        return False

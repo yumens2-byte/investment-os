@@ -208,6 +208,9 @@ def _run_sunday() -> dict:
     # ── C-4B: 매주 일요일 금융 기본 상식 ──
     _run_finance_basics()
 
+    # ── C-7: EDT Universe 소설형 에피소드 (일요일 22:00) ──
+    _run_comic_novel()
+
     return {
         "success": True,
         "day": "sun",
@@ -250,6 +253,23 @@ def _setup_logging():
         format="%(asctime)s [%(levelname)s] %(name)s — %(message)s",
         datefmt="%Y-%m-%d %H:%M:%S",
     )
+
+
+def _run_comic_novel():
+    """C-7: 매주 일요일 EDT Universe 소설형 에피소드 발행"""
+    try:
+        from weekend.comic_novel import publish_novel_episode
+        logger.info("[run_weekend] C-7 소설형 에피소드 발행 시작")
+        result = publish_novel_episode()
+        if result.get("success"):
+            logger.info(
+                f"[run_weekend] C-7 완료: {result.get('episode_range')} "
+                f"({result.get('novel_length', 0)}자, 스레드 {result.get('thread_count', 0)}개)"
+            )
+        else:
+            logger.warning(f"[run_weekend] C-7 실패: {result.get('error')}")
+    except Exception as e:
+        logger.warning(f"[run_weekend] C-7 소설 발행 예외 (무시): {e}")
 
 
 if __name__ == "__main__":
