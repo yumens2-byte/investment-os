@@ -29,6 +29,10 @@ logger = logging.getLogger(__name__)
 
 KST = timezone(timedelta(hours=9))
 
+def _is_dry_run() -> bool:
+    """DRY_RUN 환경변수 확인 — "false" 문자열만 실 발행"""
+    return os.environ.get("DRY_RUN", "true").lower() != "false"
+
 # ──────────────────────────────────────────────────────────────
 # 시간대 결정 (날짜 해시 기반)
 # ──────────────────────────────────────────────────────────────
@@ -483,10 +487,13 @@ def run_viral(session: str = "viral_morning") -> dict:
         logger.info(f"[Viral] 이 시간대 아님 → 스킵 (session={session})")
         return {"success": False, "reason": "not_my_slot"}
 
-    # ── Step 2: 랜덤 딜레이 ──
-    delay = _random_delay(session)
-    logger.info(f"[Viral] 랜덤 딜레이: {delay}초 ({delay//60}분 {delay%60}초)")
-    time.sleep(delay)
+    # ── Step 2: 랜덤 딜레이 (DRY_RUN 시 즉시 실행) ──
+    if _is_dry_run():
+        logger.info("[Viral] DRY_RUN → 딜레이 스킵, 즉시 실행")
+    else:
+        delay = _random_delay(session)
+        logger.info(f"[Viral] 랜덤 딜레이: {delay}초 ({delay//60}분 {delay%60}초)")
+        time.sleep(delay)
 
     # ── Step 3: 콘텐츠 타입 선택 ──
     content_type = _select_content_type()
@@ -516,11 +523,14 @@ def run_viral(session: str = "viral_morning") -> dict:
         tweet_id = pub_result.get("tweet_id", "FAIL")
         logger.info(f"[Viral] X 발행: {tweet_id} | type={content_type}")
 
-        # 퀴즈 정답 reply (30분 후)
+        # 퀴즈 정답 reply (DRY_RUN 시 즉시, 실 발행 시 30분 후)
         if content.get("has_reply") and content.get("reply"):
             if tweet_id and tweet_id not in ("FAIL", "SKIP", "DRY_RUN"):
-                logger.info("[Viral] 퀴즈 정답 reply 30분 대기...")
-                time.sleep(1800)  # 30분
+                if _is_dry_run():
+                    logger.info("[Viral] DRY_RUN → 퀴즈 reply 즉시 발행 (30분 대기 스킵)")
+                else:
+                    logger.info("[Viral] 퀴즈 정답 reply 30분 대기...")
+                    time.sleep(1800)  # 30분
                 try:
                     from publishers.x_publisher import publish_tweet as _pub_reply
                     # reply_to가 지원되면 사용, 아니면 일반 트윗
