@@ -1,0 +1,70 @@
+name: Viral Content
+
+on:
+  schedule:
+    # 아침 06:00 KST (UTC 21:00 전일)
+    - cron: "0 21 * * 0-4"
+    # 오후 16:00 KST (UTC 07:00)
+    - cron: "0 7 * * 1-5"
+  workflow_dispatch:
+    inputs:
+      session:
+        description: "viral_morning or viral_afternoon"
+        required: true
+        default: viral_morning
+        type: choice
+        options:
+          - viral_morning
+          - viral_afternoon
+
+env:
+  X_API_KEY: ${{ secrets.X_API_KEY }}
+  X_API_SECRET: ${{ secrets.X_API_SECRET }}
+  X_ACCESS_TOKEN: ${{ secrets.X_ACCESS_TOKEN }}
+  X_ACCESS_TOKEN_SECRET: ${{ secrets.X_ACCESS_TOKEN_SECRET }}
+  DRY_RUN: ${{ secrets.DRY_RUN }}
+  FORCE_RUN: ${{ secrets.FORCE_RUN || 'false' }}
+  LOG_LEVEL: INFO
+  TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+  TELEGRAM_FREE_CHANNEL_ID: ${{ secrets.TELEGRAM_FREE_CHANNEL_ID }}
+  GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+  GEMINI_API_SUB_KEY: ${{ secrets.GEMINI_API_SUB_KEY }}
+  GEMINI_API_SUB_SUB_KEY: ${{ secrets.GEMINI_API_SUB_SUB_KEY }}
+  GEMINI_API_SUB_PAY_KEY: ${{ secrets.GEMINI_API_SUB_PAY_KEY }}
+  SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+  SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
+
+jobs:
+  viral_morning:
+    name: Viral Morning (06~08 KST)
+    if: github.event.schedule == '0 21 * * 0-4' || (github.event_name == 'workflow_dispatch' && github.event.inputs.session == 'viral_morning')
+    runs-on: ubuntu-latest
+    timeout-minutes: 180
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+      - run: pip install -r requirements.txt
+      - name: Install Korean fonts
+        run: sudo apt-get install -y fonts-noto-cjk
+      - name: Run viral content (morning slot)
+        run: python -c "from engines.viral_engine import run_viral; print(run_viral('viral_morning'))"
+
+  viral_afternoon:
+    name: Viral Afternoon (16~19 KST)
+    if: github.event.schedule == '0 7 * * 1-5' || (github.event_name == 'workflow_dispatch' && github.event.inputs.session == 'viral_afternoon')
+    runs-on: ubuntu-latest
+    timeout-minutes: 240
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+      - run: pip install -r requirements.txt
+      - name: Install Korean fonts
+        run: sudo apt-get install -y fonts-noto-cjk
+      - name: Run viral content (afternoon slot)
+        run: python -c "from engines.viral_engine import run_viral; print(run_viral('viral_afternoon'))"
