@@ -5,13 +5,14 @@ EDT Universe 주간 소설형 에피소드 발행.
 
 매주 일요일 22:00 KST:
   1. Supabase 캐시 확인 → HIT이면 DB에서 로드 (Claude 호출 0)
-  2. MISS이면 Notion API로 이번 주 에피소드 조회
-  3. Claude로 주간 합본 소설 생성 (2000~3000자)
-  4. Supabase 캐시 저장
-  5. Gemini 표지 이미지 생성 (영어 프롬프트, 텍스트 없음)
-  6. X 이미지 트윗(표지) + 스레드 + TG 장문 발행
+  2. MISS → episode_context DB에서 에피소드 조회 (우선)
+  3. DB 없으면 → Notion API에서 Properties 기반 조회 (fallback)
+  4. Claude로 주간 합본 소설 생성 (2500~3500자)
+  5. Supabase 캐시 저장
+  6. Gemini 표지 이미지 생성 (영어 프롬프트, 텍스트 없음)
+  7. X 이미지 트윗(표지) + 스레드 + TG 장문 발행
 
-VERSION = "1.1.0"  # 표지 이미지 생성 추가
+VERSION = "1.2.0"  # Properties 기반 스크립트 + episode_context DB 우선 조회
 RPD: +0 Claude API + 1 Gemini (표지 이미지)
 """
 import os
@@ -131,42 +132,176 @@ def get_episodes_from_notion() -> list:
 
 
 def _fetch_episode_content(page_id: str) -> str:
-    """Notion 페이지의 블록 내용을 텍스트로 추출"""
+    """
+    Notion 페이지에서 에피소드 스크립트 추출.
+    1순위: 본문 블록 (rich_text)
+    2순위: Properties 기반 스크립트 조합 (blank page 대응)
+    """
     try:
         import requests
+
+        # ── 1순위: 본문 블록 추출 ──
         resp = requests.get(
             f"https://api.notion.com/v1/blocks/{page_id}/children?page_size=100",
             headers=_notion_headers(),
             timeout=15,
         )
-        if resp.status_code != 200:
+        if resp.status_code == 200:
+            blocks = resp.json().get("results", [])
+            texts = []
+            for block in blocks:
+                btype = block.get("type", "")
+                content = block.get(btype, {})
+                for rt_key in ["rich_text", "text"]:
+                    if rt_key in content:
+                        for rt in content[rt_key]:
+                            texts.append(rt.get("plain_text", ""))
+                        break
+                if btype == "code" and "rich_text" in content:
+                    for rt in content["rich_text"]:
+                        texts.append(rt.get("plain_text", ""))
+
+            block_text = "\n".join(texts).strip()
+            if len(block_text) > 50:  # 의미 있는 본문이 있으면 사용
+                return block_text
+
+        # ── 2순위: Properties 기반 스크립트 조합 ──
+        logger.info(f"[ComicNovel] 본문 블록 없음 → Properties 기반 추출: {page_id}")
+        resp_page = requests.get(
+            f"https://api.notion.com/v1/pages/{page_id}",
+            headers=_notion_headers(),
+            timeout=15,
+        )
+        if resp_page.status_code != 200:
             return ""
 
-        blocks = resp.json().get("results", [])
-        texts = []
-        for block in blocks:
-            btype = block.get("type", "")
-            content = block.get(btype, {})
-            # rich_text 추출
-            for rt_key in ["rich_text", "text"]:
-                if rt_key in content:
-                    for rt in content[rt_key]:
-                        texts.append(rt.get("plain_text", ""))
-                    break
-            # code 블록
-            if btype == "code" and "rich_text" in content:
-                for rt in content["rich_text"]:
-                    texts.append(rt.get("plain_text", ""))
+        props = resp_page.json().get("properties", {})
+        script_parts = []
 
-        return "\n".join(texts)
+        # 에피소드 제목
+        title_prop = props.get("에피소드", {})
+        title_rt = title_prop.get("title", []) if title_prop.get("type") == "title" else []
+        ep_title = "".join(t.get("plain_text", "") for t in title_rt)
+        if ep_title:
+            script_parts.append(f"제목: {ep_title}")
+
+        # 에피소드 타입
+        ep_type = _extract_select(props, "에피소드 타입")
+        if ep_type:
+            script_parts.append(f"타입: {ep_type}")
+
+        # 메인 히어로
+        hero = _extract_select(props, "메인 히어로")
+        if hero:
+            script_parts.append(f"메인 히어로: {hero}")
+
+        # 활성 빌런
+        villain = _extract_select(props, "활성 빌런")
+        if villain:
+            script_parts.append(f"활성 빌런: {villain}")
+
+        # 전투 결과
+        battle_result = _extract_select(props, "전투 결과")
+        if battle_result:
+            script_parts.append(f"전투 결과: {battle_result}")
+
+        # Battle Balance
+        balance = props.get("Battle Balance", {})
+        if balance.get("type") == "number" and balance.get("number") is not None:
+            script_parts.append(f"Battle Balance: {balance['number']}")
+
+        # Arc Day
+        arc_day = props.get("Arc Day", {})
+        if arc_day.get("type") == "number" and arc_day.get("number") is not None:
+            script_parts.append(f"Arc Day: {arc_day['number']}")
+
+        # 특이사항 (가장 중요 — 스토리 핵심)
+        notes = _extract_rich_text(props, "특이사항")
+        if notes:
+            script_parts.append(f"특이사항: {notes}")
+
+        result = "\n".join(script_parts)
+        if result:
+            logger.info(f"[ComicNovel] Properties 추출 성공: {len(result)}자")
+        return result
+
     except Exception as e:
-        logger.warning(f"[ComicNovel] 블록 조회 실패: {e}")
+        logger.warning(f"[ComicNovel] 에피소드 추출 실패: {e}")
         return ""
+
+
+def _extract_select(props: dict, key: str) -> str:
+    """Notion Properties에서 select/status 타입 값 추출"""
+    prop = props.get(key, {})
+    ptype = prop.get("type", "")
+    if ptype == "select" and prop.get("select"):
+        return prop["select"].get("name", "")
+    if ptype == "status" and prop.get("status"):
+        return prop["status"].get("name", "")
+    return ""
+
+
+def _extract_rich_text(props: dict, key: str) -> str:
+    """Notion Properties에서 rich_text 타입 값 추출"""
+    prop = props.get(key, {})
+    if prop.get("type") == "rich_text":
+        return "".join(t.get("plain_text", "") for t in prop.get("rich_text", []))
+    return ""
+
+
+def get_episodes_from_db() -> list:
+    """
+    episode_context 테이블에서 아직 소설화되지 않은 에피소드 조회.
+    comic_novels 테이블의 마지막 에피소드 이후만 반환.
+    """
+    try:
+        from db.daily_store import get_last_novel_episode_no
+        last_ep = get_last_novel_episode_no()
+        logger.info(f"[ComicNovel] 마지막 적재 에피소드: EP.{last_ep:02d}")
+    except Exception:
+        last_ep = 0
+
+    try:
+        from db.supabase_client import get_client
+        sb = get_client()
+        resp = sb.table("episode_context") \
+            .select("episode_no, comic_type, risk_level, title, summary") \
+            .gt("episode_no", last_ep) \
+            .order("episode_no") \
+            .execute()
+
+        if not resp.data:
+            logger.info("[ComicNovel] episode_context에 신규 에피소드 없음")
+            return []
+
+        episodes = []
+        for row in resp.data:
+            # Properties 형식과 동일하게 스크립트 조합
+            script = (
+                f"제목: {row.get('title', '')}\n"
+                f"타입: {row.get('comic_type', '')}\n"
+                f"Risk Level: {row.get('risk_level', '')}\n"
+                f"요약: {row.get('summary', '')}"
+            )
+            episodes.append({
+                "page_id": None,  # DB 소스 → Notion page_id 없음
+                "episode_no": row["episode_no"],
+                "title": row.get("title", f"EP.{row['episode_no']}"),
+                "content": script,  # 미리 추출된 스크립트
+            })
+
+        logger.info(f"[ComicNovel] episode_context에서 {len(episodes)}개 신규 에피소드 (EP.{last_ep:02d} 이후)")
+        return episodes
+
+    except Exception as e:
+        logger.warning(f"[ComicNovel] episode_context 조회 실패: {e}")
+        return []
 
 
 def novelify_episodes(episodes: list) -> dict:
     """
     Claude로 주간 에피소드 합본 소설 생성.
+    에피소드 소스: episode_context DB (content 필드) 또는 Notion (page_id로 조회).
     Returns: {success, novel_text, x_thread, tg_html, episode_range, title}
     """
     if not episodes:
@@ -175,14 +310,22 @@ def novelify_episodes(episodes: list) -> dict:
     # 에피소드 스크립트 수집
     scripts = []
     for ep in episodes:
-        content = _fetch_episode_content(ep["page_id"])
+        # DB 소스: content 필드가 이미 있음
+        if ep.get("content"):
+            content = ep["content"]
+        # Notion 소스: page_id로 블록+Properties 추출
+        elif ep.get("page_id"):
+            content = _fetch_episode_content(ep["page_id"])
+        else:
+            content = ""
+
         if content:
-            scripts.append(f"--- EP.{ep['episode_no']}: {ep['title']} ---\n{content[:3000]}")
+            scripts.append(f"--- EP.{ep['episode_no']:02d}: {ep['title']} ---\n{content[:3000]}")
 
     if not scripts:
         return {"success": False, "error": "스크립트 추출 실패"}
 
-    ep_range = f"EP.{episodes[0]['episode_no']}~EP.{episodes[-1]['episode_no']}"
+    ep_range = f"EP.{episodes[0]['episode_no']:02d}~EP.{episodes[-1]['episode_no']:02d}"
     combined_script = "\n\n".join(scripts)
 
     # Claude 소설화
@@ -214,8 +357,22 @@ def novelify_episodes(episodes: list) -> dict:
 
         novel_text = response.content[0].text.strip()
 
+        # 최소 길이 검증 (1500자 미만 시 1회 재시도)
+        if len(novel_text) < 1500:
+            logger.warning(f"[ComicNovel] 소설 {len(novel_text)}자 → 짧음, 재시도")
+            retry_prompt = prompt + "\n\n주의: 반드시 2500자 이상 작성해주세요. 짧으면 안 됩니다."
+            retry_resp = client.messages.create(
+                model="claude-sonnet-4-20250514",
+                max_tokens=4000,
+                messages=[{"role": "user", "content": retry_prompt}],
+            )
+            retry_text = retry_resp.content[0].text.strip()
+            if len(retry_text) > len(novel_text):
+                novel_text = retry_text
+                logger.info(f"[ComicNovel] 재시도 성공: {len(novel_text)}자")
+
         if len(novel_text) < 500:
-            return {"success": False, "error": "소설 생성 결과 너무 짧음"}
+            return {"success": False, "error": f"소설 생성 결과 너무 짧음 ({len(novel_text)}자)"}
 
         # X 스레드 분할 (프리미엄 25,000자 → 2~3개 스레드)
         x_thread = _split_to_thread(novel_text, ep_range)
@@ -397,8 +554,14 @@ def publish_novel_episode() -> dict:
         logger.info(f"[ComicNovel] 캐시 HIT — {cached.get('episode_range', '?')} (Claude 호출 0)")
         novel_data = cached
     else:
-        # ── Step 1: Notion 조회 ──
-        episodes = get_episodes_from_notion()
+        # ── Step 1: episode_context DB 우선 조회 ──
+        episodes = get_episodes_from_db()
+        if episodes:
+            logger.info(f"[ComicNovel] episode_context DB에서 {len(episodes)}개 에피소드 로드")
+        else:
+            # ── Step 1b: Notion fallback ──
+            logger.info("[ComicNovel] DB 없음 → Notion 조회 fallback")
+            episodes = get_episodes_from_notion()
         if not episodes:
             logger.warning("[ComicNovel] 이번 주 에피소드 없음 → 스킵")
             return {"success": False, "error": "이번 주 에피소드 없음"}
