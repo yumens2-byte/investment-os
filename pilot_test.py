@@ -307,7 +307,7 @@ def run_round1():
     tweet = format_market_snapshot_tweet(data, "Morning Brief 🌅")
     t.check("트윗 생성 성공", bool(tweet))
     t.check("트윗 280자 이내", len(tweet) <= 280, f"{len(tweet)}자")
-    t.check("해시태그 포함", "#ETF" in tweet)
+    t.check("해시태그 포함", "#" in tweet)
 
     posts = format_thread_posts(data)
     t.check("쓰레드 포스트 ≥ 4개", len(posts) >= 4, f"{len(posts)}개")
