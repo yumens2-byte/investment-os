@@ -44,6 +44,8 @@ jobs:
       - name: Run Comic Novel Pipeline
         run: |
           python -c "
+          import logging
+          logging.basicConfig(level=logging.INFO, format='%(asctime)s [%(levelname)s] %(name)s — %(message)s')
           from weekend.comic_novel import publish_novel_episode
           import json
           result = publish_novel_episode()
