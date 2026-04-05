@@ -15,7 +15,7 @@ yml cron 2개 (아침 06:00 + 오후 16:00)로 트리거.
   C-19: 캐릭터 투표 (일요일만, C-7 소설 연동)
   C-20: 극단적 선택 (A vs B, 투자/돈 관련)
 
-VERSION = "1.1.0"
+VERSION = "1.2.0"  # X 프리미엄 4000자 + DRY_RUN 즉시 실행 + FORCE_RUN
 RPD: +1/일 (Gemini flash-lite)
 """
 import hashlib
@@ -28,6 +28,13 @@ from datetime import datetime, timezone, timedelta
 logger = logging.getLogger(__name__)
 
 KST = timezone(timedelta(hours=9))
+
+# ── X 프리미엄 글자 제한 ──
+# 프리미엄: 25,000자 (무료: 280자)
+# 바이럴 본문은 짧을수록 참여율 ↑ → 소프트 타겟 500자
+# 해설/정답은 길게 허용 → 하드 맥스 4,000자
+X_TWEET_MAX = 4000       # 본문 하드 맥스 (프리미엄)
+X_REPLY_MAX = 4000       # reply 하드 맥스 (프리미엄)
 
 def _is_dry_run() -> bool:
     """DRY_RUN 환경변수 확인 — "false" 문자열만 실 발행"""
@@ -200,8 +207,8 @@ def _generate_quiz() -> dict:
         return {
             "success": True,
             "type": "quiz",
-            "tweet": tweet[:280],
-            "reply": reply[:280],
+            "tweet": tweet[:X_TWEET_MAX],
+            "reply": reply[:X_REPLY_MAX],
             "tg_text": tg_text,
             "category": category,
             "has_reply": True,  # 30분 후 정답 reply 발행 필요
@@ -238,7 +245,7 @@ def _generate_money_compare() -> dict:
             f"투자/금융 관련 '놀라운 숫자' 콘텐츠를 트윗 형식으로 작성해줘.\n\n"
             f"타입: {selected_type}\n\n"
             f"조건:\n"
-            f"- 180~250자 한국어\n"
+            f"- 300~500자 한국어\n"
             f"- 숫자 비교가 핵심 (충격적인 대비)\n"
             f"- 이모지 3~4개\n"
             f"- 마지막에 '여러분은 어떻게 생각하세요? 👇' 같은 CTA\n"
@@ -251,7 +258,7 @@ def _generate_money_compare() -> dict:
         result = call(
             prompt=prompt,
             model="flash-lite",
-            max_tokens=300,
+            max_tokens=600,
             temperature=0.9,
         )
 
@@ -259,8 +266,8 @@ def _generate_money_compare() -> dict:
             return {"success": False, "error": "Gemini 물가 비교 생성 실패"}
 
         tweet = result["text"].strip().strip('"').strip("'")
-        if len(tweet) > 280:
-            tweet = tweet[:277] + "..."
+        if len(tweet) > X_TWEET_MAX:
+            tweet = tweet[:X_TWEET_MAX - 3] + "..."
 
         # TG 포맷 (동일 텍스트, 볼드 추가)
         tg_text = tweet.replace("💰", "💰 <b>").replace("\n\n#", "</b>\n\n#")
@@ -349,8 +356,8 @@ def _generate_dilemma() -> dict:
         tweet_lines.append("\n#극단적선택 #투자 #돈")
 
         tweet = "\n".join(tweet_lines)
-        if len(tweet) > 280:
-            tweet = tweet[:277] + "..."
+        if len(tweet) > X_TWEET_MAX:
+            tweet = tweet[:X_TWEET_MAX - 3] + "..."
 
         # TG 포맷
         tg_text = (
@@ -440,8 +447,8 @@ def _generate_character_vote() -> dict:
         lines.append("#EDT #투자코믹스 #투자소설 #캐릭터투표")
 
         tweet = "\n".join(lines)
-        if len(tweet) > 280:
-            tweet = tweet[:277] + "..."
+        if len(tweet) > X_TWEET_MAX:
+            tweet = tweet[:X_TWEET_MAX - 3] + "..."
 
         # TG 포맷
         tg_lines = ["🔥 <b>이번 주 EDT Universe MVP는?</b>\n"]
