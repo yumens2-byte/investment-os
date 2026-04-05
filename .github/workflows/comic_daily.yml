@@ -61,6 +61,11 @@ jobs:
         run: |
           echo "=== Daily Comic Pipeline 시작 ==="
           echo "DRY_RUN=$DRY_RUN"
+          - name: Anti-bot random delay
+            run: |
+            DELAY=$((RANDOM % 900))
+            echo "⏱️ Random delay: ${DELAY}s ($((DELAY/60))m $((DELAY%60))s)"
+            sleep $DELAY    
           python -m comic.pipeline --type daily
 
       - name: 🚨 Notify Failure
