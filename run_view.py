@@ -307,21 +307,21 @@ def run(mode: str = "tweet", session: str = None) -> dict:
                 logger.warning(f"[Step 6-TG] AI 내러티브 발행 실패 (영향 없음): {e}")
 
             # C-5: 오늘의 시장 역사 (narrative 세션 후 독립 발행)
-            try:
-                from engines.history_engine import generate_history_today
-                history = generate_history_today()
-                if history.get("success"):
-                    from publishers.x_publisher import publish_tweet as _pub_hist
-                    _pub_hist(history["tweet"])
-                    send_message(history["telegram"], channel="free")
-                    logger.info(
-                        f"[Step 6-TG] C-5 시장 역사 발행 완료 | "
-                        f"{history['year']}년 | {history['event'][:20]}..."
-                    )
-                else:
-                    logger.info(f"[Step 6-TG] C-5 시장 역사 스킵: {history.get('reason', '?')}")
-            except Exception as he:
-                logger.warning(f"[Step 6-TG] C-5 시장 역사 실패 (영향 없음): {he}")
+            # try:
+            #     from engines.history_engine import generate_history_today
+            #     history = generate_history_today()
+            #     if history.get("success"):
+            #         from publishers.x_publisher import publish_tweet as _pub_hist
+            #         _pub_hist(history["tweet"])
+            #         send_message(history["telegram"], channel="free")
+            #         logger.info(
+            #             f"[Step 6-TG] C-5 시장 역사 발행 완료 | "
+            #             f"{history['year']}년 | {history['event'][:20]}..."
+            #         )
+            #     else:
+            #         logger.info(f"[Step 6-TG] C-5 시장 역사 스킵: {history.get('reason', '?')}")
+            # except Exception as he:
+            #     logger.warning(f"[Step 6-TG] C-5 시장 역사 실패 (영향 없음): {he}")
         else:
             # morning / intraday / close: 무료 채널 텍스트
             free_text = format_free_signal(data, session=session_type)
