@@ -34,10 +34,12 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: '3.11'
-      - name: Install Korean fonts
-        run: sudo apt-get install -y fonts-noto-cjk
+      
       - name: Install dependencies
         run: pip install -r requirements.txt
+
+      - name: Install Korean fonts
+        run: sudo apt-get install -y fonts-noto-cjk
 
       - name: Run Comic Novel Pipeline
         run: |
