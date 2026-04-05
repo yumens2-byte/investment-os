@@ -48,10 +48,17 @@ def should_run(session: str) -> bool:
     """
     이 시간대에 실행해야 하는지 결정.
     날짜 해시로 아침/오후를 결정 → 하루 1회만 실행.
+    FORCE_RUN=true 시 무조건 실행 (수동 테스트용).
 
     Args:
         session: "viral_morning" 또는 "viral_afternoon"
     """
+    # FORCE_RUN=true → 무조건 실행 (workflow_dispatch 수동 테스트)
+    force = os.environ.get("FORCE_RUN", "false").lower() == "true"
+    if force:
+        logger.info(f"[Viral] FORCE_RUN=true → 슬롯 무시, 강제 실행")
+        return True
+
     h = _today_hash()
     is_morning_day = (h % 2 == 0)  # 짝수 날 = 아침, 홀수 날 = 오후
 
