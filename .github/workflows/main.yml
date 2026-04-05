@@ -57,6 +57,7 @@ env:
   SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
   ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
   YOUTUBE_CHANNELS: ${{ secrets.YOUTUBE_CHANNELS }}
+  MULTILINGUAL_ENABLED: ${{ secrets.MULTILINGUAL_ENABLED }}
 
 jobs:
 
@@ -100,6 +101,7 @@ jobs:
       SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
       SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
       YOUTUBE_CHANNELS: ${{ secrets.YOUTUBE_CHANNELS }}
+      MULTILINGUAL_ENABLED: ${{ secrets.MULTILINGUAL_ENABLED }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
