@@ -2,8 +2,11 @@
 publishers/x_formatter.py
 JSON Core Data → X 트윗 텍스트 변환.
 출력 형식은 project-summary.html 기준.
+
+VERSION = "1.1.0"  # 해시태그 랜덤화 추가 (X 자동화 감지 방지)
 """
 import logging
+import random as _random
 from typing import Optional
 from config.settings import X_MAX_TWEET_LENGTH, X_HASHTAGS
 
@@ -61,6 +64,67 @@ _STRATEGY_QUOTE = {
     "Transition": "섣부른 베팅 금지",
 }
 
+# ── 세션별 해시태그 ──────────────────────────────────────────
+SESSION_TAGS = {
+    "morning":  "#아침시장",
+    "intraday": "#장중",
+    "close":    "#마감",
+    "weekly":   "#주간분석",
+}
+REGIME_TAGS = {
+    "Risk-On":          "#RiskOn #성장주",
+    "Risk-Off":         "#RiskOff #방어",
+    "Oil Shock":        "#OilShock #에너지",
+    "Recession Risk":   "#경기침체 #Recession",
+    "Stagflation Risk": "#스태그플레이션",
+    "Liquidity Crisis": "#유동성위기",
+    "Crisis Regime":    "#위기경보 #Crisis",
+    "Transition":       "#전환구간",
+}
+
+# ── 해시태그 랜덤화 풀 (X 자동화 감지 방지) ──────────────────
+_BASE_TAGS_POOL = [
+    "#ETF #투자 #미국증시",
+    "#미국주식 #ETF투자 #시장분석",
+    "#투자전략 #ETF #월가",
+    "#주식 #미국시장 #투자분석",
+    "#ETF전략 #투자일지 #미국증시",
+    "#미국ETF #시장브리핑 #투자",
+    "#투자 #미국주식 #포트폴리오",
+    "#ETF분석 #미장 #투자전략",
+]
+
+_EXTRA_TAGS_POOL = [
+    "#매크로", "#거시경제", "#시장전망", "#포트폴리오",
+    "#자산배분", "#리스크관리", "#투자일기", "#시황",
+    "#월가브리핑", "#데일리분석", "#미장브리핑", "#투자메모",
+    "#시장분석", "#경제지표", "#글로벌시장", "#AI투자",
+]
+
+
+def _random_hashtags(regime: str = "", session: str = "") -> str:
+    """매번 다른 해시태그 조합 생성 — X 자동화 감지 방지"""
+    # 기본 태그 (8종 중 1개 랜덤)
+    base = _random.choice(_BASE_TAGS_POOL)
+
+    # 레짐 태그 (있으면 추가)
+    regime_tag = REGIME_TAGS.get(regime, "")
+
+    # 세션 태그 (있으면 추가)
+    session_tag = SESSION_TAGS.get(session, "")
+
+    # 추가 태그 (16종 중 1개 랜덤)
+    extra = _random.choice(_EXTRA_TAGS_POOL)
+
+    parts = [base]
+    if regime_tag:
+        parts.append(regime_tag)
+    if session_tag:
+        parts.append(session_tag)
+    parts.append(extra)
+
+    return " ".join(parts).strip()
+
 
 # ──────────────────────────────────────────────────────────────
 # 포맷 생성
@@ -102,6 +166,9 @@ def format_market_snapshot_tweet(data: dict, session_label: str = "Market Snapsh
     strategy = _STRATEGY_MAP.get(regime, "시장 상황 판단 중")
     quote = _STRATEGY_QUOTE.get(regime, "신중한 접근 필요")
 
+    # 해시태그 랜덤 생성
+    tags = _random_hashtags(regime=regime)
+
     lines = [
         f"📊 {session_label}",
         f"",
@@ -113,7 +180,7 @@ def format_market_snapshot_tweet(data: dict, session_label: str = "Market Snapsh
         f"🎯 {strategy}",
         f"{signal_emoji} \"{quote}\"",
         f"",
-        f"{X_HASHTAGS}",
+        tags,
     ]
 
     tweet = "\n".join(lines)
@@ -138,12 +205,15 @@ def _format_compact(data: dict, session_label: str) -> str:
     emoji = _REGIME_EMOJI.get(regime, "📊")
     quote = _STRATEGY_QUOTE.get(regime, "신중")
 
+    # 해시태그 랜덤 생성
+    tags = _random_hashtags(regime=regime)
+
     lines = [
         f"📊 {session_label}",
         f"SPY {_format_change(sp500)} | VIX {vix:.1f} | {risk}",
         f"{emoji} {regime}",
         f"⚡ \"{quote}\"",
-        X_HASHTAGS,
+        tags,
     ]
     return "\n".join(lines)
 
@@ -167,9 +237,12 @@ def format_thread_posts(data: dict) -> list:
     nasdaq = snap.get("nasdaq", 0.0)
     vix = snap.get("vix", 20.0)
 
+    # 해시태그 랜덤 생성
+    tags = _random_hashtags(regime=regime.get("market_regime", ""))
+
     posts = [
         # [1] 요약
-        f"📊 Investment OS — {summary}\n\n{X_HASHTAGS}",
+        f"📊 Investment OS — {summary}\n\n{tags}",
         # [2] 레짐
         f"📍 시장 레짐: {regime.get('market_regime')} | 리스크: {regime.get('market_risk_level')}\n\n💬 {regime.get('regime_reason', '')}",
         # [3] 스냅샷
@@ -190,25 +263,6 @@ def format_thread_posts(data: dict) -> list:
         validated.append(post)
 
     return validated
-
-
-# ── 세션별 해시태그 ──────────────────────────────────────────
-SESSION_TAGS = {
-    "morning":  "#아침시장",
-    "intraday": "#장중",
-    "close":    "#마감",
-    "weekly":   "#주간분석",
-}
-REGIME_TAGS = {
-    "Risk-On":          "#RiskOn #성장주",
-    "Risk-Off":         "#RiskOff #방어",
-    "Oil Shock":        "#OilShock #에너지",
-    "Recession Risk":   "#경기침체 #Recession",
-    "Stagflation Risk": "#스태그플레이션",
-    "Liquidity Crisis": "#유동성위기",
-    "Crisis Regime":    "#위기경보 #Crisis",
-    "Transition":       "#전환구간",
-}
 
 
 def format_image_tweet(data: dict, session: str = "morning") -> str:
@@ -262,11 +316,8 @@ def format_image_tweet(data: dict, session: str = "morning") -> str:
             chg_str  = f" ({fg_chg:+d})" if fg_chg else ""
             fg_line  = f"{fg_emoji} F&G: {fg_val}/100 {fg_lbl}{chg_str}"
 
-    # 해시태그
-    base_tags    = "#ETF #투자 #미국증시"
-    regime_tag   = REGIME_TAGS.get(regime_name, "")
-    session_tag  = SESSION_TAGS.get(session, "")
-    tags = f"{base_tags} {regime_tag} {session_tag}".strip()
+    # 해시태그 랜덤 생성 (고정 패턴 제거)
+    tags = _random_hashtags(regime=regime_name, session=session)
 
     body = f"{line1}\n\n{line2}\n{line3}"
     if fg_line:
@@ -283,13 +334,12 @@ def format_image_tweet(data: dict, session: str = "morning") -> str:
 
 def _select_tone(risk: str, regime: str) -> str:
     """F-4: 레짐/리스크 연동 톤 선택 — 시장 상황에 맞는 톤만 허용"""
-    import random
     if risk == "HIGH" or regime in ("Liquidity Crisis", "Recession Risk"):
-        return random.choice(["긴급", "경계"])
+        return _random.choice(["긴급", "경계"])
     elif risk == "MEDIUM" or "Shock" in regime or "Stagflation" in regime:
-        return random.choice(["진지한", "신중한", "분석적"])
+        return _random.choice(["진지한", "신중한", "분석적"])
     else:  # LOW / Normal
-        return random.choice(["낙관적", "여유로운", "유머러스"])
+        return _random.choice(["낙관적", "여유로운", "유머러스"])
 
 
 def generate_ai_tweet(data: dict, session_label: str = "Market Snapshot") -> str:
@@ -328,8 +378,10 @@ def generate_ai_tweet(data: dict, session_label: str = "Market Snapshot") -> str
             top3 = [f"{e}({w}%)" for e, w in sorted_etfs[:3]]
 
         # F-4: 레짐/리스크 연동 톤 선택 (시장 상황에 맞는 톤만 허용)
-        import random
         tone = _select_tone(risk, regime)
+
+        # 해시태그도 랜덤으로 지시 (Gemini가 매번 다른 태그 조합 사용)
+        sample_tags = _random_hashtags(regime=regime)
 
         prompt = (
             f"투자 분석 X 트윗 1개만 작성해줘.\n"
@@ -342,7 +394,7 @@ def generate_ai_tweet(data: dict, session_label: str = "Market Snapshot") -> str
             f"- 반드시 140~200자 이내, 한국어\n"
             f"- 이모지 2~3개 포함\n"
             f"- 톤: {tone} (이 톤 하나로만 작성)\n"
-            f"- 해시태그 3개 포함 (#ETF #투자 + 레짐태그)\n"
+            f"- 해시태그 3~4개 포함 (예시: {sample_tags} 참고하되 매번 다르게)\n"
             f"- 트윗 본문만 출력. 톤 라벨, 설명, 부연, 선택지 없이 트윗 1개만\n"
         )
 
