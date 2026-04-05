@@ -33,6 +33,7 @@ jobs:
       GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
       GEMINI_API_SUB_KEY: ${{ secrets.GEMINI_API_SUB_KEY }}
       GEMINI_API_SUB_SUB_KEY: ${{ secrets.GEMINI_API_SUB_SUB_KEY }}
+      GEMINI_API_SUB_PAY_KEY: ${{ secrets.GEMINI_API_SUB_PAY_KEY }}
       TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
       TELEGRAM_FREE_CHANNEL_ID: ${{ secrets.TELEGRAM_FREE_CHANNEL_ID }}
       X_API_KEY: ${{ secrets.X_API_KEY }}
