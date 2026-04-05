@@ -3,7 +3,7 @@ name: Viral Content
 on:
   schedule:
     # 아침 06:00 KST (UTC 21:00 전일)
-    - cron: "0 21 * * 0-4"
+    #- cron: "0 21 * * 0-4"
     # 오후 16:00 KST (UTC 07:00)
     - cron: "0 7 * * 1-5"
   workflow_dispatch:
@@ -14,7 +14,7 @@ on:
         default: viral_morning
         type: choice
         options:
-          - viral_morning
+          #- viral_morning
           - viral_afternoon
 
 env:
