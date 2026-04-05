@@ -1,10 +1,11 @@
 """
-core/gemini_gateway.py (B-14 v2.0)
+core/gemini_gateway.py (B-14 v3.0)
 =====================================
-Gemini API 호출 공통 모듈 — google-genai SDK (신규)
+Gemini API 호출 공통 모듈 — google-genai SDK
 
 기능:
-  - Main/Sub/Sub2 키 자동 전환 (429 Rate Limit 시)
+  - Main/Sub/Sub2 무료 키 자동 전환 (429 Rate Limit 시)
+  - 무료 3키 전부 실패 시 유료 Pay 키 fallback (최후 수단)
   - 지수 백오프 재시도 (최대 3회)
   - DLQ 저장 (전부 실패 시)
   - 모델 선택 (flash-lite / flash / pro)
@@ -12,9 +13,13 @@ Gemini API 호출 공통 모듈 — google-genai SDK (신규)
   - JSON 응답 파싱 지원
 
 환경변수:
-  GEMINI_API_KEY          — 메인 키
-  GEMINI_API_SUB_KEY      — 서브 키 (한도 초과 시 자동 전환)
-  GEMINI_API_SUB_SUB_KEY  — 서브2 키 (서브 키도 초과 시 자동 전환)
+  GEMINI_API_KEY          — 메인 키 (무료)
+  GEMINI_API_SUB_KEY      — 서브 키 (무료, 한도 초과 시 자동 전환)
+  GEMINI_API_SUB_SUB_KEY  — 서브2 키 (무료, 서브 키도 초과 시 자동 전환)
+  GEMINI_API_SUB_PAY_KEY  — 유료 키 (무료 3키 전부 실패 시 최후 fallback)
+
+키 전환 순서: main → sub → sub2 → pay (유료)
+※ pay 키는 실제 과금 발생 — 무료 3키 전부 429일 때만 사용
 
 SDK: google-genai (신규, google-generativeai deprecated 대체)
 """
@@ -30,6 +35,7 @@ logger = logging.getLogger(__name__)
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "")
 GEMINI_API_SUB_KEY = os.getenv("GEMINI_API_SUB_KEY", "")
 GEMINI_API_SUB_SUB_KEY = os.getenv("GEMINI_API_SUB_SUB_KEY", "")
+GEMINI_API_SUB_PAY_KEY = os.getenv("GEMINI_API_SUB_PAY_KEY", "")  # 유료 키
 
 # ── 모델 매핑 ──
 MODEL_MAP = {
@@ -60,14 +66,18 @@ def _get_client(api_key: str):
 
 
 def _build_keys() -> list:
-    """Main/Sub/Sub2 키 리스트 구성"""
+    """Main/Sub/Sub2/Pay 키 리스트 구성 (무료 3키 → 유료 1키 순서)"""
     keys = []
+    # ── 무료 키 (우선 사용) ──
     if GEMINI_API_KEY:
-        keys.append(("main", GEMINI_API_KEY))
+        keys.append(("main", GEMINI_API_KEY, False))      # (라벨, 키, 유료여부)
     if GEMINI_API_SUB_KEY:
-        keys.append(("sub", GEMINI_API_SUB_KEY))
+        keys.append(("sub", GEMINI_API_SUB_KEY, False))
     if GEMINI_API_SUB_SUB_KEY:
-        keys.append(("sub2", GEMINI_API_SUB_SUB_KEY))
+        keys.append(("sub2", GEMINI_API_SUB_SUB_KEY, False))
+    # ── 유료 키 (최후 fallback) ──
+    if GEMINI_API_SUB_PAY_KEY:
+        keys.append(("pay", GEMINI_API_SUB_PAY_KEY, True))
     return keys
 
 
@@ -81,7 +91,7 @@ def call(
     fallback_value: Optional[str] = None,
 ) -> dict:
     """
-    Gemini API 텍스트 호출 (Main → Sub → Sub2 자동 전환 + DLQ)
+    Gemini API 텍스트 호출 (Main → Sub → Sub2 → Pay 자동 전환 + DLQ)
 
     Returns:
         {
@@ -89,7 +99,8 @@ def call(
           "text": "응답 텍스트",
           "data": {...},
           "model": "gemini-2.5-flash-lite",
-          "key_used": "main" | "sub" | "sub2",
+          "key_used": "main" | "sub" | "sub2" | "pay",
+          "paid": False | True,
           "error": None | "에러 메시지",
         }
     """
@@ -103,7 +114,11 @@ def call(
     keys = _build_keys()
     last_error = ""
 
-    for key_label, api_key in keys:
+    for key_label, api_key, is_paid in keys:
+        # ── 유료 키 진입 시 경고 로그 ──
+        if is_paid:
+            logger.warning(f"[GeminiGW] ⚠️ 무료 키 전부 실패 → 유료 키({key_label}) 사용")
+
         for attempt in range(1, MAX_RETRIES + 1):
             try:
                 client = _get_client(api_key)
@@ -130,6 +145,7 @@ def call(
                     "data": None,
                     "model": model_name,
                     "key_used": key_label,
+                    "paid": is_paid,
                     "error": None,
                 }
 
@@ -145,8 +161,10 @@ def call(
                     except json.JSONDecodeError as je:
                         logger.warning(f"[GeminiGW] JSON 파싱 실패 (텍스트 유지): {je}")
 
+                # ── 유료 키 사용 시 명시 로그 ──
+                paid_tag = " [💰PAID]" if is_paid else ""
                 logger.info(
-                    f"[GeminiGW] 성공 | model={model_name} | key={key_label} "
+                    f"[GeminiGW] 성공{paid_tag} | model={model_name} | key={key_label} "
                     f"| attempt={attempt} | len={len(text)}"
                 )
                 return result
@@ -169,7 +187,7 @@ def call(
                     logger.info(f"[GeminiGW] {wait}초 대기 후 재시도")
                     time.sleep(wait)
 
-    logger.error(f"[GeminiGW] 전부 실패 | model={model_name} | error={last_error[:200]}")
+    logger.error(f"[GeminiGW] 전부 실패 (무료+유료) | model={model_name} | error={last_error[:200]}")
 
     try:
         from core.dlq import enqueue
@@ -195,6 +213,7 @@ def _fail_result(error: str, fallback_value: Optional[str] = None) -> dict:
         "data": None,
         "model": "",
         "key_used": "",
+        "paid": False,
         "error": error,
     }
 
@@ -205,21 +224,24 @@ def is_available() -> bool:
 
 def generate_image(prompt: str, output_path: str = None) -> dict:
     """
-    Gemini 이미지 생성 — Main/Sub/Sub2 키 자동 전환
-    1순위: generate_image API (이미지 전용 엔드포인트)
-    2순위: generate_content API (멀티모달 엔드포인트)
+    Gemini 이미지 생성 — Main/Sub/Sub2/Pay 키 자동 전환
+    무료 3키 전부 429 → 유료 Pay 키 fallback
     """
     from google.genai import types
 
     keys = _build_keys()
     if not keys:
         return {"success": False, "image_bytes": None, "image_path": None,
-                "key_used": "", "error": "GEMINI_API_KEY 미설정"}
+                "key_used": "", "paid": False, "error": "GEMINI_API_KEY 미설정"}
 
     last_error = ""
 
-    for key_label, api_key in keys:
-        # ── generate_content API (Nano Banana 공식 경로) ──
+    for key_label, api_key, is_paid in keys:
+        # ── 유료 키 진입 시 경고 로그 ──
+        if is_paid:
+            logger.warning(f"[GeminiGW] ⚠️ 이미지 무료 키 전부 실패 → 유료 키({key_label}) 사용")
+
+        # ── generate_content API ──
         try:
             client = _get_client(api_key)
             response = client.models.generate_content(
@@ -240,14 +262,17 @@ def generate_image(prompt: str, output_path: str = None) -> dict:
                             os.makedirs(os.path.dirname(output_path) or ".", exist_ok=True)
                             with open(output_path, "wb") as f:
                                 f.write(img_bytes)
+                        # ── 유료 키 사용 시 명시 로그 ──
+                        paid_tag = " [💰PAID]" if is_paid else ""
                         logger.info(
-                            f"[GeminiGW] 이미지 생성 성공  | key={key_label} | size={len(img_bytes)}"
+                            f"[GeminiGW] 이미지 생성 성공{paid_tag} | key={key_label} | size={len(img_bytes)}"
                         )
                         return {
                             "success": True,
                             "image_bytes": img_bytes,
                             "image_path": output_path,
                             "key_used": key_label,
+                            "paid": is_paid,
                             "error": "",
                         }
         except Exception as e2:
@@ -258,9 +283,9 @@ def generate_image(prompt: str, output_path: str = None) -> dict:
             last_error = err2
             logger.warning(f"[GeminiGW] 이미지(이미지 실패 | key={key_label} | {err2[:80]}")
 
-    logger.warning(f"[GeminiGW] 이미지 전부 실패 | error={last_error[:100]}")
+    logger.warning(f"[GeminiGW] 이미지 전부 실패 (무료+유료) | error={last_error[:100]}")
     return {"success": False, "image_bytes": None, "image_path": None,
-            "key_used": "", "error": last_error}
+            "key_used": "", "paid": False, "error": last_error}
 
 
 # ──────────────────────────────────────────────────────────────
@@ -277,24 +302,7 @@ def analyze_image(
 ) -> dict:
     """
     이미지 + 텍스트 프롬프트 → Gemini Vision 분석.
-    Main/Sub/Sub2 키 자동 전환.
-
-    Args:
-        image_path: PNG/JPG 파일 경로
-        prompt: 분석 프롬프트 (텍스트)
-        model: 모델명 (flash-lite 등)
-        response_json: True면 JSON 파싱 시도
-        max_tokens: 최대 토큰
-        temperature: 창의성
-
-    Returns:
-        {
-          "success": True/False,
-          "text": "응답 텍스트",
-          "data": {...} (response_json=True일 때),
-          "key_used": "main"|"sub"|"sub2",
-          "error": None|"에러",
-        }
+    Main/Sub/Sub2/Pay 키 자동 전환.
     """
     from google.genai import types
 
@@ -316,7 +324,11 @@ def analyze_image(
     model_name = MODEL_MAP.get(model, MODEL_MAP["flash-lite"])
     keys = _build_keys()
 
-    for key_label, api_key in keys:
+    for key_label, api_key, is_paid in keys:
+        # ── 유료 키 진입 시 경고 로그 ──
+        if is_paid:
+            logger.warning(f"[GeminiGW] ⚠️ Vision 무료 키 전부 실패 → 유료 키({key_label}) 사용")
+
         try:
             client = _get_client(api_key)
 
@@ -348,6 +360,7 @@ def analyze_image(
                 "data": None,
                 "model": model_name,
                 "key_used": key_label,
+                "paid": is_paid,
                 "error": None,
             }
 
@@ -364,8 +377,10 @@ def analyze_image(
                 except (json.JSONDecodeError, ValueError):
                     result["data"] = None
 
+            # ── 유료 키 사용 시 명시 로그 ──
+            paid_tag = " [💰PAID]" if is_paid else ""
             logger.info(
-                f"[GeminiGW] Vision 성공 | model={model_name} | "
+                f"[GeminiGW] Vision 성공{paid_tag} | model={model_name} | "
                 f"key={key_label} | len={len(text)}"
             )
             return result
@@ -378,4 +393,4 @@ def analyze_image(
             logger.warning(f"[GeminiGW] Vision 실패 | key={key_label} | {err[:80]}")
             return _fail_result(err)
 
-    return _fail_result("Vision 전부 실패 (429)")
+    return _fail_result("Vision 전부 실패 (무료+유료 429)")
