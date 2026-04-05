@@ -329,6 +329,7 @@ def run(mode: str = "tweet", session: str = None) -> dict:
 
             # D-3: morning 세션에 오늘 실적 발표 기업 추가
             if session_type == "morning":
+                earnings = {}  # ← 이 줄 추가 (C-17)
                 try:
                     from engines.earnings_checker import get_today_earnings
                     earnings = get_today_earnings()
@@ -337,6 +338,21 @@ def run(mode: str = "tweet", session: str = None) -> dict:
                         logger.info(f"[Step 6-TG] D-3 실적 캘린더: {len(earnings.get('earnings',[]))}개")
                 except Exception as ee:
                     logger.warning(f"[Step 6-TG] D-3 실적 캘린더 실패 (무시): {ee}")
+
+                # ── C-17: 빅테크 실적 감지 → 단일종목 실적 트윗 발행 ──
+                try:
+                    big_tech = earnings.get("big_tech", [])
+                    if big_tech:
+                        from engines.stock_analyzer import analyze_big_tech_earnings
+                        stock_results = analyze_big_tech_earnings(big_tech)
+                        for sr in stock_results:
+                            if sr.get("success") and sr.get("tweet"):
+                                from publishers.x_publisher import publish_tweet as _pub_stock
+                                _pub_stock(sr["tweet"])
+                                send_message(sr.get("tg_text", sr["tweet"]), channel="free")
+                                logger.info(f"[Step 6-TG] C-17 빅테크 실적: {sr['ticker']}")
+                except Exception as se:
+                    logger.warning(f"[Step 6-TG] C-17 빅테크 실적 실패 (무시): {se}")
 
         logger.info("[Step 6-TG] 텔레그램 발행 완료")
     except Exception as e:
