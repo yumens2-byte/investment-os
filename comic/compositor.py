@@ -1,11 +1,10 @@
 """
 comic/compositor.py
-Investment Comic v2.0 — Pillow 최종 이미지 합성
+Investment Comic v2.1 — Pillow 최종 이미지 합성
 
-변경사항 (v1.x → v2.0):
-  - 워터마크 하단 고정 (계정명 + 에피소드 번호)
-  - 일일(2×2), 주간(4×2) 그리드 분기
-  - 리스크 레벨별 테두리 색상
+변경사항 (v2.0 → v2.1):
+  - 한글 폰트 경로 추가 (Noto Sans CJK → 하단 바 한글 깨짐 수정)
+  - 한글/영어 폰트 분리 (_get_font_kr / _get_font)
 """
 
 import io
@@ -29,7 +28,7 @@ BORDER_COLORS  = {
 }
 WATERMARK_BG   = "#000000"
 WATERMARK_ALPHA = 160      # 0~255
-X_ACCOUNT      = "@InvestmentComic"  # TODO: 실제 계정명으로 교체
+X_ACCOUNT      = "@InvestmentComic"
 
 
 def _bytes_to_pil(image_bytes: bytes) -> Image.Image:
@@ -37,10 +36,37 @@ def _bytes_to_pil(image_bytes: bytes) -> Image.Image:
 
 
 def _get_font(size: int) -> ImageFont.ImageFont:
-    """폰트 로드 (없으면 기본 폰트)"""
+    """영어 폰트 로드 (계정명, 에피소드 번호 등)"""
     font_paths = [
         "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
         "/System/Library/Fonts/Helvetica.ttc",
+    ]
+    for path in font_paths:
+        if Path(path).exists():
+            try:
+                return ImageFont.truetype(path, size)
+            except Exception:
+                pass
+    return ImageFont.load_default()
+
+
+def _get_font_kr(size: int) -> ImageFont.ImageFont:
+    """한글 폰트 로드 (제목 등 한글 텍스트용)"""
+    font_paths = [
+        # Ubuntu 24 (GitHub Actions: apt install fonts-noto-cjk)
+        "/usr/share/fonts/opentype/noto/NotoSansCJK-Bold.ttc",
+        "/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc",
+        # Ubuntu 일부 배포판
+        "/usr/share/fonts/truetype/noto/NotoSansCJK-Bold.ttc",
+        "/usr/share/fonts/truetype/noto/NotoSansCJKkr-Bold.otf",
+        "/usr/share/fonts/truetype/noto/NotoSansCJK-Regular.ttc",
+        # Noto Sans KR (별도 설치 시)
+        "/usr/share/fonts/truetype/noto/NotoSansKR-Bold.ttf",
+        "/usr/share/fonts/truetype/noto/NotoSansKR-Regular.ttf",
+        # macOS
+        "/System/Library/Fonts/AppleSDGothicNeo.ttc",
+        # fallback: 영어 폰트 (한글은 깨지지만 크래시 방지)
+        "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
     ]
     for path in font_paths:
         if Path(path).exists():
@@ -139,7 +165,7 @@ def _draw_watermark(
     episode_no: int,
     title: str
 ) -> None:
-    """하단 워터마크 바"""
+    """하단 워터마크 바 — 한글 폰트 적용"""
     w, h = OUTPUT_SIZE
     wm_h = 48
 
@@ -150,16 +176,23 @@ def _draw_watermark(
         (0, h - wm_h)
     )
 
-    font_sm = _get_font(16)
-    font_md = _get_font(18)
+    font_sm = _get_font_kr(16)   # ← 한글 폰트 (제목용)
+    font_md = _get_font(18)      # ← 영어 폰트 (계정명, 에피소드)
 
-    # 왼쪽: 계정명
+    # 왼쪽: 계정명 (영어)
     draw.text((12, h - wm_h + 15), X_ACCOUNT, font=font_md, fill="#60a5fa")
 
-    # 중앙: 제목 (truncate)
+    # 중앙: 제목 — 한글 폰트 사용 (truncate)
     title_short = title[:30] + "…" if len(title) > 30 else title
-    draw.text((w // 2 - 120, h - wm_h + 15), title_short, font=font_sm, fill="#e0f0ff")
+    # 제목 텍스트 중앙 정렬
+    try:
+        bbox = font_sm.getbbox(title_short)
+        title_w = bbox[2] - bbox[0]
+    except Exception:
+        title_w = len(title_short) * 14  # fallback 추정
+    title_x = max(200, (w - title_w) // 2)  # 계정명과 겹치지 않게
+    draw.text((title_x, h - wm_h + 15), title_short, font=font_sm, fill="#e0f0ff")
 
-    # 오른쪽: 에피소드 번호
+    # 오른쪽: 에피소드 번호 (영어)
     ep_text = f"Ep.{episode_no}"
     draw.text((w - 80, h - wm_h + 15), ep_text, font=font_md, fill="#10b981")
