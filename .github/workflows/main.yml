@@ -71,9 +71,10 @@ jobs:
         with:
           python-version: "3.11"
           cache: pip
+      
+      - run: pip install -r requirements.txt
       - name: Install Korean fonts
         run: sudo apt-get install -y fonts-noto-cjk    
-      - run: pip install -r requirements.txt
       - run: playwright install chromium --with-deps
       - run: python main.py test --round all
         env:
@@ -105,10 +106,11 @@ jobs:
         with:
           python-version: "3.11"
           cache: pip
+          
+      - run: pip install -r requirements.txt
       - name: Install Korean fonts
         run: sudo apt-get install -y fonts-noto-cjk    
-      - run: playwright install chromium --with-deps    
-      - run: pip install -r requirements.txt
+      - run: playwright install chromium --with-deps
       - name: Restore weekly log cache
         uses: actions/cache@v4
         with:
