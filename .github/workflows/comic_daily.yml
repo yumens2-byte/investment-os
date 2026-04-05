@@ -54,6 +54,7 @@ jobs:
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
           GEMINI_API_SUB_KEY: ${{ secrets.GEMINI_API_SUB_KEY }}
           GEMINI_API_SUB_SUB_KEY: ${{ secrets.GEMINI_API_SUB_SUB_KEY }}
+          GEMINI_API_SUB_PAY_KEY: ${{ secrets.GEMINI_API_SUB_PAY_KEY }}
           # dry_run_override 입력이 있으면 그걸 사용, 없으면 Variables 값 사용
           DRY_RUN: ${{ github.event.inputs.dry_run_override != '' && github.event.inputs.dry_run_override || vars.DRY_RUN }}
           FORCE_RUN: ${{ secrets.FORCE_RUN || 'false' }}
