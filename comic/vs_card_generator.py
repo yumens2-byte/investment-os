@@ -4,8 +4,11 @@ comic/vs_card_generator.py (B-21C)
 VS 배틀 카드 — Top ETF(Max) vs Worst ETF(Baron)
 
 Narrative 세션 (11:30 KST)에 자동 첨부.
-HTML+Playwright 렌더링 ($0).
+Gemini 1순위 / HTML+Playwright fallback ($0).
 크기: 1200×675 (X 이미지 최적화)
+
+※ Gemini 이미지 생성 시 한글 렌더링 깨짐 → 프롬프트 전체 영어
+※ HTML fallback 시 한글 유지 (시스템 폰트 fonts-noto-cjk 사용)
 """
 import logging
 import os
@@ -17,6 +20,12 @@ logger = logging.getLogger(__name__)
 
 # Score 색상
 SCORE_COLORS = {1: "#10b981", 2: "#34d399", 3: "#f59e0b", 4: "#f97316", 5: "#ef4444"}
+
+# ── Gemini 이미지 프롬프트 공통 접미사 (한글 렌더링 방지) ──
+_GEMINI_ENGLISH_ONLY = (
+    " CRITICAL: ALL text in the image MUST be in English. "
+    "Do NOT render any Korean, Chinese, Japanese, or other CJK characters."
+)
 
 
 def generate_vs_card(core_data: dict) -> str | None:
@@ -50,13 +59,13 @@ def generate_vs_card(core_data: dict) -> str | None:
     top_stance = stance.get(top_etf, "Neutral")
     worst_stance = stance.get(worst_etf, "Neutral")
 
-    # ── 1순위: Gemini 이미지 생성 ──
+    # ── 1순위: Gemini 이미지 생성 (프롬프트 영어) ──
     gemini_path = _generate_vs_via_gemini(top_etf, worst_etf, top_alloc, worst_alloc,
                                           top_stance, worst_stance, regime, risk, ts)
     if gemini_path:
         return gemini_path
 
-    # ── 2순위: HTML+Playwright fallback ──
+    # ── 2순위: HTML+Playwright fallback (한글 유지) ──
     logger.info("[VSCard] Gemini 이미지 실패 → HTML fallback")
     html = _build_vs_html(
         top_etf=top_etf, worst_etf=worst_etf,
@@ -77,6 +86,7 @@ def _generate_vs_via_gemini(top_etf, worst_etf, top_alloc, worst_alloc,
         if not is_available():
             return None
 
+        # ── 프롬프트 전체 영어 (한글 렌더링 방지) ──
         prompt = (
             f"Create a dramatic 1200x675 VS battle card for financial ETF comparison. "
             f"Style: Dark cinematic, vibrant neon colors, clean composition, professional. "
@@ -88,6 +98,7 @@ def _generate_vs_via_gemini(top_etf, worst_etf, top_alloc, worst_alloc,
             f"Top banner: '{regime} | {risk} | {signal}'. "
             f"Bottom: 'Investment Comic' watermark. "
             f"Dark gradient background. No real brand logos. Safe for all ages."
+            + _GEMINI_ENGLISH_ONLY
         )
 
         output_dir = Path("data/images")
@@ -106,6 +117,11 @@ def _generate_vs_via_gemini(top_etf, worst_etf, top_alloc, worst_alloc,
     except Exception as e:
         logger.warning(f"[VSCard] Gemini 이미지 예외: {str(e)[:80]}")
         return None
+
+
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+# HTML Fallback (한글 유지 — fonts-noto-cjk 시스템 폰트 사용)
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 
 def _score_bar_html(label: str, value: int) -> str:

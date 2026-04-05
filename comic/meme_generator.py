@@ -4,8 +4,8 @@ comic/meme_generator.py (B-21A)
 Alert 발동 시 1컷 시장 밈 자동 생성
 
 흐름:
-  Alert 발동 → Gemini Flash-Lite로 밈 텍스트 생성 → HTML 렌더링 → Playwright 스크린샷
-  → X 이미지 트윗 + TG 발행
+  Alert 발동 → Gemini Flash-Lite로 밈 텍스트 생성 → Gemini 이미지 생성 (영어)
+  → 실패 시 HTML+Playwright fallback (한글) → X 이미지 트윗 + TG 발행
 
 캐릭터 매핑:
   VIX/CRISIS → The Volatician (혼돈)
@@ -13,7 +13,10 @@ Alert 발동 시 1컷 시장 밈 자동 생성
   SPY↑/Risk-On → Max Bullhorn (희망)
   ETF_RANK_CHANGE → Max vs Baron (대결)
 
-이미지: HTML+Playwright ($0)
+※ Gemini 이미지 생성 시 한글 렌더링 깨짐 → 프롬프트 전체 영어
+※ HTML fallback 시 한글 유지 (시스템 폰트 fonts-noto-cjk 사용)
+
+이미지: Gemini 1순위 / HTML+Playwright fallback ($0)
 크기: 1080×1080 (인스타그램 호환)
 """
 import logging
@@ -45,6 +48,12 @@ CHARACTER_STYLE = {
     "Max vs Baron": "color: #60a5fa; text-shadow: 0 0 20px #3b82f6;",
 }
 
+# ── Gemini 이미지 프롬프트 공통 접미사 (한글 렌더링 방지) ──
+_GEMINI_ENGLISH_ONLY = (
+    " CRITICAL: ALL text in the image MUST be in English. "
+    "Do NOT render any Korean, Chinese, Japanese, or other CJK characters."
+)
+
 
 def generate_meme(alert_type: str, alert_level: str,
                   snapshot: dict, core_data: dict = None) -> str | None:
@@ -66,15 +75,15 @@ def generate_meme(alert_type: str, alert_level: str,
         char_key, ("The Volatician", "#7c3aed", "⚡")
     )
 
-    # Gemini로 밈 텍스트 생성
+    # Gemini로 밈 텍스트 생성 (한글 — HTML fallback용)
     meme_text = _generate_meme_text(alert_type, alert_level, snapshot, character)
 
-    # ── 1순위: Gemini 이미지 생성 ──
+    # ── 1순위: Gemini 이미지 생성 (프롬프트 영어) ──
     gemini_path = _generate_via_gemini_image(alert_type, alert_level, character, meme_text, snapshot)
     if gemini_path:
         return gemini_path
 
-    # ── 2순위: HTML+Playwright fallback ──
+    # ── 2순위: HTML+Playwright fallback (한글 유지) ──
     logger.info("[Meme] Gemini 이미지 실패 → HTML fallback")
     html = _build_meme_html(
         character=character,
@@ -103,6 +112,7 @@ def _generate_via_gemini_image(alert_type: str, alert_level: str,
         oil = snapshot.get("oil", "?")
         sp500 = snapshot.get("sp500", "?")
 
+        # ── 프롬프트 전체 영어 (한글 렌더링 방지) ──
         prompt = (
             f"Create a dramatic 1080x1080 comic-style meme image for a financial market alert. "
             f"Style: Dark cinematic comic book art, vibrant colors, clean composition. "
@@ -115,11 +125,14 @@ def _generate_via_gemini_image(alert_type: str, alert_level: str,
         else:
             prompt += "a heroic golden bull warrior in gleaming gold and blue armor. "
 
+        # ── 텍스트 오버레이: 한글 meme_text의 의미를 영어로 렌더링 지시 ──
         prompt += (
-            f"Text overlay: '{meme_text}' in bold Korean text. "
+            f"Generate a short dramatic English text overlay (max 5 words) "
+            f"that captures the meaning of: '{meme_text}'. "
             f"Bottom stats bar: VIX {vix} | OIL ${oil} | SPY {sp500}%. "
             f"Alert badge: '{alert_type} {alert_level}' in corner. "
             f"Dark gradient background. No real brand logos. Safe for all ages."
+            + _GEMINI_ENGLISH_ONLY
         )
 
         output_dir = Path("data/images")
@@ -171,7 +184,7 @@ def _resolve_character_key(alert_type: str, alert_level: str,
 
 def _generate_meme_text(alert_type: str, alert_level: str,
                         snapshot: dict, character: str) -> str:
-    """Gemini Flash-Lite로 밈 텍스트 1줄 생성"""
+    """Gemini Flash-Lite로 밈 텍스트 1줄 생성 (한글 — HTML fallback에서 사용)"""
     try:
         from core.gemini_gateway import call, is_available
         if not is_available():
@@ -211,7 +224,7 @@ def _generate_meme_text(alert_type: str, alert_level: str,
 
 
 def _fallback_meme_text(alert_type: str, snapshot: dict) -> str:
-    """Gemini 실패 시 rule-based 밈 텍스트"""
+    """Gemini 실패 시 rule-based 밈 텍스트 (한글)"""
     texts = {
         "VIX": f"VIX {snapshot.get('vix', '?')} — 폭풍이 온다",
         "VIX_COUNTDOWN": f"VIX {snapshot.get('vix', '?')} 카운트다운",
@@ -222,6 +235,11 @@ def _fallback_meme_text(alert_type: str, snapshot: dict) -> str:
         "ETF_RANK_CHANGE": "전략 변경 필요",
     }
     return texts.get(alert_type, "시장 경보")
+
+
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+# HTML Fallback (한글 유지 — fonts-noto-cjk 시스템 폰트 사용)
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 
 def _build_meme_html(character: str, meme_text: str, accent_color: str,

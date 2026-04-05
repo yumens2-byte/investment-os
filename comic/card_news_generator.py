@@ -7,8 +7,11 @@ Card 1: 오늘의 시장 (레짐 + 주요 수치)
 Card 2: ETF 전략 (6개 ETF 배분 + BUY/REDUCE)
 Card 3: AI 뉴스 분석 (B-16 Top3 이슈)
 
-이미지: HTML+Playwright ($0)
+이미지: Gemini 1순위 / HTML+Playwright fallback ($0)
 크기: 1080×1350 (세로형, 인스타그램 호환)
+
+※ Gemini 이미지 생성 시 한글 렌더링 깨짐 → 프롬프트 전체 영어
+※ HTML fallback 시 한글 유지 (시스템 폰트 fonts-noto-cjk 사용)
 """
 import logging
 import os
@@ -23,6 +26,12 @@ REGIME_COLORS = {
     "Risk-On": "#10b981", "Risk-Off": "#ef4444", "Oil Shock": "#f59e0b",
     "Transition": "#3b82f6", "Stagflation Risk": "#7c3aed",
 }
+
+# ── Gemini 이미지 프롬프트 공통 접미사 (한글 렌더링 방지) ──
+_GEMINI_ENGLISH_ONLY = (
+    " CRITICAL: ALL text in the image MUST be in English. "
+    "Do NOT render any Korean, Chinese, Japanese, or other CJK characters."
+)
 
 
 def generate_cards(core_data: dict) -> list[str]:
@@ -41,13 +50,13 @@ def generate_cards(core_data: dict) -> list[str]:
 
     for i, (gen, label) in enumerate(zip(generators, card_labels), 1):
         try:
-            # 1순위: Gemini 이미지
+            # 1순위: Gemini 이미지 (프롬프트 영어)
             gemini_path = _generate_card_via_gemini(core_data, i, label)
             if gemini_path:
                 paths.append(gemini_path)
                 continue
 
-            # 2순위: HTML fallback
+            # 2순위: HTML fallback (한글 유지)
             logger.info(f"[CardNews] Card {i} Gemini 실패 → HTML fallback")
             html = gen(core_data)
             path = _render_html(html, f"card{i}")
@@ -73,34 +82,38 @@ def _generate_card_via_gemini(core_data: dict, card_no: int, label: str) -> str 
         alloc = core_data.get("etf_allocation", {}).get("allocation", {})
         news = core_data.get("news_analysis", {})
 
+        # ── 카드별 프롬프트 (전부 영어) ──
         if card_no == 1:
             prompt = (
-                f"Create a sleek 1080x1350 financial infographic card titled '오늘의 시장'. "
+                f"Create a sleek 1080x1350 financial infographic card titled 'Today Market'. "
                 f"Dark gradient background. Professional data visualization. "
                 f"Regime '{regime}', Risk '{risk}', "
                 f"SPY {snap.get('sp500', '?')}%, VIX {snap.get('vix', '?')}, "
                 f"WTI ${snap.get('oil', '?')}, US10Y {snap.get('us10y', '?')}%. "
                 f"6-axis radar chart for market score. "
                 f"Bottom: '{date.today()} | Investment Comic | 1/3'. No brand logos."
+                + _GEMINI_ENGLISH_ONLY
             )
         elif card_no == 2:
             sorted_etfs = sorted(alloc.items(), key=lambda x: -x[1])
             etf_str = ", ".join(f"{e} {p}%" for e, p in sorted_etfs)
             prompt = (
-                f"Create a sleek 1080x1350 financial infographic card titled 'ETF 전략'. "
+                f"Create a sleek 1080x1350 financial infographic card titled 'ETF Strategy'. "
                 f"Dark gradient background. Horizontal bar chart: {etf_str}. "
                 f"Green for high allocation, red for low. BUY/REDUCE indicators. "
                 f"Bottom: '{date.today()} | Investment Comic | 2/3'. No brand logos."
+                + _GEMINI_ENGLISH_ONLY
             )
         else:
             issues = news.get("top_issues", [])
             issues_str = ", ".join(i.get("topic", "?") for i in issues[:3])
             sentiment = news.get("overall_sentiment", "neutral")
             prompt = (
-                f"Create a sleek 1080x1350 financial infographic card titled 'AI 뉴스 분석'. "
+                f"Create a sleek 1080x1350 financial infographic card titled 'AI News Analysis'. "
                 f"Dark gradient background. Sentiment: {sentiment}. "
                 f"Top 3 issues: {issues_str}. Confidence bars. Risk warning section. "
                 f"Bottom: '{date.today()} | Investment Comic | 3/3'. No brand logos."
+                + _GEMINI_ENGLISH_ONLY
             )
 
         output_dir = Path("data/images")
@@ -119,6 +132,11 @@ def _generate_card_via_gemini(core_data: dict, card_no: int, label: str) -> str 
     except Exception as e:
         logger.warning(f"[CardNews] Card {card_no} Gemini 예외: {str(e)[:80]}")
         return None
+
+
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+# HTML Fallback (한글 유지 — fonts-noto-cjk 시스템 폰트 사용)
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 
 def _card1_market(data: dict) -> str:
