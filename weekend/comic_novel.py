@@ -8,10 +8,11 @@ EDT Universe 주간 소설형 에피소드 발행.
   2. MISS이면 Notion API로 이번 주 에피소드 조회
   3. Claude로 주간 합본 소설 생성 (2000~3000자)
   4. Supabase 캐시 저장
-  5. X 스레드 + TG 장문 발행
+  5. Gemini 표지 이미지 생성 (영어 프롬프트, 텍스트 없음)
+  6. X 이미지 트윗(표지) + 스레드 + TG 장문 발행
 
-VERSION = "1.0.0"
-RPD: +0 (Claude API, Gemini 미사용)
+VERSION = "1.1.0"  # 표지 이미지 생성 추가
+RPD: +0 Claude API + 1 Gemini (표지 이미지)
 """
 import os
 import re
@@ -24,6 +25,20 @@ logger = logging.getLogger(__name__)
 KST = timezone(timedelta(hours=9))
 NOTION_API_KEY = os.environ.get("NOTION_API_KEY", "")
 HUB_PAGE_ID = "3299208cbdc38183814fdb7cfb1908e9"
+
+# ── EDT Universe 캐릭터 정보 (표지 프롬프트용) ──
+CHARACTER_VISUAL = {
+    "EDT": "young hero with blue energy aura and golden ring on right hand, dual-color chainsaw weapon",
+    "Leverage Man": "muscular man with fire gauntlets and leverage amplifier belt",
+    "Iron Nuna": "woman in silver ETF shield armor with data visor",
+    "Futures Girl": "woman with golden eyes and hologram futures chart projection",
+    "Gold Bond": "knight in golden armor with heavy golden shield",
+    "War Dominion": "dark villain with red eyes and missile launchers, military commander",
+    "Oil Shock Titan": "giant fire-crowned monster made of oil barrels",
+    "Debt Titan": "skeletal giant with bond chain whips, cracks in ground",
+    "Algorithm Reaper": "hooded figure with digital code streams and glowing circuit patterns",
+    "Baron Bearsworth": "dark bear villain in business suit with market crash charts",
+}
 
 
 def _notion_headers():
@@ -286,12 +301,86 @@ def _format_tg_html(novel_text: str, ep_range: str) -> str:
     )
 
 
+# ──────────────────────────────────────────────────────────────
+# 표지 이미지 생성 (Gemini, 영어 프롬프트)
+# ──────────────────────────────────────────────────────────────
+
+def _generate_cover_image(novel_text: str, ep_range: str) -> str | None:
+    """
+    소설 내용 기반 Gemini 표지 이미지 생성.
+    전체 영어 프롬프트 — 이미지 내 텍스트 없음.
+    실패 시 None 반환 (텍스트만 발행 계속).
+
+    Returns: 이미지 파일 경로 또는 None
+    """
+    try:
+        from core.gemini_gateway import generate_image, is_available
+        if not is_available():
+            logger.info("[ComicNovel] Gemini 미사용 → 표지 생성 스킵")
+            return None
+
+        # ── 소설에서 등장 캐릭터 추출 ──
+        characters_in_story = []
+        for char_name, visual in CHARACTER_VISUAL.items():
+            if char_name in novel_text:
+                characters_in_story.append(f"{char_name}: {visual}")
+
+        # 최대 3캐릭터만 표지에 포함
+        char_desc = "; ".join(characters_in_story[:3]) if characters_in_story else \
+            "EDT: young hero with blue energy aura and golden ring"
+
+        # ── 소설 분위기 추출 (키워드 기반) ──
+        mood = "intense battle"
+        if any(w in novel_text for w in ["교착", "멈춰", "정적"]):
+            mood = "tense standoff, calm before storm"
+        elif any(w in novel_text for w in ["폭발", "충돌", "전쟁"]):
+            mood = "explosive battle, energy clash"
+        elif any(w in novel_text for w in ["각성", "골드", "진화"]):
+            mood = "awakening, golden transformation, power surge"
+        elif any(w in novel_text for w in ["침묵", "어둠", "코드"]):
+            mood = "dark mystery, digital shadows, code streams"
+
+        # ── 영어 프롬프트 생성 ──
+        prompt = (
+            f"Anime-style dramatic cover art for a financial market battle story.\n"
+            f"Episode: {ep_range}\n"
+            f"Scene mood: {mood}\n"
+            f"Characters: {char_desc}\n"
+            f"Background: futuristic financial city with stock chart hologram skyline, "
+            f"glowing market data streams in the sky.\n"
+            f"Style: cinematic lighting, dynamic manga cover composition, "
+            f"vibrant colors, dramatic shadows, high contrast.\n"
+            f"Aspect ratio: 16:9 landscape.\n"
+            f"CRITICAL: Absolutely NO text, NO letters, NO words, NO numbers, "
+            f"NO title, NO watermark anywhere in the image. "
+            f"Pure visual artwork only."
+        )
+
+        # ── Gemini 이미지 생성 ──
+        output_path = f"data/images/novel_cover_{ep_range.replace('~', '_')}.png"
+        os.makedirs("data/images", exist_ok=True)
+
+        result = generate_image(prompt=prompt, output_path=output_path)
+
+        if result.get("success") and os.path.exists(output_path):
+            logger.info(f"[ComicNovel] 표지 생성 완료: {output_path}")
+            return output_path
+        else:
+            logger.warning(f"[ComicNovel] 표지 생성 실패: {result.get('error', '?')}")
+            return None
+
+    except Exception as e:
+        logger.warning(f"[ComicNovel] 표지 생성 예외 (텍스트만 발행): {e}")
+        return None
+
+
 def publish_novel_episode() -> dict:
     """
     C-7 전체 파이프라인:
     1. Supabase 캐시 확인
     2. MISS → Notion 조회 + Claude 소설화 + 캐시 저장
-    3. X 스레드 + TG 장문 발행
+    3. 표지 이미지 생성 (Gemini)
+    4. X 이미지 트윗(표지) + 스레드 + TG 장문 발행
     """
     logger.info("[ComicNovel] C-7 소설형 에피소드 파이프라인 시작")
     today = datetime.now(KST).strftime("%Y-%m-%d")
@@ -337,21 +426,60 @@ def publish_novel_episode() -> dict:
         except Exception as e:
             logger.warning(f"[ComicNovel] 캐시 저장 실패 (발행은 계속): {e}")
 
-    # ── Step 3: X 스레드 발행 ──
+    # ── Step 2.7: 표지 이미지 생성 (Gemini) ──
+    cover_path = None
+    try:
+        novel_text = novel_data.get("novel_text", "")
+        ep_range = novel_data.get("episode_range", "")
+        cover_path = _generate_cover_image(novel_text, ep_range)
+    except Exception as e:
+        logger.warning(f"[ComicNovel] 표지 생성 예외 (텍스트만 발행): {e}")
+
+    # ── Step 3: X 발행 (표지 있으면 이미지 트윗 → 스레드) ──
     x_thread = novel_data.get("x_thread", [])
     tweet_id = "SKIP"
     try:
-        from publishers.x_publisher import publish_thread
-        x_result = publish_thread(x_thread)
-        tweet_id = x_result.get("tweet_id", "FAIL")
-        logger.info(f"[ComicNovel] X 스레드 발행: {tweet_id} ({len(x_thread)}개)")
+        if cover_path and len(x_thread) > 0:
+            # 표지 이미지 + 헤더 텍스트를 이미지 트윗으로 발행
+            from publishers.x_publisher import publish_tweet_with_image, publish_thread
+            header_text = x_thread[0]  # 헤더 포스트
+            img_result = publish_tweet_with_image(header_text, cover_path)
+            first_tweet_id = img_result.get("tweet_id", "FAIL")
+
+            # 나머지 스레드를 reply로 발행
+            if len(x_thread) > 1 and first_tweet_id and first_tweet_id != "FAIL":
+                remaining = x_thread[1:]
+                thread_result = publish_thread(remaining, reply_to=first_tweet_id)
+                tweet_id = first_tweet_id
+                logger.info(
+                    f"[ComicNovel] X 표지+스레드 발행: {tweet_id} "
+                    f"(표지 1장 + 스레드 {len(remaining)}개)"
+                )
+            else:
+                tweet_id = first_tweet_id
+                logger.info(f"[ComicNovel] X 표지 트윗만 발행: {tweet_id}")
+        else:
+            # 표지 없으면 기존 방식 (텍스트 스레드)
+            from publishers.x_publisher import publish_thread
+            x_result = publish_thread(x_thread)
+            tweet_id = x_result.get("tweet_id", "FAIL")
+            logger.info(f"[ComicNovel] X 스레드 발행 (표지 없음): {tweet_id} ({len(x_thread)}개)")
     except Exception as e:
         logger.warning(f"[ComicNovel] X 발행 실패: {e}")
 
     # ── Step 4: TG 장문 발행 ──
     tg_html = novel_data.get("tg_html", "")
     try:
-        from publishers.telegram_publisher import send_message
+        from publishers.telegram_publisher import send_message, send_photo
+
+        # TG에도 표지 이미지 먼저 발행 (있으면)
+        if cover_path:
+            try:
+                send_photo(cover_path, caption=f"📝 EDT Universe 『{ep_range}』", channel="free")
+                logger.info("[ComicNovel] TG 표지 이미지 발행 완료")
+            except Exception as pe:
+                logger.warning(f"[ComicNovel] TG 표지 발행 실패 (무시): {pe}")
+
         send_message(tg_html, channel="free")
         logger.info("[ComicNovel] TG 발행 완료")
     except Exception as e:
@@ -371,4 +499,5 @@ def publish_novel_episode() -> dict:
         "novel_length": len(novel_data.get("novel_text", "")),
         "thread_count": len(x_thread),
         "tweet_id": tweet_id,
+        "cover": bool(cover_path),
     }
