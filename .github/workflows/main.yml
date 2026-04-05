@@ -120,6 +120,11 @@ jobs:
           path: data/published/weekly_log.json
           key: weekly-log-${{ github.ref }}
           restore-keys: weekly-log-
+      - name: Anti-bot random delay
+        run: |
+          DELAY=$((RANDOM % 900))
+          echo "⏱️ Random delay: ${DELAY}s ($((DELAY/60))m $((DELAY%60))s)"
+          sleep $DELAY    
       - run: python main.py run all --session morning --mode tweet
       - name: Restore rank history cache
         uses: actions/cache@v4
@@ -188,6 +193,11 @@ jobs:
           key: weekly-log-${{ github.ref }}
           restore-keys: weekly-log-
       - run: playwright install chromium --with-deps
+      - name: Anti-bot random delay
+        run: |
+          DELAY=$((RANDOM % 900))
+          echo "⏱️ Random delay: ${DELAY}s ($((DELAY/60))m $((DELAY%60))s)"
+          sleep $DELAY
       - run: python main.py run all --session intraday --mode tweet
       - name: Restore rank history cache
         uses: actions/cache@v4
@@ -254,6 +264,11 @@ jobs:
           path: data/published/weekly_log.json
           key: weekly-log-${{ github.ref }}
           restore-keys: weekly-log-
+      - name: Anti-bot random delay
+        run: |
+          DELAY=$((RANDOM % 900))
+          echo "⏱️ Random delay: ${DELAY}s ($((DELAY/60))m $((DELAY%60))s)"
+          sleep $DELAY    
       - run: python main.py run all --session close --mode ${{ github.event.inputs.mode || 'tweet' }}
       - name: Restore rank history cache
         uses: actions/cache@v4
@@ -319,6 +334,11 @@ jobs:
           path: data/published/weekly_log.json
           key: weekly-log-${{ github.ref }}
           restore-keys: weekly-log-
+      - name: Anti-bot random delay
+        run: |
+          DELAY=$((RANDOM % 900))
+          echo "⏱️ Random delay: ${DELAY}s ($((DELAY/60))m $((DELAY%60))s)"
+          sleep $DELAY    
       - run: python main.py run all --session weekly --mode thread
       - name: Restore rank history cache
         uses: actions/cache@v4
@@ -448,6 +468,11 @@ jobs:
           path: data/published/weekly_log.json
           key: weekly-log-${{ github.ref }}
           restore-keys: weekly-log-
+      - name: Anti-bot random delay
+        run: |
+          DELAY=$((RANDOM % 900))
+          echo "⏱️ Random delay: ${DELAY}s ($((DELAY/60))m $((DELAY%60))s)"
+          sleep $DELAY    
       - run: python main.py run all --session full --mode tweet
       - name: Save weekly log cache
         uses: actions/cache/save@v4
@@ -521,6 +546,11 @@ jobs:
           path: data/published/dlq.json
           key: dlq-${{ github.ref }}
           restore-keys: dlq-
+      - name: Anti-bot random delay
+        run: |
+          DELAY=$((RANDOM % 900))
+          echo "⏱️ Random delay: ${DELAY}s ($((DELAY/60))m $((DELAY%60))s)"
+          sleep $DELAY    
       - run: python main.py run all --session narrative --mode tweet
       - name: Save weekly log cache
         uses: actions/cache/save@v4
