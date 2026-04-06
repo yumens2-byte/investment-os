@@ -402,7 +402,10 @@ jobs:
 
       # Alert 발생시간 램덤 하게 동작하기 위함
       - name: Anti-bot random delay
-        run: sleep $((RANDOM % 900))
+        run: |
+          DELAY=$((RANDOM % 100))
+          echo "⏱️ Random delay: ${DELAY}s ($((DELAY/60))m $((DELAY%60))s)"
+          sleep $DELAY    
 
       # Alert 이력 캐시 복원 (등급 변화 감지 핵심)
       - name: Restore alert history cache
