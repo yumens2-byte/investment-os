@@ -4,10 +4,11 @@ engines/viral_engine.py (C-6 / C-18 / C-19 / C-20 통합)
 바이럴 콘텐츠 통합 엔진.
 
 하루 1회, 4개 콘텐츠 중 1개를 랜덤 선택하여 발행.
-시간대: 아침(06~08 KST) 또는 오후(16~19 KST) 중 랜덤.
+시간대: 오후(16~19 KST) 고정.
 
-yml cron 2개 (아침 06:00 + 오후 16:00)로 트리거.
-날짜 해시 기반으로 아침/오후 결정 → 해당 시간대에만 실행.
+랜덤 딜레이: yml에서 처리 (소스 레벨 sleep 없음)
+퀴즈 reply: 30분 sleep 유지 (유일한 소스 레벨 sleep)
+수동 실행(workflow_dispatch): 딜레이 없이 즉시 수행
 
 콘텐츠:
   C-6:  금융 퀴즈 (4지선다, 30분 후 정답 reply)
@@ -15,7 +16,7 @@ yml cron 2개 (아침 06:00 + 오후 16:00)로 트리거.
   C-19: 캐릭터 투표 (일요일만, C-7 소설 연동)
   C-20: 극단적 선택 (A vs B, 투자/돈 관련)
 
-VERSION = "1.2.0"  # X 프리미엄 4000자 + DRY_RUN 즉시 실행 + FORCE_RUN
+VERSION = "1.3.0"
 RPD: +1/일 (Gemini flash-lite)
 """
 import hashlib
@@ -58,39 +59,25 @@ def _is_sunday() -> bool:
 def should_run(session: str) -> bool:
     """
     이 시간대에 실행해야 하는지 결정.
-    날짜 해시로 아침/오후를 결정 → 하루 1회만 실행.
+    오후(16~19 KST)만 실행. 아침 세션은 폐기.
     FORCE_RUN=true 시 무조건 실행 (수동 테스트용).
 
     Args:
-        session: "viral_morning" 또는 "viral_afternoon"
+        session: "viral_afternoon" (아침은 폐기)
     """
     # FORCE_RUN=true → 무조건 실행 (workflow_dispatch 수동 테스트)
     force = os.environ.get("FORCE_RUN", "false").lower() == "true"
     if force:
-        logger.info(f"[Viral] FORCE_RUN=true → 슬롯 무시, 강제 실행")
+        logger.info(f"[Viral] FORCE_RUN=true → 강제 실행")
         return True
 
-    h = _today_hash()
-    is_morning_day = (h % 2 == 0)  # 짝수 날 = 아침, 홀수 날 = 오후
-
-    if session == "viral_morning" and is_morning_day:
-        return True
-    if session == "viral_afternoon" and not is_morning_day:
+    # 오후 세션만 실행
+    if session == "viral_afternoon":
         return True
 
+    logger.info(f"[Viral] 오후 세션만 지원 → 스킵 (session={session})")
     return False
 
-
-def _random_delay(session: str) -> int:
-    """
-    시간대 내 랜덤 딜레이 (초).
-    아침: 0~120분 (06:00~08:00)
-    오후: 0~180분 (16:00~19:00)
-    """
-    if session == "viral_morning":
-        return random.randint(0, 200)   # 7200 0~120분 -> 200
-    else:
-        return random.randint(0, 200)  # 10800 0~180분 -> 200
 
 
 # ──────────────────────────────────────────────────────────────
@@ -477,12 +464,12 @@ def _generate_character_vote() -> dict:
 # 메인 실행
 # ──────────────────────────────────────────────────────────────
 
-def run_viral(session: str = "viral_morning") -> dict:
+def run_viral(session: str = "viral_afternoon") -> dict:
     """
     바이럴 콘텐츠 통합 파이프라인.
 
     Args:
-        session: "viral_morning" 또는 "viral_afternoon"
+        session: "viral_afternoon"
 
     Returns:
         {"success": True, "type": "quiz|money|vote", ...}
@@ -494,13 +481,7 @@ def run_viral(session: str = "viral_morning") -> dict:
         logger.info(f"[Viral] 이 시간대 아님 → 스킵 (session={session})")
         return {"success": False, "reason": "not_my_slot"}
 
-    # ── Step 2: 랜덤 딜레이 (DRY_RUN 시 즉시 실행) ──
-    if _is_dry_run():
-        logger.info("[Viral] DRY_RUN → 딜레이 스킵, 즉시 실행")
-    else:
-        delay = _random_delay(session)
-        logger.info(f"[Viral] 랜덤 딜레이: {delay}초 ({delay//60}분 {delay%60}초)")
-        time.sleep(delay)
+    # ── Step 2: 랜덤 딜레이는 yml에서 처리 (소스 sleep 제거) ──
 
     # ── Step 3: 콘텐츠 타입 선택 ──
     content_type = _select_content_type()
@@ -574,6 +555,6 @@ def run_viral(session: str = "viral_morning") -> dict:
 if __name__ == "__main__":
     import sys
     logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
-    session = sys.argv[1] if len(sys.argv) > 1 else "viral_morning"
+    session = sys.argv[1] if len(sys.argv) > 1 else "viral_afternoon"
     result = run_viral(session)
     print(result)
