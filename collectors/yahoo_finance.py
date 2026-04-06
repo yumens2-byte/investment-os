@@ -9,7 +9,10 @@ v1.5.2: GitHub Actions 환경 멈춤 문제 수정
 import logging
 import signal
 import time
+
 from typing import Optional
+
+import yfinance as yf  # ← 추가 (PCR/SMA/VOL 함수용)
 from config.settings import TICKER_MAP, ETF_CORE, ETF_SIGNAL
 
 logger = logging.getLogger(__name__)
