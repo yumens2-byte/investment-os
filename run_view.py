@@ -244,32 +244,33 @@ def run(mode: str = "tweet", session: str = None) -> dict:
                 logger.warning(f"[Step 6-TG] C-3 AI ETF 근거 실패 (무시): {e}")
 
             # C-13: Gemini Vision 차트 분석 (유료 채널)
-            if image_path:
-                try:
-                    from engines.chart_analyzer import analyze_chart
-                    chart = analyze_chart(image_path, data)
-                    if chart.get("success"):
-                        send_message(chart["telegram"], channel="paid")
-                        logger.info(
-                            f"[Step 6-TG] C-13 차트 분석 발행 완료 | "
-                            f"trend={chart['trend']}"
-                        )
-                    else:
-                        logger.info(f"[Step 6-TG] C-13 차트 분석 스킵: {chart.get('reason', '?')}")
-                except Exception as ve:
-                    logger.warning(f"[Step 6-TG] C-13 차트 분석 실패 (영향 없음): {ve}")
+            # if image_path:
+            #     try:
+            #         from engines.chart_analyzer import analyze_chart
+            #         chart = analyze_chart(image_path, data)
+            #         if chart.get("success"):
+            #             send_message(chart["telegram"], channel="paid")
+            #             logger.info(
+            #                 f"[Step 6-TG] C-13 차트 분석 발행 완료 | "
+            #                 f"trend={chart['trend']}"
+            #             )
+            #         else:
+            #             logger.info(f"[Step 6-TG] C-13 차트 분석 스킵: {chart.get('reason', '?')}")
+            #     except Exception as ve:
+            #         logger.warning(f"[Step 6-TG] C-13 차트 분석 실패 (영향 없음): {ve}")
 
             # B-21B: 카드뉴스 3장 유료 채널 발행
-            try:
-                from comic.card_news_generator import generate_cards
-                card_paths = generate_cards(data)
-                if card_paths:
-                    from publishers.telegram_publisher import send_photo
-                    for cp in card_paths:
-                        send_photo(cp, caption="", channel="paid")
-                    logger.info(f"[Step 6-TG] B-21B 카드뉴스 {len(card_paths)}장 발행")
-            except Exception as ce:
-                logger.warning(f"[Step 6-TG] B-21B 카드뉴스 실패 (영향 없음): {ce}")
+            # try:
+            #     from comic.card_news_generator import generate_cards
+            #     card_paths = generate_cards(data)
+            #     if card_paths:
+            #         from publishers.telegram_publisher import send_photo
+            #         for cp in card_paths:
+            #             send_photo(cp, caption="", channel="paid")
+            #         logger.info(f"[Step 6-TG] B-21B 카드뉴스 {len(card_paths)}장 발행")
+            # except Exception as ce:
+            #     logger.warning(f"[Step 6-TG] B-21B 카드뉴스 실패 (영향 없음): {ce}")
+              
         elif session_type == "narrative":
             # narrative: Gemini AI 시장 해설 → X + TG 무료/유료 (11:30 KST)
             try:
