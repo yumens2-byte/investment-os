@@ -5,6 +5,7 @@ DRY_RUN=true 시 실제 발행 없이 로그만 출력.
 """
 import logging
 import time
+
 from typing import Optional
 try:
     import tweepy
@@ -133,6 +134,8 @@ def _publish_single(client, text: str, reply_to_id: Optional[str] = None) -> Opt
 
 
 def publish_tweet(tweet_text: str) -> dict:
+    
+    
     """
     단일 트윗 발행 (텍스트만).
 
@@ -195,6 +198,8 @@ def publish_tweet(tweet_text: str) -> dict:
 
 
 def publish_tweet_with_image(tweet_text: str, image_path: str) -> dict:
+
+    
     """
     이미지 첨부 트윗 발행.
     이미지 업로드 실패 시 텍스트만 발행 (소프트 폴백).
@@ -234,6 +239,9 @@ def publish_tweet_with_image(tweet_text: str, image_path: str) -> dict:
 
 
 def publish_thread(posts: list) -> dict:
+
+    time.sleep(random.randint(15, 30))  # 트윗 간 쿨다운
+    
     """
     X 쓰레드 발행 (순차적으로 reply 연결).
 
