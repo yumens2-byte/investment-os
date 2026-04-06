@@ -126,7 +126,7 @@ jobs:
           restore-keys: weekly-log-
       - name: Anti-bot random delay
         run: |
-          DELAY=$((RANDOM % 900))
+          DELAY=$((RANDOM % 100))
           echo "⏱️ Random delay: ${DELAY}s ($((DELAY/60))m $((DELAY%60))s)"
           sleep $DELAY    
       - run: python main.py run all --session morning --mode tweet
@@ -199,7 +199,7 @@ jobs:
       - run: playwright install chromium --with-deps
       - name: Anti-bot random delay
         run: |
-          DELAY=$((RANDOM % 900))
+          DELAY=$((RANDOM % 100))
           echo "⏱️ Random delay: ${DELAY}s ($((DELAY/60))m $((DELAY%60))s)"
           sleep $DELAY
       - run: python main.py run all --session intraday --mode tweet
@@ -270,7 +270,7 @@ jobs:
           restore-keys: weekly-log-
       - name: Anti-bot random delay
         run: |
-          DELAY=$((RANDOM % 900))
+          DELAY=$((RANDOM % 100))
           echo "⏱️ Random delay: ${DELAY}s ($((DELAY/60))m $((DELAY%60))s)"
           sleep $DELAY    
       - run: python main.py run all --session close --mode ${{ github.event.inputs.mode || 'tweet' }}
