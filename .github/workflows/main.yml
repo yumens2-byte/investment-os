@@ -340,7 +340,7 @@ jobs:
           restore-keys: weekly-log-
       - name: Anti-bot random delay
         run: |
-          DELAY=$((RANDOM % 900))
+          DELAY=$((RANDOM % 100))
           echo "⏱️ Random delay: ${DELAY}s ($((DELAY/60))m $((DELAY%60))s)"
           sleep $DELAY    
       - run: python main.py run all --session weekly --mode thread
