@@ -88,9 +88,9 @@ def _random_delay(session: str) -> int:
     오후: 0~180분 (16:00~19:00)
     """
     if session == "viral_morning":
-        return random.randint(0, 7200)   # 0~120분
+        return random.randint(0, 200)   # 7200 0~120분 -> 200
     else:
-        return random.randint(0, 10800)  # 0~180분
+        return random.randint(0, 200)  # 10800 0~180분 -> 200
 
 
 # ──────────────────────────────────────────────────────────────
