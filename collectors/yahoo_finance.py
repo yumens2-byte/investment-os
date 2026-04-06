@@ -466,121 +466,56 @@ def _fetch_price_and_change(ticker: str):
 # 목적: 분석 엔진 고도화를 위한 추가 데이터 소스 수집
 # 비용: 전부 yfinance 무료 데이터
 # ──────────────────────────────────────────────────────────────
-
 def collect_tier2_market_data() -> dict:
     """
-    Tier 2 분석 엔진용 추가 시장 데이터 수집
-    ──────────────────────────────────────────
-    수집 항목:
-      - RSP 등락률:  균등가중 S&P500 ETF (Market Breadth 판단)
-      - SPY 등락률:  시총가중 S&P500 ETF (RSP와 비교용)
-      - VIX3M 가격:  3개월 VIX (Vol Term Structure 판단)
-      - EEM 등락률:  신흥국 ETF (EM Stress 판단)
-
-    Returns:
-        {
-          "rsp_change_pct": float,  # RSP 일간 등락률 (%)
-          "spy_change_pct": float,  # SPY 일간 등락률 (%)
-          "vix3m": float,           # VIX3M 현재 가격
-          "eem_change_pct": float,  # EEM 일간 등락률 (%)
-        }
-        수집 실패 필드는 None — 엔진에서 안전하게 처리
-    """
-    logger.info("[YF_T2] Tier 2 시장 데이터 수집 시작")
-
-    result = {}
-
-    # T2-1: RSP (Invesco S&P500 Equal Weight) — Market Breadth
-    rsp_chg = _fetch(TICKER_MAP.get("RSP", "RSP"), "change")
-    result["rsp_change_pct"] = rsp_chg
-    if rsp_chg is not None:
-        logger.info(f"[YF_T2] RSP 등락률: {rsp_chg:+.2f}%")
-    else:
-        logger.warning("[YF_T2] RSP 수집 실패 → None")
-
-    # T2-1: SPY (비교 대상) — RSP-SPY 스프레드 산출용
-    spy_chg = _fetch(TICKER_MAP.get("SPY", "SPY"), "change")
-    result["spy_change_pct"] = spy_chg
-    if spy_chg is not None:
-        logger.info(f"[YF_T2] SPY 등락률: {spy_chg:+.2f}%")
-    else:
-        logger.warning("[YF_T2] SPY 수집 실패 → None")
-
-    # T2-2: VIX3M (CBOE 3-Month Volatility Index)
-    vix3m = _fetch(TICKER_MAP.get("VIX3M", "^VIX3M"), "price")
-    result["vix3m"] = vix3m
-    if vix3m is not None:
-        logger.info(f"[YF_T2] VIX3M: {vix3m:.2f}")
-    else:
-        logger.warning("[YF_T2] VIX3M 수집 실패 → None")
-
-    # T2-5: EEM (iShares MSCI Emerging Markets ETF)
-    eem_chg = _fetch(TICKER_MAP.get("EEM", "EEM"), "change")
-    result["eem_change_pct"] = eem_chg
-    if eem_chg is not None:
-        logger.info(f"[YF_T2] EEM 등락률: {eem_chg:+.2f}%")
-    else:
-        logger.warning("[YF_T2] EEM 수집 실패 → None")
-
-    collected = sum(1 for v in result.values() if v is not None)
-    logger.info(f"[YF_T2] Tier 2 수집 완료: {collected}/{len(result)}개")
-    return result
-
-
-# ──────────────────────────────────────────────────────────────
-# Tier 2 확장 수집 함수 (2026-04-01 추가)
-# ──────────────────────────────────────────────────────────────
-
-def collect_tier2_market_data() -> dict:
-    """
-    [Tier 2] 분석 엔진 고도화용 추가 시장 데이터 수집
+    [Tier 2 + Tier 3] 분석 엔진 고도화용 추가 시장 데이터 수집
     ──────────────────────────────────────────────────
     수집 항목:
-      - RSP (균등가중 S&P500) 등락률 → Market Breadth 시그널 (T2-1)
-      - SPY 등락률 → RSP와 비교용
-      - VIX3M (3개월 VIX) 가격 → Vol Term Structure 시그널 (T2-2)
-      - EEM (신흥국 ETF) 등락률 → EM Stress 시그널 (T2-5)
+      Tier 2:
+        - RSP (균등가중 S&P500) 등락률 → Market Breadth (T2-1)
+        - SPY 등락률 → RSP 비교 기준
+        - VIX3M (3개월 VIX) → Vol Term Structure (T2-2)
+        - EEM (신흥국 ETF) → EM Stress (T2-5)
+      Tier 3:
+        - SOXX (반도체 ETF) → AI 모멘텀 (T3-1)
+        - QQQ → SOXX 비교 기준
+        - KRE (지역은행 ETF) → 은행 스트레스 (T3-3)
 
     Returns:
         {
-          "rsp_change":  float,  # RSP 일간 등락률 (%)
-          "spy_change":  float,  # SPY 일간 등락률 (%)
-          "vix3m":       float,  # VIX3M 가격 (포인트)
-          "eem_change":  float,  # EEM 일간 등락률 (%)
+          "rsp_change":  float,  # %
+          "spy_change":  float,  # %
+          "vix3m":       float,  # 포인트
+          "eem_change":  float,  # %
+          "soxx_change": float,  # %
+          "qqq_change":  float,  # %
+          "kre_change":  float,  # %
         }
         수집 실패 시 해당 필드 None
     """
-    logger.info("[YF_T2] Tier 2 시장 데이터 수집 시작")
+    logger.info("[YF_T2] Tier 2/3 시장 데이터 수집 시작")
 
-    result = {}
+    result = {
+        # Tier 2
+        "rsp_change":  _fetch(TICKER_MAP.get("RSP",  "RSP"),  "change"),
+        "spy_change":  _fetch(TICKER_MAP.get("SPY",  "SPY"),  "change"),
+        "vix3m":       _fetch(TICKER_MAP.get("VIX3M","^VIX3M"),"price"),
+        "eem_change":  _fetch(TICKER_MAP.get("EEM",  "EEM"),  "change"),
+        # Tier 3
+        "soxx_change": _fetch(TICKER_MAP.get("SOXX", "SOXX"), "change"),
+        "qqq_change":  _fetch(TICKER_MAP.get("QQQ",  "QQQ"),  "change"),
+        "kre_change":  _fetch(TICKER_MAP.get("KRE",  "KRE"),  "change"),
+    }
 
-    # T2-1: RSP (균등가중 S&P500) — Market Breadth 산출용
-    result["rsp_change"] = _fetch(TICKER_MAP.get("RSP", "RSP"), "change")
-
-    # T2-1: SPY — RSP와 비교하여 breadth spread 계산
-    result["spy_change"] = _fetch(TICKER_MAP.get("SPY", "SPY"), "change")
-
-    # T2-2: VIX3M (3개월 VIX) — VIX/VIX3M 비율로 기간구조 판단
-    result["vix3m"] = _fetch(TICKER_MAP.get("VIX3M", "^VIX3M"), "price")
-
-    # T2-5: EEM (신흥국 ETF) — 신흥국 스트레스 감지
-    result["eem_change"] = _fetch(TICKER_MAP.get("EEM", "EEM"), "change")
-
-    # ── Tier 3 추가 수집 (2026-04-01) ──
-    # T3-1: SOXX (반도체 ETF) — AI 모멘텀 판별용
-    result["soxx_change"] = _fetch(TICKER_MAP.get("SOXX", "SOXX"), "change")
-
-    # T3-1: QQQ — SOXX와 비교하여 AI 리더십 판단
-    result["qqq_change"] = _fetch(TICKER_MAP.get("QQQ", "QQQ"), "change")
-
-    # T3-3: KRE (지역은행 ETF) — 은행 스트레스 감지
-    result["kre_change"] = _fetch(TICKER_MAP.get("KRE", "KRE"), "change")
+    # 개별 필드 로깅 (장애 추적용)
+    for key, val in result.items():
+        if val is None:
+            logger.warning(f"[YF_T2] {key} 수집 실패 → None")
+        else:
+            logger.info(f"[YF_T2] {key} = {val}")
 
     collected = sum(1 for v in result.values() if v is not None)
-    logger.info(
-        f"[YF_T2] 수집 완료: {collected}/{len(result)}개 | "
-        f"RSP={result.get('rsp_change')} SPY={result.get('spy_change')} "
-        f"VIX3M={result.get('vix3m')} EEM={result.get('eem_change')} "
-        f"SOXX={result.get('soxx_change')} KRE={result.get('kre_change')}"
-    )
+    logger.info(f"[YF_T2] 수집 완료: {collected}/{len(result)}개")
     return result
+
+
