@@ -23,6 +23,8 @@ Gemini API 호출 공통 모듈 — google-genai SDK
 
 SDK: google-genai (신규, google-generativeai deprecated 대체)
 """
+VERSION = "3.1.0"
+
 import json
 import logging
 import os
@@ -251,8 +253,32 @@ def generate_image(prompt: str, output_path: str = None) -> dict:
                     response_modalities=["IMAGE"],
                 ),
             )
-            for part in response.candidates[0].content.parts:
-                if part.inline_data is not None:
+
+            # ── 응답 안전 파싱 (B-14 v3.1.0) ──
+            # Gemini가 finish_reason=NO_IMAGE 등으로 이미지 생성을 거부하면
+            # candidates[0].content 또는 .parts가 None일 수 있음.
+            candidates = getattr(response, "candidates", None) or []
+            if not candidates:
+                last_error = "no candidates in response"
+                logger.warning(
+                    f"[GeminiGW] 이미지 응답 비정상 | key={key_label} | {last_error}"
+                )
+                continue
+
+            content = getattr(candidates[0], "content", None)
+            parts = getattr(content, "parts", None) if content is not None else None
+            if not parts:
+                finish_reason = getattr(candidates[0], "finish_reason", "?")
+                last_error = f"no parts in response (finish_reason={finish_reason})"
+                logger.warning(
+                    f"[GeminiGW] 이미지 거부/빈응답 | key={key_label} | {last_error}"
+                )
+                continue
+
+            # ── inline_data 추출 ──
+            image_found = False
+            for part in parts:
+                if getattr(part, "inline_data", None) is not None:
                     img_bytes = part.inline_data.data
                     if isinstance(img_bytes, str):
                         import base64
@@ -275,15 +301,26 @@ def generate_image(prompt: str, output_path: str = None) -> dict:
                             "paid": is_paid,
                             "error": "",
                         }
+                    image_found = True
+
+            # parts는 있지만 유효한 inline_data가 없는 경우
+            if not image_found:
+                last_error = "parts present but no inline_data"
+                logger.warning(
+                    f"[GeminiGW] 이미지 데이터 없음 | key={key_label} | {last_error}"
+                )
+                continue
         except Exception as e2:
             err2 = str(e2)
             if "429" in err2 or "quota" in err2.lower() or "RESOURCE_EXHAUSTED" in err2:
-                logger.warning(f"[GeminiGW] 이미지(이미지 429 | key={key_label} → 다음 키")
+                logger.warning(f"[GeminiGW] 이미지 429 | key={key_label} → 다음 키")
                 continue
             last_error = err2
-            logger.warning(f"[GeminiGW] 이미지(이미지 실패 | key={key_label} | {err2[:80]}")
+            logger.warning(f"[GeminiGW] 이미지 실패 | key={key_label} | {err2[:80]}")
 
-    logger.warning(f"[GeminiGW] 이미지 전부 실패 (무료+유료) | error={last_error[:100]}")
+    logger.warning(
+        f"[GeminiGW] 이미지 전부 실패 (무료+유료) | error={last_error or 'unknown'}"
+    )
     return {"success": False, "image_bytes": None, "image_path": None,
             "key_used": "", "paid": False, "error": last_error}
 
