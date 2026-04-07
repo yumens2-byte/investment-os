@@ -3,8 +3,18 @@ db/daily_store.py
 ================================
 일별 시장 데이터 Supabase 적재 모듈
 
+변경이력:
+  v1.1.0 (2026-04-07) Phase 1A signals(T4-1, T4-4) daily_snapshots 적재 추가
+                       - signals dict 4개 키 매핑:
+                         crypto_basis_spread, crypto_basis_state,
+                         btc_social_sentiment, btc_sentiment_state
+                       - score/themes는 derived/무관 데이터로 판단해 제외
+                       - 외부 인터페이스 무변경, 기존 13개 컬럼 처리 무변경
+                       - 마이그레이션: add_phase1a_signals_columns
+  v1.0.0 초기 버전
+
 적재 대상:
-  - daily_snapshots:  시장 스냅샷 (Yahoo + FRED + F&G)
+  - daily_snapshots:  시장 스냅샷 (Yahoo + FRED + F&G + Phase 1A signals)
   - daily_analysis:   분석 결과 (레짐/시그널/ETF)
   - daily_news:       뉴스 분석 (RSS + Gemini)
   - daily_alerts:     Alert 발동 이력
@@ -18,6 +28,8 @@ import logging
 from datetime import date, datetime, timezone, timedelta
 
 logger = logging.getLogger(__name__)
+
+VERSION = "1.1.0"
 
 
 def _get_client():
@@ -40,15 +52,20 @@ def store_daily_snapshot(data: dict) -> bool:
     """
     core_data에서 시장 스냅샷 추출 → daily_snapshots UPSERT
 
+    v1.1.0: Phase 1A signals(T4-1 crypto_basis, T4-4 btc_sentiment) 4개 컬럼 추가
+            - signals dict이 없거나 키가 없으면 NULL 저장 (안전)
+            - 기존 13개 컬럼 처리 로직은 무변경
+
     Args:
         data: assemble_core_data() 반환값
     """
     try:
         snapshot = data.get("market_snapshot", {})
-        macro = data.get("macro_data", {})
-        fg = data.get("fear_greed", {})
-        fx = data.get("fx_rates", {})
-        crypto = data.get("crypto", {})
+        macro    = data.get("macro_data", {})
+        fg       = data.get("fear_greed", {})
+        fx       = data.get("fx_rates", {})
+        crypto   = data.get("crypto", {})
+        signals  = data.get("signals", {}) or {}   # Phase 1A — None safe
 
         row = {
             "snapshot_date": _today_kst(),
@@ -65,13 +82,24 @@ def store_daily_snapshot(data: dict) -> bool:
             "fed_funds_rate": _safe_float(macro.get("fed_funds_rate")),
             "hy_spread": _safe_float(macro.get("hy_spread")),
             "yield_curve": _safe_float(macro.get("yield_curve")),
+
+            # ── Phase 1A: T4-1 BTC Crypto Basis Spread ──
+            "crypto_basis_spread": _safe_float(signals.get("crypto_basis_spread")),
+            "crypto_basis_state":  signals.get("crypto_basis_state") or None,
+
+            # ── Phase 1A: T4-4 BTC Social Sentiment ──
+            "btc_social_sentiment": _safe_float(signals.get("btc_social_sentiment")),
+            "btc_sentiment_state":  signals.get("btc_sentiment_state") or None,
         }
 
         _get_client().table("daily_snapshots").upsert(
             row, on_conflict="snapshot_date"
         ).execute()
 
-        logger.info(f"[DailyStore] 스냅샷 저장 완료: {row['snapshot_date']}")
+        logger.info(
+            f"[DailyStore v{VERSION}] 스냅샷 저장 완료: {row['snapshot_date']} "
+            f"(Phase1A: basis={row['crypto_basis_state']} sent={row['btc_sentiment_state']})"
+        )
         return True
 
     except Exception as e:
