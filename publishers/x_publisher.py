@@ -17,6 +17,7 @@ except ImportError:
 from config.settings import (
     X_API_KEY, X_API_SECRET,
     X_ACCESS_TOKEN, X_ACCESS_TOKEN_SECRET,
+    X_PREMIUM_TWEET_LENGTH,
     DRY_RUN,
 )
 
@@ -170,7 +171,7 @@ def publish_tweet(tweet_text: str) -> dict:
         # DLQ 저장 (B-17)
         try:
             from core.dlq import enqueue
-            enqueue("x_tweet", {"text": tweet_text[:280]}, "X API client 생성 실패")
+            enqueue("x_tweet", {"text": tweet_text[:X_PREMIUM_TWEET_LENGTH]}, "X API client 생성 실패")
         except Exception:
             pass
         return {
@@ -185,7 +186,7 @@ def publish_tweet(tweet_text: str) -> dict:
         # DLQ 저장 (B-17)
         try:
             from core.dlq import enqueue
-            enqueue("x_tweet", {"text": tweet_text[:280]}, "X API 발행 실패")
+            enqueue("x_tweet", {"text": tweet_text[:X_PREMIUM_TWEET_LENGTH]}, "X API 발행 실패")
         except Exception:
             pass
     return {
