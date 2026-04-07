@@ -1,25 +1,36 @@
 """
-collectors/lunarcrush_client.py (v1.1.0)
+collectors/lunarcrush_client.py (v1.2.0)
 =========================================
-Phase 1A — LunarCrush REST API 클라이언트 (캐싱 포함)
+Phase 1A — LunarCrush AI/LLM Endpoint 클라이언트 (캐싱 포함)
 
 변경이력:
-  v1.1.0 (2026-04-07) 엔드포인트 수정: /coins/btc/v1 → /topic/bitcoin/v1
-                      파서 확장: topic 응답 구조 대응 (types_sentiment)
-                      Fallback 엔드포인트 추가 시도
+  v1.2.0 (2026-04-07) ★ Base URL 전면 교체: lunarcrush.com/api4/public → lunarcrush.ai
+                       무료 플랜 REST(/api4/public/topic/...)는 402 차단 → AI/LLM 전용
+                       endpoint(lunarcrush.ai/topic/{topic}.json)로 우회
+                       응답 스키마 완전 변경 → 파서 재작성:
+                         data.metrics.sentiment["1w"] (현재 sentiment, weighted avg)
+                         data.metrics.sentiment.avg  (1년 평균, fallback)
+                         data.ai_summary.supportive[].title/percent
+                         data.ai_summary.critical[].title/percent
+                       단일 endpoint (fallback 불필요, lunarcrush.ai/.json 안정적)
+                       검증: curl로 200 OK + sentiment 72 정상 추출 확인 (2026-04-07)
+                       외부 인터페이스(get_btc_sentiment) 시그니처 무변경
+                         → run_market.py / json_builder.py 수정 불필요
+  v1.1.0 (2026-04-07) [DEPRECATED] /coins/btc/v1 → /topic/bitcoin/v1, fallback 추가
+                       무료 플랜에서 /api4/public/* 전 경로 402 확인됨
   v1.0.0 초기 버전
 
 용도:
   - T4-4 BTC Social Sentiment 시그널 수집
-  - 무료 플랜 한도 (100 req/day) 대응 캐싱
+  - 무료 플랜 한도 대응 캐싱
 
 API:
-  - Base URL: https://lunarcrush.com/api4/public
+  - Base URL: https://lunarcrush.ai
   - 인증: Authorization: Bearer {API_KEY}
-  - 무료 한도: 4 req/min, 100 req/day
-  - 엔드포인트: /topic/bitcoin/v1 (primary)
-                /topic/btc/v1    (fallback)
-                /coins/1/v1      (fallback 2, numeric ID)
+  - Endpoint: /topic/bitcoin.json (LLM-optimized JSON)
+  - 응답 크기: ~15KB (sentiment + ai_summary + metrics + influencers + posts)
+  - 무료 플랜에서 마스킹 없이 모든 핵심 메트릭 노출 확인 (2026-04-07 검증)
+  - Cloudflare 캐싱 사용 (응답 빠름)
 
 캐싱 전략:
   1. 정상 조회: api_cache 테이블 HIT 우선
@@ -39,10 +50,11 @@ from typing import Optional
 
 logger = logging.getLogger(__name__)
 
-VERSION = "1.1.0"
+VERSION = "1.2.0"
 
-# LunarCrush Public API v4
-_BASE_URL = "https://lunarcrush.com/api4/public"
+# LunarCrush AI/LLM Endpoint (lunarcrush.com REST와 별개 도메인)
+_BASE_URL = "https://lunarcrush.ai"
+_ENDPOINT = "/topic/bitcoin.json"
 _TIMEOUT_SEC = 10
 _RETRY_COUNT = 2
 _RETRY_BACKOFF = [2, 5]
@@ -52,14 +64,6 @@ _CACHE_TTL_MINUTES = 60
 
 # 환경변수
 _API_KEY_ENV = "LUNAR_CRUSH_API_KEY"
-
-# 엔드포인트 후보 (순차 시도)
-_ENDPOINT_CANDIDATES = [
-    "/topic/bitcoin/v1",
-    "/topic/btc/v1",
-    "/coins/1/v1",       # BTC numeric ID
-    "/coins/btc/v1",
-]
 
 
 def _get_api_key() -> Optional[str]:
@@ -73,13 +77,12 @@ def _get_api_key() -> Optional[str]:
 
 def _http_get(endpoint: str) -> Optional[dict]:
     """
-    LunarCrush API 호출 (인증 + 재시도).
+    LunarCrush AI Endpoint 호출 (인증 + 재시도).
 
     Returns:
         dict: 응답 JSON
         None: 실패
         {"rate_limit": True}: Rate limit 초과 (특수값)
-        {"not_found": True}: 404 (엔드포인트 시도 실패, 다음 후보 시도용)
     """
     import requests
 
@@ -106,9 +109,12 @@ def _http_get(endpoint: str) -> Optional[dict]:
                 logger.error(f"[LunarCrush] 인증 실패 (401) — API 키 확인 필요")
                 return None
 
-            if resp.status_code == 404:
-                logger.warning(f"[LunarCrush] 엔드포인트 없음 (404): {endpoint}")
-                return {"not_found": True}
+            if resp.status_code == 402:
+                logger.error(
+                    f"[LunarCrush] Payment Required (402): {endpoint} — "
+                    f"무료 플랜 권한 부족 (lunarcrush.ai endpoint도 차단됨)"
+                )
+                return None
 
             if resp.status_code != 200:
                 logger.warning(
@@ -120,7 +126,11 @@ def _http_get(endpoint: str) -> Optional[dict]:
                     continue
                 return None
 
-            return resp.json()
+            try:
+                return resp.json()
+            except ValueError as e:
+                logger.warning(f"[LunarCrush] JSON 파싱 실패: {e}")
+                return None
 
         except requests.Timeout:
             logger.warning(
@@ -139,168 +149,140 @@ def _http_get(endpoint: str) -> Optional[dict]:
     return None
 
 
-def _try_endpoints() -> Optional[dict]:
-    """
-    여러 엔드포인트 후보를 순차 시도.
-    첫 번째로 성공(200)한 응답 반환.
-
-    Returns:
-        dict: 정상 응답
-        {"rate_limit": True}: 전체 rate limit
-        None: 전부 실패
-    """
-    for endpoint in _ENDPOINT_CANDIDATES:
-        logger.info(f"[LunarCrush] 엔드포인트 시도: {endpoint}")
-        resp = _http_get(endpoint)
-
-        # 정상 응답
-        if isinstance(resp, dict) and not resp.get("not_found") and not resp.get("rate_limit"):
-            logger.info(f"[LunarCrush] 성공 엔드포인트: {endpoint}")
-            return resp
-
-        # Rate limit이면 즉시 중단 (다른 엔드포인트도 동일)
-        if isinstance(resp, dict) and resp.get("rate_limit"):
-            return resp
-
-        # 404면 다음 후보 시도
-        if isinstance(resp, dict) and resp.get("not_found"):
-            continue
-
-        # 기타 실패도 다음 후보 시도
-        continue
-
-    logger.error("[LunarCrush] 모든 엔드포인트 후보 실패")
-    return None
-
-
 def _parse_sentiment_value(raw: dict) -> Optional[float]:
     """
-    LunarCrush 응답에서 sentiment 값 추출 (여러 경로 시도).
+    LunarCrush AI endpoint 응답에서 sentiment 값 추출.
 
-    topic/v1 응답 구조:
-      data.types_sentiment: {"tweet": 75, "youtube-video": 80, ...}
-      → 타입별 sentiment를 평균
+    응답 스키마 (lunarcrush.ai/topic/bitcoin.json, 2026-04-07 검증):
+      data.metrics.sentiment["1w"]      (현재 1주 평균 sentiment, weighted)
+      data.metrics.sentiment.avg        (1년 평균, fallback)
+      data.metrics.sentiment["1w_previous"]  (지난주 sentiment, fallback 2)
 
-    coins/v1 응답 구조:
-      data.sentiment: 75 (직접 숫자)
+    Returns:
+        float (0~100): sentiment 점수
+        None: 추출 실패
     """
-
-    # 후보 1: data.sentiment (숫자 직접) — coins 엔드포인트
+    # 후보 1: data.metrics.sentiment["1w"] — 가장 최근 (1주 평균)
     try:
-        val = raw.get("data", {}).get("sentiment")
-        if isinstance(val, (int, float)):
-            return float(val)
-    except Exception:
-        pass
+        sent_obj = raw.get("data", {}).get("metrics", {}).get("sentiment", {})
+        if isinstance(sent_obj, dict):
+            val = sent_obj.get("1w")
+            if isinstance(val, (int, float)):
+                logger.debug(f"[LunarCrush] sentiment 추출: data.metrics.sentiment['1w']={val}")
+                return float(val)
+    except Exception as e:
+        logger.debug(f"[LunarCrush] 후보1 실패: {e}")
 
-    # 후보 2: data.types_sentiment (dict) — topic 엔드포인트 평균
+    # 후보 2: data.metrics.sentiment.avg — 1년 평균
     try:
-        types_sent = raw.get("data", {}).get("types_sentiment")
-        if isinstance(types_sent, dict) and types_sent:
-            values = [v for v in types_sent.values() if isinstance(v, (int, float))]
+        sent_obj = raw.get("data", {}).get("metrics", {}).get("sentiment", {})
+        if isinstance(sent_obj, dict):
+            val = sent_obj.get("avg")
+            if isinstance(val, (int, float)):
+                logger.debug(f"[LunarCrush] sentiment 추출: data.metrics.sentiment.avg={val}")
+                return float(val)
+    except Exception as e:
+        logger.debug(f"[LunarCrush] 후보2 실패: {e}")
+
+    # 후보 3: data.metrics.sentiment["1w_previous"]
+    try:
+        sent_obj = raw.get("data", {}).get("metrics", {}).get("sentiment", {})
+        if isinstance(sent_obj, dict):
+            val = sent_obj.get("1w_previous")
+            if isinstance(val, (int, float)):
+                logger.debug(f"[LunarCrush] sentiment 추출: data.metrics.sentiment['1w_previous']={val}")
+                return float(val)
+    except Exception as e:
+        logger.debug(f"[LunarCrush] 후보3 실패: {e}")
+
+    # 후보 4: data.sentiment.network 평균 (네트워크별 sentiment)
+    try:
+        network = raw.get("data", {}).get("sentiment", {}).get("network", {})
+        if isinstance(network, dict) and network:
+            values = [v for v in network.values() if isinstance(v, (int, float))]
             if values:
                 avg = sum(values) / len(values)
-                logger.debug(f"[LunarCrush] types_sentiment 평균: {avg} ({len(values)}개)")
+                logger.debug(f"[LunarCrush] sentiment 추출: data.sentiment.network 평균={avg:.1f} ({len(values)}개)")
                 return float(avg)
-    except Exception:
-        pass
+    except Exception as e:
+        logger.debug(f"[LunarCrush] 후보4 실패: {e}")
 
-    # 후보 3: data.sentiment.value
+    # 후보 5: data.sentiment.interactions {positive, negative, neutral} → 백분율 계산
     try:
-        val = raw.get("data", {}).get("sentiment", {}).get("value")
-        if isinstance(val, (int, float)):
-            return float(val)
-    except Exception:
-        pass
+        inter = raw.get("data", {}).get("sentiment", {}).get("interactions", {})
+        if isinstance(inter, dict):
+            pos = inter.get("positive", 0)
+            neg = inter.get("negative", 0)
+            neu = inter.get("neutral", 0)
+            total = pos + neg + neu
+            if total > 0:
+                # weighted: positive=100, neutral=50, negative=0
+                weighted = (pos * 100 + neu * 50) / total
+                logger.debug(f"[LunarCrush] sentiment 추출: interactions weighted={weighted:.1f}")
+                return float(weighted)
+    except Exception as e:
+        logger.debug(f"[LunarCrush] 후보5 실패: {e}")
 
-    # 후보 4: data.sentiment.current
+    # 모두 실패
     try:
-        val = raw.get("data", {}).get("sentiment", {}).get("current")
-        if isinstance(val, (int, float)):
-            return float(val)
+        keys = list(raw.get("data", {}).keys()) if isinstance(raw.get("data"), dict) else "N/A"
     except Exception:
-        pass
-
-    # 후보 5: data[0].sentiment (배열 응답)
-    try:
-        data = raw.get("data")
-        if isinstance(data, list) and data:
-            val = data[0].get("sentiment")
-            if isinstance(val, (int, float)):
-                return float(val)
-    except Exception:
-        pass
-
-    logger.warning(f"[LunarCrush] sentiment 파싱 실패 — 응답 키: {list(raw.get('data', {}).keys()) if isinstance(raw.get('data'), dict) else 'N/A'}")
+        keys = "?"
+    logger.warning(f"[LunarCrush] sentiment 파싱 실패 — data 키: {keys}")
     return None
 
 
 def _parse_sentiment_themes(raw: dict) -> tuple[str, str]:
     """
-    LunarCrush 응답에서 supportive/critical themes 추출.
+    LunarCrush AI endpoint 응답에서 supportive/critical themes 추출.
 
-    topic/v1 응답 구조:
-      data.types_sentiment_detail: {"tweet": {"positive": N, "negative": N}, ...}
-      → 텍스트로 요약
+    응답 스키마 (lunarcrush.ai/topic/bitcoin.json, 2026-04-07 검증):
+      data.ai_summary.supportive: [
+        {"title": "...", "percent": 30, "description": "..."}, ...
+      ]
+      data.ai_summary.critical: [
+        {"title": "...", "percent": 16, "description": "..."}, ...
+      ]
 
     Returns:
-        (supportive_str, critical_str) — 200자 이내 각각
+        (supportive_str, critical_str) — 각각 200자 이내
     """
     supportive = ""
     critical = ""
 
-    # 후보 1: data.sentiment.supportive_themes (coins 엔드포인트)
+    # 후보 1: data.ai_summary.supportive / critical (lunarcrush.ai 기본 형식)
     try:
-        sentiment_obj = raw.get("data", {}).get("sentiment", {})
-        if isinstance(sentiment_obj, dict):
-            sup_list = sentiment_obj.get("supportive_themes", [])
-            crit_list = sentiment_obj.get("critical_themes", [])
+        ai_summary = raw.get("data", {}).get("ai_summary", {})
+        if isinstance(ai_summary, dict):
+            sup_list = ai_summary.get("supportive", [])
+            crit_list = ai_summary.get("critical", [])
 
-            if sup_list:
-                supportive = "; ".join(
-                    f"{t.get('name', '?')} ({t.get('percent', 0)}%)"
-                    for t in sup_list[:3]
-                    if isinstance(t, dict)
-                )
-            if crit_list:
-                critical = "; ".join(
-                    f"{t.get('name', '?')} ({t.get('percent', 0)}%)"
-                    for t in crit_list[:3]
-                    if isinstance(t, dict)
-                )
+            if isinstance(sup_list, list) and sup_list:
+                parts = []
+                for t in sup_list[:3]:
+                    if isinstance(t, dict):
+                        title = t.get("title", "?")
+                        percent = t.get("percent", 0)
+                        parts.append(f"{title} ({percent}%)")
+                supportive = "; ".join(parts)
+
+            if isinstance(crit_list, list) and crit_list:
+                parts = []
+                for t in crit_list[:3]:
+                    if isinstance(t, dict):
+                        title = t.get("title", "?")
+                        percent = t.get("percent", 0)
+                        parts.append(f"{title} ({percent}%)")
+                critical = "; ".join(parts)
     except Exception as e:
-        logger.debug(f"[LunarCrush] themes 파싱 실패 (경로 1): {e}")
+        logger.debug(f"[LunarCrush] themes 파싱 실패 (ai_summary): {e}")
 
-    # 후보 2: data.types_sentiment_detail (topic 엔드포인트 — 요약 텍스트 생성)
+    # 후보 2: data.ai_summary.whatsup (텍스트 요약, fallback)
     if not supportive and not critical:
         try:
-            detail = raw.get("data", {}).get("types_sentiment_detail")
-            if isinstance(detail, dict) and detail:
-                # 타입별 긍정/부정 집계 → 텍스트 요약
-                parts_sup = []
-                parts_crit = []
-                for type_name, counts in detail.items():
-                    if not isinstance(counts, dict):
-                        continue
-                    pos = counts.get("positive", 0)
-                    neg = counts.get("negative", 0)
-                    if pos > 0:
-                        parts_sup.append(f"{type_name}:{pos}")
-                    if neg > 0:
-                        parts_crit.append(f"{type_name}:{neg}")
-                if parts_sup:
-                    supportive = "Positive signals - " + ", ".join(parts_sup[:5])
-                if parts_crit:
-                    critical = "Negative signals - " + ", ".join(parts_crit[:5])
-        except Exception as e:
-            logger.debug(f"[LunarCrush] themes 파싱 실패 (경로 2): {e}")
-
-    # 후보 3: data.categories (topic 엔드포인트 — 관련 카테고리)
-    if not supportive:
-        try:
-            categories = raw.get("data", {}).get("categories", [])
-            if isinstance(categories, list) and categories:
-                supportive = "Categories: " + ", ".join(str(c) for c in categories[:5])
+            whatsup = raw.get("data", {}).get("ai_summary", {}).get("whatsup", "")
+            if isinstance(whatsup, str) and whatsup:
+                supportive = whatsup[:200]
         except Exception:
             pass
 
@@ -316,7 +298,7 @@ def _fetch_btc_topic(use_cache: bool = True) -> Optional[dict]:
         use_cache: True이면 캐시 확인, False이면 API 직접 호출
 
     Returns:
-        dict: LunarCrush 응답 (data 필드)
+        dict: LunarCrush 응답 (raw JSON)
         None: 실패
     """
     from db.api_cache_store import get_cache, set_cache, get_stale_cache
@@ -329,8 +311,9 @@ def _fetch_btc_topic(use_cache: bool = True) -> Optional[dict]:
         if cached:
             return cached
 
-    # 2. API 호출 — 여러 엔드포인트 순차 시도
-    raw = _try_endpoints()
+    # 2. API 호출 (단일 endpoint, fallback 불필요)
+    logger.info(f"[LunarCrush] AI endpoint 호출: {_BASE_URL}{_ENDPOINT}")
+    raw = _http_get(_ENDPOINT)
 
     # Rate limit 시 stale fallback
     if isinstance(raw, dict) and raw.get("rate_limit"):
@@ -363,17 +346,20 @@ def get_btc_sentiment() -> dict:
     """
     T4-4 BTC Social Sentiment 시그널 수집.
 
+    외부 인터페이스 (run_market.py / json_builder.py가 호출):
+    이 함수의 시그니처와 반환 dict 키는 v1.1.0과 100% 동일하다.
+
     Returns:
         dict:
           {
             "success": bool,
-            "sentiment":       float | None,  # 0~100
-            "state":           "Bullish" | "Neutral" | "Bearish" | "Unknown",
-            "score":           int,  # 1~3
-            "themes_supportive": str,
-            "themes_critical":   str,
-            "source":          "api" | "cache" | "stale" | "fallback",
-            "error":           str | None,
+            "sentiment":          float | None,  # 0~100
+            "state":              "Bullish" | "Neutral" | "Bearish" | "Unknown",
+            "score":              int,  # 1~3
+            "themes_supportive":  str,
+            "themes_critical":    str,
+            "source":             "api" | "cache" | "stale" | "fallback",
+            "error":              str | None,
           }
     """
     logger.info(f"[LunarCrush v{VERSION}] T4-4 BTC Sentiment 수집 시작")
@@ -416,7 +402,7 @@ def get_btc_sentiment() -> dict:
     else:
         state, score = "Bearish", 3
 
-    # Themes 파싱 (가능한 경우)
+    # Themes 파싱
     supportive, critical = _parse_sentiment_themes(raw)
 
     logger.info(
