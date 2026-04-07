@@ -3,14 +3,84 @@ publishers/x_formatter.py
 JSON Core Data → X 트윗 텍스트 변환.
 출력 형식은 project-summary.html 기준.
 
-VERSION = "1.1.0"  # 해시태그 랜덤화 추가 (X 자동화 감지 방지)
+VERSION = "1.2.0"  # 비한국어 문자 가드 추가 (Gemini 외국어 누출 차단)
+
+v1.2.0 (2026-04-07): Gemini AI 트윗 비한국어 문자 가드
+  - 14:06 morning에서 Gemini가 'सावधानी'(힌디어) 단어를 트윗에 포함하여 발행
+    가능 상태로 통과한 사고 발생
+  - _detect_non_publishable_chars() 헬퍼 추가:
+    Devanagari/Arabic/Hebrew/Thai/Cyrillic/Hiragana/Katakana 등 명확한
+    비한국어 스크립트 감지
+  - generate_ai_tweet, generate_ai_thread 모두에 길이 체크와 동일한 패턴으로
+    언어 검증 추가 → 검증 실패 시 재시도 → 모두 실패 시 fallback
+  - 한국어/영어/숫자/이모지/한자/일반 기호는 모두 통과 (false positive 방지)
+
+v1.1.0: 해시태그 랜덤화 추가 (X 자동화 감지 방지)
 """
 import logging
 import random as _random
+import re as _re
 from typing import Optional
 from config.settings import X_MAX_TWEET_LENGTH, X_HASHTAGS
 
 logger = logging.getLogger(__name__)
+
+
+# ──────────────────────────────────────────────────────────────
+# v1.2.0: 비한국어 문자 가드
+# ──────────────────────────────────────────────────────────────
+# 명확한 비한국어 스크립트 — 한국어 콘텐츠에 절대 등장하지 않음
+# 한자(CJK)는 한국 콘텐츠에서 가끔 사용 가능하므로 제외 (false positive 방지)
+_NON_PUBLISHABLE_PATTERN = _re.compile(
+    "["
+    "\u0900-\u097F"   # Devanagari (힌디, 산스크리트, 마라티)
+    "\u0980-\u09FF"   # Bengali
+    "\u0A00-\u0A7F"   # Gurmukhi (펀자브)
+    "\u0A80-\u0AFF"   # Gujarati
+    "\u0B00-\u0B7F"   # Oriya
+    "\u0B80-\u0BFF"   # Tamil
+    "\u0C00-\u0C7F"   # Telugu
+    "\u0C80-\u0CFF"   # Kannada
+    "\u0D00-\u0D7F"   # Malayalam
+    "\u0E00-\u0E7F"   # Thai
+    "\u0E80-\u0EFF"   # Lao
+    "\u1000-\u109F"   # Myanmar
+    "\u0600-\u06FF"   # Arabic
+    "\u0750-\u077F"   # Arabic Supplement
+    "\u08A0-\u08FF"   # Arabic Extended-A
+    "\u0590-\u05FF"   # Hebrew
+    "\u0400-\u04FF"   # Cyrillic (러시아어 등)
+    "\u0500-\u052F"   # Cyrillic Supplement
+    "\u3040-\u309F"   # Hiragana (일본어)
+    "\u30A0-\u30FF"   # Katakana (일본어)
+    "\u0370-\u03FF"   # Greek
+    "]"
+)
+
+
+def _detect_non_publishable_chars(text: str) -> Optional[str]:
+    """
+    텍스트에서 비한국어 문자(힌디/아랍/히브리/태국/키릴/일본 가나 등) 감지.
+
+    한국어 콘텐츠에 등장해서는 안 되는 명확한 외국어 스크립트만 차단.
+    한자(CJK)는 false positive 방지 위해 통과시킴.
+
+    Returns:
+        감지된 첫 외국어 토큰 (str), 없으면 None
+    """
+    if not text:
+        return None
+    matches = _NON_PUBLISHABLE_PATTERN.findall(text)
+    if not matches:
+        return None
+    # 첫 매칭 위치 주변 컨텍스트 추출 (디버깅용)
+    m = _NON_PUBLISHABLE_PATTERN.search(text)
+    if m:
+        start = max(0, m.start() - 5)
+        end = min(len(text), m.end() + 10)
+        return text[start:end]
+    return matches[0]
+
 
 # ──────────────────────────────────────────────────────────────
 # 이모지 매핑
@@ -403,18 +473,33 @@ def generate_ai_tweet(data: dict, session_label: str = "Market Snapshot") -> str
 
         if result.get("success"):
             ai_tweet = _clean_tweet(result["text"])
-            if 50 < len(ai_tweet) <= 280:
+            non_kr = _detect_non_publishable_chars(ai_tweet)
+            if 50 < len(ai_tweet) <= 280 and non_kr is None:
                 logger.info(f"[XFormatter] AI 트윗 생성 ({len(ai_tweet)}자) | source=gemini | attempt=1")
                 return ai_tweet
 
-            # ── 글자수 초과 → 2회 재시도 (요약 요청) ──
-            for retry in range(2):
-                retry_prompt = (
-                    f"아래 트윗이 {len(ai_tweet)}자로 너무 깁니다. "
-                    f"반드시 200자 이내로 줄여줘. 핵심 수치와 해시태그만 남기고 축약.\n"
-                    f"설명 없이 축약된 트윗 본문만 출력:\n\n"
-                    f"{ai_tweet}"
+            # ── 길이 초과 또는 비한국어 문자 감지 → 재시도 ──
+            if non_kr is not None:
+                logger.warning(
+                    f"[XFormatter] 비한국어 문자 감지: '{non_kr}' → 재시도"
                 )
+            for retry in range(2):
+                if non_kr is not None:
+                    retry_prompt = (
+                        f"아래 트윗에 한국어가 아닌 외국어 단어가 포함되어 있습니다. "
+                        f"반드시 100% 한국어, 영어, 숫자, 이모지만 사용해서 다시 작성해주세요. "
+                        f"힌디어, 아랍어, 일본어 가나, 태국어, 러시아어 등 절대 금지.\n"
+                        f"길이는 200자 이내, 핵심 수치와 해시태그 유지.\n"
+                        f"설명 없이 트윗 본문만 출력:\n\n"
+                        f"{ai_tweet}"
+                    )
+                else:
+                    retry_prompt = (
+                        f"아래 트윗이 {len(ai_tweet)}자로 너무 깁니다. "
+                        f"반드시 200자 이내로 줄여줘. 핵심 수치와 해시태그만 남기고 축약.\n"
+                        f"설명 없이 축약된 트윗 본문만 출력:\n\n"
+                        f"{ai_tweet}"
+                    )
                 retry_result = call(
                     prompt=retry_prompt,
                     model="flash-lite",
@@ -423,17 +508,19 @@ def generate_ai_tweet(data: dict, session_label: str = "Market Snapshot") -> str
                 )
                 if retry_result.get("success"):
                     shortened = _clean_tweet(retry_result["text"])
-                    if 50 < len(shortened) <= 280:
+                    shortened_non_kr = _detect_non_publishable_chars(shortened)
+                    if 50 < len(shortened) <= 280 and shortened_non_kr is None:
                         logger.info(
                             f"[XFormatter] AI 트윗 재시도 성공 ({len(shortened)}자) | "
                             f"source=gemini | attempt={retry + 2}"
                         )
                         return shortened
                     ai_tweet = shortened  # 다음 재시도에 사용
+                    non_kr = shortened_non_kr  # 비한국어 상태 갱신
 
             logger.warning(
-                f"[XFormatter] AI 트윗 3회 시도 모두 길이 초과 "
-                f"({len(ai_tweet)}자) → fallback"
+                f"[XFormatter] AI 트윗 3회 시도 실패 "
+                f"({len(ai_tweet)}자, non_kr={non_kr is not None}) → fallback"
             )
 
     except Exception as e:
@@ -538,6 +625,7 @@ def generate_ai_thread(data: dict) -> list:
             # list[dict] → list[str]
             if isinstance(parsed, list):
                 posts = []
+                rejected_non_kr = 0
                 for item in parsed:
                     if isinstance(item, dict):
                         post = item.get("post", "")
@@ -546,14 +634,32 @@ def generate_ai_thread(data: dict) -> list:
                     else:
                         continue
                     post = post.strip().strip('"').strip("'")
-                    if 10 < len(post) <= 280:
-                        posts.append(post)
+                    if not (10 < len(post) <= 280):
+                        continue
+                    # v1.2.0: 비한국어 문자 감지 시 해당 포스트만 제외
+                    non_kr = _detect_non_publishable_chars(post)
+                    if non_kr is not None:
+                        logger.warning(
+                            f"[XFormatter] 스레드 포스트 비한국어 감지: '{non_kr}' → 제외"
+                        )
+                        rejected_non_kr += 1
+                        continue
+                    posts.append(post)
 
                 if len(posts) >= 3:
                     logger.info(
-                        f"[XFormatter] AI 스레드 생성 ({len(posts)}개) | source=gemini"
+                        f"[XFormatter] AI 스레드 생성 ({len(posts)}개"
+                        f"{f', non_kr 제외 {rejected_non_kr}개' if rejected_non_kr else ''}) | "
+                        f"source=gemini"
                     )
                     return posts
+
+                # 가드 통과 포스트가 3개 미만 → fallback
+                if rejected_non_kr > 0:
+                    logger.warning(
+                        f"[XFormatter] AI 스레드 비한국어 제외 후 {len(posts)}개만 남음 "
+                        f"(rejected={rejected_non_kr}) → fallback"
+                    )
 
             logger.warning("[XFormatter] AI 스레드 파싱 실패 → fallback")
 
