@@ -20,6 +20,8 @@ import json
 import logging
 import sys
 from datetime import datetime, timezone
+from zoneinfo import ZoneInfo
+import os
 
 from config.settings import LOG_LEVEL, DRY_RUN
 
@@ -29,6 +31,28 @@ logging.basicConfig(
     datefmt="%Y-%m-%d %H:%M:%S",
 )
 logger = logging.getLogger("run_alert")
+
+def _is_alert_window() -> tuple[bool, str]:
+    """
+    미국 동부시간 기준 Alert 실행 허용 시간인지 판정.
+    workflow는 넓게 돌고, 실제 발행 시간은 여기서 제한한다.
+    """
+    tz_name = os.getenv("ALERT_TZ", "America/New_York")
+    windows_raw = os.getenv("ALERT_WINDOWS", "09:30,10:30,15:30")
+    allowed = {x.strip() for x in windows_raw.split(",") if x.strip()}
+
+    now_et = datetime.now(ZoneInfo(tz_name))
+    now_hm = now_et.strftime("%H:%M")
+    weekday = now_et.weekday()  # Mon=0 ... Sun=6
+
+    # 미국 기준 평일만 허용
+    if weekday >= 5:
+        return False, f"weekend_et:{now_et.isoformat()}"
+
+    if now_hm not in allowed:
+        return False, f"outside_window_et:{now_et.isoformat()} allowed={sorted(allowed)}"
+
+    return True, f"inside_window_et:{now_et.isoformat()}"
 
 
 def _load_prev_snapshot() -> dict:
@@ -48,6 +72,19 @@ def run() -> dict:
     logger.info("=" * 50)
     logger.info(f"[run_alert] 시작 | DRY_RUN={DRY_RUN}")
     logger.info("=" * 50)
+
+    # ── Pre-Step: 미국 동부시간 Alert 윈도우 체크 ─────────────
+    should_run, reason = _is_alert_window()
+    if not should_run:
+        logger.info(f"[run_alert] 시간 윈도우 아님 — 스킵: {reason}")
+        return {
+            "alerts_detected": 0,
+            "alerts_sent": 0,
+            "reason": "outside_alert_window",
+            "detail": reason,
+        }
+
+    logger.info(f"[run_alert] 시간 윈도우 통과: {reason}")
 
     # ── Step 0: DLQ 재처리 (B-17) ────────────────────────────
     try:
