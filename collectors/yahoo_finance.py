@@ -1,24 +1,39 @@
 """
-collectors/yahoo_finance.py (v1.5.2)
+collectors/yahoo_finance.py (v1.6.0)
 =====================================
+v1.6.0: PCR 수집 v2.0 — CBOE 공식 + Stooq 다중 fallback (2026-04-07)
+- collect_put_call_ratio() 완전 재작성
+  · ^CPCE Yahoo 의존 제거 (deprecated)
+  · 1순위: CBOE JSON API
+  · 2순위: CBOE HTML 페이지 정규식 파싱
+  · 3순위: Stooq.com CSV (^cpc.us)
+  · 4순위: Unknown fallback
+- 정의되지 않은 _safe_fetch_price() 호출 제거
+- import re 추가
+- 응답에 pcr_source 필드 추가
+
 v1.5.2: GitHub Actions 환경 멈춤 문제 수정
 - yfinance 전체에 signal 기반 타임아웃 적용 (무한 대기 차단)
 - requests fallback도 timeout=10 강제
 - 수집 불가 시 None 반환 → validator 차단
 """
 import logging
+import re
 import signal
 import time
 
 from typing import Optional
 
-import yfinance as yf  # ← 추가 (PCR/SMA/VOL 함수용)
+import yfinance as yf  # ← PCR/SMA/VOL 함수용
 from config.settings import TICKER_MAP, ETF_CORE, ETF_SIGNAL
 
 logger = logging.getLogger(__name__)
 
 # 티커 1개당 최대 대기 시간 (초)
 _FETCH_TIMEOUT_SEC = 15
+
+# PCR 수집 소스별 timeout
+_PCR_TIMEOUT_SEC = 5
 
 
 class _TimeoutError(Exception):
@@ -235,60 +250,250 @@ def collect_etf_sma() -> dict:
 
 
 # ──────────────────────────────────────────────────────────────
-# D-2: CBOE Put/Call Ratio 수집 (2026-04-04)
+# D-2: CBOE Put/Call Ratio 수집 v2.0 (2026-04-07)
+# ^CPCE Yahoo 의존 제거 → CBOE 공식 + Stooq 다중 fallback
 # ──────────────────────────────────────────────────────────────
 
 def collect_put_call_ratio() -> dict:
     """
-    D-2: CBOE Equity Put/Call Ratio 수집.
+    D-2: CBOE Equity Put/Call Ratio 수집 (v2.0)
 
-    PCR > 1.2 → Extreme Bearish (과도한 풋 매수)
-    PCR > 1.0 → Bearish (풋 우세)
-    PCR 0.7~1.0 → Neutral
-    PCR < 0.7 → Bullish/과열 경고 (과도한 콜 매수)
+    데이터 소스 우선순위:
+      1순위: CBOE JSON API (cdn.cboe.com)
+      2순위: CBOE HTML 페이지 정규식 파싱 (www.cboe.com)
+      3순위: Stooq.com CSV (^cpc.us)
+      4순위: Unknown fallback
+
+    PCR 해석:
+      > 1.2  → Extreme Bearish (과도한 풋 매수, 바닥 신호)
+      > 1.0  → Bearish (풋 우세)
+      0.7~1.0 → Neutral (정상 범위)
+      < 0.7  → Bullish (Complacency, 과도한 콜 매수, 과열 경고)
 
     Returns:
-        {"pcr": 0.85, "pcr_state": "Neutral", "pcr_score": 2}
+        {
+            "pcr":        float,  # PCR 값
+            "pcr_state":  str,    # 상태 라벨
+            "pcr_score":  int,    # 1~4
+            "pcr_source": str,    # "cboe_json" | "cboe_html" | "stooq" | "fallback"
+        }
     """
-    logger.info("[YF_PCR] Put/Call Ratio 수집 시작")
+    logger.info("[YF_PCR] Put/Call Ratio 수집 시작 (v2.0)")
 
+    # ── 1순위: CBOE JSON API ──
+    pcr = _fetch_pcr_cboe_json()
+    if pcr is not None:
+        result = _build_pcr_result(pcr, source="cboe_json")
+        logger.info(f"[YF_PCR] PCR={pcr} → {result['pcr_state']} (source=cboe_json)")
+        return result
+
+    # ── 2순위: CBOE HTML 파싱 ──
+    pcr = _fetch_pcr_cboe_html()
+    if pcr is not None:
+        result = _build_pcr_result(pcr, source="cboe_html")
+        logger.info(f"[YF_PCR] PCR={pcr} → {result['pcr_state']} (source=cboe_html)")
+        return result
+
+    # ── 3순위: Stooq fallback ──
+    logger.info("[YF_PCR] CBOE 실패 → Stooq fallback 시도")
+    pcr = _fetch_pcr_stooq()
+    if pcr is not None:
+        result = _build_pcr_result(pcr, source="stooq")
+        logger.info(f"[YF_PCR] PCR={pcr} → {result['pcr_state']} (source=stooq)")
+        return result
+
+    # ── 4순위: Unknown fallback ──
+    logger.warning("[YF_PCR] 모든 데이터 소스 실패 → Unknown")
+    return {
+        "pcr": 0.0,
+        "pcr_state": "Unknown",
+        "pcr_score": 2,
+        "pcr_source": "fallback",
+    }
+
+
+def _fetch_pcr_cboe_json() -> Optional[float]:
+    """CBOE JSON API에서 Equity P/C Ratio 최신값 추출"""
     try:
-        symbol = "^CPCE"
-        ticker = yf.Ticker(symbol)
-        hist = ticker.history(period="5d")
+        import requests
 
-        pcr = None
-        if hist is not None and len(hist) > 0:
-            pcr = round(float(hist["Close"].iloc[-1]), 3)
-        else:
-            # requests fallback
-            try:
-                _, pcr_val = _safe_fetch_price(symbol)
-                if pcr_val is not None:
-                    pcr = round(pcr_val, 3)
-            except Exception:
-                pass
+        url = "https://cdn.cboe.com/api/global/us_indices/daily_prices/PUT-CALL-EQUITY_history.json"
+        headers = {
+            "User-Agent": (
+                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+                "AppleWebKit/537.36 (KHTML, like Gecko) "
+                "Chrome/120.0.0.0 Safari/537.36"
+            ),
+            "Accept": "application/json",
+        }
 
-        if pcr is None or pcr <= 0:
-            logger.warning("[YF_PCR] PCR 수집 실패 → 기본값")
-            return {"pcr": 0.0, "pcr_state": "Unknown", "pcr_score": 2}
+        resp = requests.get(url, headers=headers, timeout=_PCR_TIMEOUT_SEC)
+        if resp.status_code != 200:
+            logger.debug(f"[YF_PCR] CBOE JSON HTTP {resp.status_code}")
+            return None
 
-        # 상태 판정
-        if pcr > 1.2:
-            state, score = "Extreme Bearish", 4
-        elif pcr > 1.0:
-            state, score = "Bearish", 3
-        elif pcr >= 0.7:
-            state, score = "Neutral", 2
-        else:
-            state, score = "Bullish (Complacency)", 1
+        data = resp.json()
+        # 응답 구조 후보: { "data": [...] } 또는 { "history": [...] } 또는 [...]
+        records = None
+        if isinstance(data, dict):
+            records = data.get("data") or data.get("history")
+        elif isinstance(data, list):
+            records = data
 
-        logger.info(f"[YF_PCR] PCR={pcr} → {state} (score={score})")
-        return {"pcr": pcr, "pcr_state": state, "pcr_score": score}
+        if not records or not isinstance(records, list):
+            logger.debug("[YF_PCR] CBOE JSON 구조 인식 실패")
+            return None
+
+        # 최신 레코드 추출 (마지막 또는 첫 항목)
+        latest = records[-1] if isinstance(records[-1], dict) else records[0]
+        if not isinstance(latest, dict):
+            return None
+
+        # 가능한 키 후보 순회
+        for key in ("ratio", "pcr", "value", "close", "p/c ratio", "Close"):
+            val = latest.get(key)
+            if val is not None:
+                try:
+                    pcr = round(float(val), 3)
+                    if 0.1 < pcr < 5.0:  # 합리적 범위
+                        return pcr
+                except (ValueError, TypeError):
+                    continue
+
+        logger.debug("[YF_PCR] CBOE JSON 값 추출 실패")
+        return None
 
     except Exception as e:
-        logger.warning(f"[YF_PCR] 수집 실패 (무시): {e}")
-        return {"pcr": 0.0, "pcr_state": "Unknown", "pcr_score": 2}
+        logger.debug(f"[YF_PCR] CBOE JSON 실패: {e}")
+        return None
+
+
+def _fetch_pcr_cboe_html() -> Optional[float]:
+    """CBOE daily statistics HTML 페이지에서 Equity P/C Ratio 정규식 파싱"""
+    try:
+        import requests
+
+        url = "https://www.cboe.com/us/options/market_statistics/daily/"
+        headers = {
+            "User-Agent": (
+                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+                "AppleWebKit/537.36 (KHTML, like Gecko) "
+                "Chrome/120.0.0.0 Safari/537.36"
+            ),
+            "Accept": "text/html,application/xhtml+xml",
+        }
+
+        resp = requests.get(url, headers=headers, timeout=_PCR_TIMEOUT_SEC)
+        if resp.status_code != 200:
+            logger.debug(f"[YF_PCR] CBOE HTML HTTP {resp.status_code}")
+            return None
+
+        html = resp.text
+
+        # "EQUITY PUT/CALL RATIO" 근처의 숫자 추출
+        patterns = [
+            r"EQUITY\s+PUT/CALL\s+RATIO[^0-9]*([0-9]+\.[0-9]+)",
+            r"Equity\s+P/C\s+Ratio[^0-9]*([0-9]+\.[0-9]+)",
+            r"equity[^0-9]{0,50}?([0-9]+\.[0-9]{2,3})",
+        ]
+
+        for pattern in patterns:
+            match = re.search(pattern, html, re.IGNORECASE)
+            if match:
+                try:
+                    pcr = round(float(match.group(1)), 3)
+                    if 0.1 < pcr < 5.0:
+                        return pcr
+                except (ValueError, IndexError):
+                    continue
+
+        logger.debug("[YF_PCR] CBOE HTML 패턴 매칭 실패")
+        return None
+
+    except Exception as e:
+        logger.debug(f"[YF_PCR] CBOE HTML 실패: {e}")
+        return None
+
+
+def _fetch_pcr_stooq() -> Optional[float]:
+    """
+    Stooq.com에서 Equity Put/Call Ratio 수집 (CSV)
+
+    심볼: ^cpc.us
+    URL: https://stooq.com/q/d/l/?s=^cpc.us&i=d
+    응답: CSV (Date,Open,High,Low,Close,Volume)
+    """
+    try:
+        import requests
+
+        url = "https://stooq.com/q/d/l/?s=^cpc.us&i=d"
+        headers = {
+            "User-Agent": (
+                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+                "AppleWebKit/537.36 (KHTML, like Gecko) "
+                "Chrome/120.0.0.0 Safari/537.36"
+            ),
+            "Accept": "text/csv",
+        }
+
+        resp = requests.get(url, headers=headers, timeout=_PCR_TIMEOUT_SEC)
+        if resp.status_code != 200:
+            logger.debug(f"[YF_PCR] Stooq HTTP {resp.status_code}")
+            return None
+
+        text = resp.text.strip()
+        if not text:
+            return None
+
+        lines = text.split("\n")
+        if len(lines) < 2:
+            return None
+
+        # 첫 줄이 헤더인지 확인
+        header = lines[0].lower()
+        if "date" not in header:
+            logger.debug("[YF_PCR] Stooq CSV 헤더 없음")
+            return None
+
+        # 마지막 줄 = 최신 데이터
+        last = lines[-1].split(",")
+        if len(last) < 5:
+            return None
+
+        # CSV 컬럼: Date,Open,High,Low,Close,Volume
+        try:
+            close_val = float(last[4])
+            pcr = round(close_val, 3)
+            if 0.1 < pcr < 5.0:
+                return pcr
+        except (ValueError, IndexError):
+            pass
+
+        logger.debug("[YF_PCR] Stooq Close 값 파싱 실패")
+        return None
+
+    except Exception as e:
+        logger.debug(f"[YF_PCR] Stooq 실패: {e}")
+        return None
+
+
+def _build_pcr_result(pcr: float, source: str) -> dict:
+    """PCR 값을 받아 state/score 판정 결과 dict 생성"""
+    if pcr > 1.2:
+        state, score = "Extreme Bearish", 4
+    elif pcr > 1.0:
+        state, score = "Bearish", 3
+    elif pcr >= 0.7:
+        state, score = "Neutral", 2
+    else:
+        state, score = "Bullish (Complacency)", 1
+
+    return {
+        "pcr": pcr,
+        "pcr_state": state,
+        "pcr_score": score,
+        "pcr_source": source,
+    }
 
 
 # ──────────────────────────────────────────────────────────────
@@ -462,7 +667,7 @@ def _fetch_price_and_change(ticker: str):
 
 
 # ──────────────────────────────────────────────────────────────
-# Tier 2 수집 함수 (2026-04-01 추가)
+# Tier 2 + Tier 3 수집 함수 (2026-04-01 추가, 2026-04-07 통합)
 # 목적: 분석 엔진 고도화를 위한 추가 데이터 소스 수집
 # 비용: 전부 yfinance 무료 데이터
 # ──────────────────────────────────────────────────────────────
@@ -517,5 +722,3 @@ def collect_tier2_market_data() -> dict:
     collected = sum(1 for v in result.values() if v is not None)
     logger.info(f"[YF_T2] 수집 완료: {collected}/{len(result)}개")
     return result
-
-
