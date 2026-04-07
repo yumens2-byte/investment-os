@@ -396,10 +396,8 @@ jobs:
   alert_check:
     name: Alert Check
     if: |
-      github.event.schedule == '30 22 * * 1-5' ||
-      github.event.schedule == '30 1 * * 2-6' ||
-      github.event.schedule == '30 6 * * 2-6' ||
-      (github.event_name == 'workflow_dispatch' && github.event.inputs.session == 'alert')
+       github.event.schedule == '*/10 13-21 * * 1-5' || 
+       (github.event_name == 'workflow_dispatch' && github.event.inputs.session == 'alert')
     runs-on: ubuntu-latest
     timeout-minutes: 10
     env:
