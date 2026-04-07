@@ -272,6 +272,60 @@ def run(session: str) -> dict:
         session_type=session,
     )
 
+  
+    # ── STEP 5.5: T4-1 Crypto Basis Spread (2026-04-07 Phase 1A) ──
+    logger.info("[Step 5.5] T4-1 Crypto Basis Spread 수집")
+    crypto_basis_result = None
+    try:
+        from collectors.crypto_com_client import get_btc_basis
+        crypto_basis_result = get_btc_basis()
+        if crypto_basis_result.get("success"):
+            logger.info(
+                f"[Step 5.5] 완료: basis={crypto_basis_result['basis_spread']:+.4f}% "
+                f"state={crypto_basis_result['state']}"
+            )
+        else:
+            logger.warning(
+                f"[Step 5.5] 실패 (영향 없음): {crypto_basis_result.get('error')}"
+            )
+    except Exception as e:
+        logger.warning(f"[Step 5.5] 예외 발생 (영향 없음): {e}")
+        crypto_basis_result = {
+            "success": False,
+            "basis_spread": None,
+            "state": "Unknown",
+            "score": 2,
+            "mark": None,
+            "index": None,
+        }
+
+    # ── STEP 5.6: T4-4 BTC Social Sentiment (2026-04-07 Phase 1A) ──
+    logger.info("[Step 5.6] T4-4 BTC Social Sentiment 수집")
+    btc_sentiment_result = None
+    try:
+        from collectors.lunarcrush_client import get_btc_sentiment
+        btc_sentiment_result = get_btc_sentiment()
+        if btc_sentiment_result.get("success"):
+            logger.info(
+                f"[Step 5.6] 완료: sentiment={btc_sentiment_result['sentiment']}% "
+                f"state={btc_sentiment_result['state']}"
+            )
+        else:
+            logger.warning(
+                f"[Step 5.6] 실패 (영향 없음): {btc_sentiment_result.get('error')}"
+            )
+    except Exception as e:
+        logger.warning(f"[Step 5.6] 예외 발생 (영향 없음): {e}")
+        btc_sentiment_result = {
+            "success": False,
+            "sentiment": None,
+            "state": "Unknown",
+            "score": 2,
+            "themes_supportive": "",
+            "themes_critical": "",
+        }
+
+
     # ── Step 6: JSON 조립 ──────────────────────────────────────
     logger.info("[Step 6] JSON Core Data 조립")
     from core.json_builder import assemble_core_data, build_envelope, save_core_data
