@@ -1,16 +1,25 @@
 """
-run_market.py (v1.5.0)
+run_market.py (v1.5.1)
 =======================
 역할: 취합(수집) + 분석
 실행: python run_market.py [--session morning|intraday|close]
+
+v1.5.1 (2026-04-07) 🐛 BUGFIX: assemble_core_data() Phase 1A 파라미터 누락 수정
+  - Step 5.5/5.6에서 수집한 crypto_basis_result, btc_sentiment_result가
+    Step 6의 assemble_core_data() 호출 시 전달되지 않아
+    json_builder가 디폴트 dict ({"state": "Unknown"})를 사용하던 버그 수정
+  - 결과: core_data.json과 daily_snapshots에 항상 NULL/Unknown 저장되던 문제 해결
+  - 동일 패턴이 과거 FRED, FX 적재 시에도 발생한 적 있음 — 신규 데이터 소스
+    추가 시 반드시 assemble_core_data() 파라미터 전달 경로 전체 확인 필요
 
 v1.5.0 변경:
   - Reddit 제거 → 다중 RSS(rss_extended) 단독 감성 사용
   - 감성 통합 로직 단순화
 
 파이프라인:
-  수집(yfinance / FRED / 다중RSS)
+  수집(yfinance / FRED / 다중RSS / Crypto.com / LunarCrush)
   → Macro Engine → Regime Engine → ETF Engine → Risk Engine
+  → Phase 1A (T4-1 Basis, T4-4 Sentiment)
   → JSON 조립 → Validation → core_data.json 저장
 """
 import argparse
@@ -346,6 +355,9 @@ def run(session: str) -> dict:
         portfolio_risk=risk_result["portfolio_risk"],
         trading_signal=risk_result["trading_signal"],
         output_helpers=risk_result["output_helpers"],
+        # ── Phase 1A (v1.5.1 BUGFIX): 누락되어 있던 파라미터 추가 ──
+        crypto_basis=crypto_basis_result,
+        btc_sentiment=btc_sentiment_result,
     )
     envelope = build_envelope(f"run market ({session})", data)
 
