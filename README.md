@@ -14,9 +14,11 @@
 
 별도 Private repo에서 관리: [investment-os-docs](https://github.com/yumens2-byte/investment-os-docs)
 
-- 시스템 설계서 (design.md)
-- 운영자 매뉴얼 (operator_manual.md)
-- 사용자 매뉴얼 (user_manual.md)
+- 시스템 설계서 (/docs/design.md)
+- 시스템 설계서 추가 (/design/RUN_MARKET_INTEGRATI.md)
+- 시스템 설계서 추가 (/design/ANALYSIS_DESIGN.md)
+- 운영자 매뉴얼 (/docs/operator_manual.md)
+- 사용자 매뉴얼 (/docs/user_manual.md)
 
 
 ## 라이선스
