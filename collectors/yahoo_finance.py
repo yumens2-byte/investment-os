@@ -1,6 +1,22 @@
 """
-collectors/yahoo_finance.py (v1.6.0)
+collectors/yahoo_finance.py (v1.7.0)
 =====================================
+v1.7.0 (2026-04-07): 운영 로그 정리 + PCR graceful degradation
+- yfinance 라이브러리 자체 로거(레벨=ERROR) 차단:
+  · GitHub Actions에서 모든 ticker가 1차 yfinance 시도 → 실패 → requests fallback
+    으로 정상 복구되는데, yfinance가 ERROR 로그를 ticker당 2줄씩 도배하여
+    morning 로그가 60줄 이상 noise로 채워지던 문제 해결
+  · logging.getLogger("yfinance").setLevel(logging.CRITICAL)
+  · 실패는 우리 logger가 INFO 한 줄로 통제 ([YF] requests fallback 시도: ^GSPC)
+- collect_put_call_ratio() graceful degradation:
+  · 진단 결과 GitHub Actions 클라우드 IP 환경에서 CBOE/Stooq/yfinance ^CPC 모두
+    안정적인 무료 수집 불가 (CBOE는 2019-10-04 이후 historical 중단,
+    FRED CBOE release(rid=200)에 PCR 시리즈 부재, Stooq/yfinance는 차단/멈춤)
+  · 3-layer fallback 코드는 그대로 유지 (미래 복구 가능성 보존)
+  · 실패 메시지를 다중 라인 → 단일 INFO 라인으로 축소
+  · publish_eligible은 PCR 없이도 True (regime/etf/risk 엔진 모두 PCR 없이 정상)
+  · 미래에 새 데이터 소스가 발견되면 _fetch_pcr_xxx 함수만 추가하면 됨
+
 v1.6.0: PCR 수집 v2.0 — CBOE 공식 + Stooq 다중 fallback (2026-04-07)
 - collect_put_call_ratio() 완전 재작성
   · ^CPCE Yahoo 의존 제거 (deprecated)
@@ -28,6 +44,16 @@ import yfinance as yf  # ← PCR/SMA/VOL 함수용
 from config.settings import TICKER_MAP, ETF_CORE, ETF_SIGNAL
 
 logger = logging.getLogger(__name__)
+
+# ─────────────────────────────────────────────────────────────────────────────
+# v1.7.0: yfinance 라이브러리 로그 noise 차단
+# ─────────────────────────────────────────────────────────────────────────────
+# 마스터 환경(GitHub Actions)에서 yfinance가 ticker당 1차 시도 후 ERROR 2줄 도배
+# 후 requests fallback으로 정상 복구. ERROR 로그는 사용자에게 거짓 신호이므로
+# CRITICAL 이상으로 차단. 우리 logger가 [YF] requests fallback 시도 한 줄로 통제.
+logging.getLogger("yfinance").setLevel(logging.CRITICAL)
+# peewee, urllib3 등 yfinance 의존 라이브러리가 만들 수 있는 추가 noise도 차단
+logging.getLogger("peewee").setLevel(logging.CRITICAL)
 
 # 티커 1개당 최대 대기 시간 (초)
 _FETCH_TIMEOUT_SEC = 15
@@ -278,7 +304,7 @@ def collect_put_call_ratio() -> dict:
             "pcr_source": str,    # "cboe_json" | "cboe_html" | "stooq" | "fallback"
         }
     """
-    logger.info("[YF_PCR] Put/Call Ratio 수집 시작 (v2.0)")
+    logger.info("[YF_PCR] Put/Call Ratio 수집 시작 (v2.1 graceful)")
 
     # ── 1순위: CBOE JSON API ──
     pcr = _fetch_pcr_cboe_json()
@@ -295,20 +321,21 @@ def collect_put_call_ratio() -> dict:
         return result
 
     # ── 3순위: Stooq fallback ──
-    logger.info("[YF_PCR] CBOE 실패 → Stooq fallback 시도")
     pcr = _fetch_pcr_stooq()
     if pcr is not None:
         result = _build_pcr_result(pcr, source="stooq")
         logger.info(f"[YF_PCR] PCR={pcr} → {result['pcr_state']} (source=stooq)")
         return result
 
-    # ── 4순위: Unknown fallback ──
-    logger.warning("[YF_PCR] 모든 데이터 소스 실패 → Unknown")
+    # ── 4순위: Graceful degradation (운영 결정 2026-04-07) ──
+    # GitHub Actions 클라우드 IP 환경에서 무료 PCR 수집 불가 확정.
+    # 파이프라인 무영향(publish_eligible=True), 한 줄 INFO만 남김.
+    logger.info("[YF_PCR] Unknown (graceful — 모든 무료 소스 사용 불가, 파이프라인 무영향)")
     return {
         "pcr": 0.0,
         "pcr_state": "Unknown",
         "pcr_score": 2,
-        "pcr_source": "fallback",
+        "pcr_source": "graceful_unknown",
     }
 
 
