@@ -244,7 +244,13 @@ SCHEDULE_INTRADAY = "23:30"
 SCHEDULE_CLOSE = "07:00"
 
 # ─── X 발행 설정 ──────────────────────────────────────────
+# Short-form 한도 (알림/스냅샷/주간쓰레드 등 의도적으로 짧게 유지하는 포맷)
 X_MAX_TWEET_LENGTH = 280
+
+# Premium 계정 장문 한도 (AI 내러티브 등 long-form 콘텐츠용)
+# X Premium / Premium+ : 최대 25,000자
+X_PREMIUM_TWEET_LENGTH = 25000
+
 X_HASHTAGS = "#ETF #투자 #미국증시"
 
 # ─── 중복 검사 ────────────────────────────────────────────
