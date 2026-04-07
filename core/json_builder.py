@@ -1,7 +1,11 @@
 """
-core/json_builder.py
+core/json_builder.py (v1.1.0)
 14_execution_engine.md Single Source of Truth 구현.
 모든 엔진 결과를 JSON Core Data로 조립한다.
+
+변경이력:
+  v1.1.0 (2026-04-07) Phase 1A — crypto_basis, btc_sentiment 파라미터 추가
+  v1.0.x 기존 로직
 """
 import json
 import logging
@@ -13,6 +17,8 @@ from config.settings import (
 )
 
 logger = logging.getLogger(__name__)
+
+VERSION = "1.1.0"
 
 
 def build_envelope(command: str, data: dict) -> dict:
@@ -44,6 +50,8 @@ def assemble_core_data(
     macro_data: dict = None,
     signals: dict = None,
     news_analysis: dict = None,
+    crypto_basis: dict = None,
+    btc_sentiment: dict = None,
 ) -> dict:
     """
     각 엔진 출력을 단일 data dict로 조립.
@@ -51,7 +59,51 @@ def assemble_core_data(
 
     2026-04-01 추가: signals (19개 시그널 dict)
     2026-04-02 추가: news_analysis (B-16 Gemini 뉴스 심층 분석)
+    2026-04-07 추가: crypto_basis, btc_sentiment (Phase 1A T4-1, T4-4)
+                    → signals dict에 병합되어 저장
     """
+    # ── Phase 1A: 신규 시그널을 signals dict에 병합 ──
+    merged_signals = dict(signals or {})
+
+    # T4-1 Crypto Basis Spread
+    if crypto_basis is None:
+        crypto_basis = {
+            "basis_spread": None,
+            "state": "Unknown",
+            "score": 2,
+            "mark": None,
+            "index": None,
+        }
+    merged_signals.update({
+        "crypto_basis_spread": crypto_basis.get("basis_spread"),
+        "crypto_basis_state":  crypto_basis.get("state", "Unknown"),
+        "crypto_basis_score":  crypto_basis.get("score", 2),
+        "crypto_basis_mark":   crypto_basis.get("mark"),
+        "crypto_basis_index":  crypto_basis.get("index"),
+    })
+
+    # T4-4 BTC Social Sentiment
+    if btc_sentiment is None:
+        btc_sentiment = {
+            "sentiment": None,
+            "state": "Unknown",
+            "score": 2,
+            "themes_supportive": "",
+            "themes_critical": "",
+        }
+    merged_signals.update({
+        "btc_social_sentiment":            btc_sentiment.get("sentiment"),
+        "btc_sentiment_state":             btc_sentiment.get("state", "Unknown"),
+        "btc_sentiment_score":             btc_sentiment.get("score", 2),
+        "btc_sentiment_themes_supportive": btc_sentiment.get("themes_supportive", ""),
+        "btc_sentiment_themes_critical":   btc_sentiment.get("themes_critical", ""),
+    })
+
+    logger.info(
+        f"[Builder v{VERSION}] signals 병합 완료 "
+        f"(기존 {len(signals or {})}개 + Phase 1A 10개 = {len(merged_signals)}개)"
+    )
+
     return {
         "fx_rates":       fx_rates or {},
         "fear_greed":     fear_greed or {},
@@ -62,7 +114,7 @@ def assemble_core_data(
         "market_snapshot": snapshot,
         "market_regime":  market_regime,
         "market_score":   market_score,
-        "signals":        signals or {},
+        "signals":        merged_signals,
         "etf_analysis":   etf_analysis,
         "etf_strategy":   etf_strategy,
         "etf_allocation": etf_allocation,
