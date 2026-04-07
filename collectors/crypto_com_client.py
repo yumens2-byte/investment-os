@@ -1,7 +1,13 @@
 """
-collectors/crypto_com_client.py (v1.0.0)
+collectors/crypto_com_client.py (v1.1.0)
 =========================================
 Phase 1A — Crypto.com REST API 클라이언트
+
+변경이력:
+  v1.1.0 (2026-04-07) Base URL 중복 버그 수정
+                      이전: base + /public/get-mark-price → /public/public/... (404)
+                      수정: base + /get-mark-price → 정상
+  v1.0.0 초기 버전
 
 용도:
   - T4-1 Crypto Basis Spread 시그널 수집
@@ -13,8 +19,12 @@ API:
   - Rate limit: 사실상 무제한 (공식 명시 없음)
 
 엔드포인트:
-  1. /public/get-mark-price?instrument_name=BTCUSD-PERP
-  2. /public/get-index-price?instrument_name=BTCUSD-INDEX
+  1. /get-mark-price?instrument_name=BTCUSD-PERP
+  2. /get-index-price?instrument_name=BTCUSD-INDEX
+
+실제 호출 URL:
+  https://api.crypto.com/exchange/v1/public/get-mark-price?instrument_name=BTCUSD-PERP
+  https://api.crypto.com/exchange/v1/public/get-index-price?instrument_name=BTCUSD-INDEX
 
 시그널 판정:
   basis_spread = (mark - index) / index * 100
@@ -28,9 +38,9 @@ from typing import Optional
 
 logger = logging.getLogger(__name__)
 
-VERSION = "1.0.0"
+VERSION = "1.1.0"
 
-# Crypto.com Exchange API v1
+# Crypto.com Exchange API v1 — Base URL에 /public 포함
 _BASE_URL = "https://api.crypto.com/exchange/v1/public"
 _TIMEOUT_SEC = 5
 _RETRY_COUNT = 3
@@ -46,7 +56,8 @@ def _http_get(endpoint: str, params: dict) -> Optional[dict]:
     Crypto.com public API 호출 (재시도 포함).
 
     Args:
-        endpoint: API path (예: "/public/get-mark-price")
+        endpoint: API path. 중요: /public 접두사 없이 "/get-mark-price" 형태.
+                  Base URL에 이미 /public이 포함되어 있음.
         params: query params
 
     Returns:
@@ -117,7 +128,7 @@ def get_mark_price(instrument: str = DEFAULT_MARK_SYMBOL) -> Optional[float]:
         None: 실패
     """
     data = _http_get(
-        "/public/get-mark-price",
+        "/get-mark-price",
         {"instrument_name": instrument},
     )
     if not data:
@@ -155,7 +166,7 @@ def get_index_price(instrument: str = DEFAULT_INDEX_SYMBOL) -> Optional[float]:
         None: 실패
     """
     data = _http_get(
-        "/public/get-index-price",
+        "/get-index-price",
         {"instrument_name": instrument},
     )
     if not data:
@@ -199,7 +210,7 @@ def get_btc_basis() -> dict:
             "error":       str | None,
           }
     """
-    logger.info("[CryptoCom] T4-1 BTC Basis 수집 시작")
+    logger.info(f"[CryptoCom v{VERSION}] T4-1 BTC Basis 수집 시작")
 
     mark = get_mark_price(DEFAULT_MARK_SYMBOL)
     index = get_index_price(DEFAULT_INDEX_SYMBOL)
