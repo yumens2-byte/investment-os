@@ -10,8 +10,12 @@ Gemini 기반 시장 내러티브 자동 생성
 발행 시점: 11:30 KST (UTC 02:30)
 Fallback:  Gemini 실패 시 기존 rule-based summary 유지
 """
+VERSION = "1.1.0"
+
 import logging
 from typing import Optional
+
+from config.settings import X_PREMIUM_TWEET_LENGTH
 
 logger = logging.getLogger(__name__)
 
@@ -129,6 +133,8 @@ def generate_narrative(data: dict) -> dict:
     """
     from core.gemini_gateway import call, is_available
 
+    logger.info(f"[Narrative] v{VERSION} 시작")
+
     # Gemini 미설정 시 fallback
     if not is_available():
         logger.info("[Narrative] Gemini 미설정 → fallback")
@@ -182,13 +188,36 @@ def _fallback_narrative(data: dict) -> dict:
 
 
 def format_narrative_tweet(narrative: str) -> str:
-    """내러티브를 X 트윗용 280자로 포맷"""
+    """
+    내러티브를 X 트윗용으로 포맷.
+
+    X Premium 계정은 25,000자까지 발행 가능하므로 일반적인 시장 해설
+    (Gemini 출력 ~300~500자)은 자르지 않고 그대로 발행한다.
+
+    안전장치로 X_PREMIUM_TWEET_LENGTH(25,000자) 초과 시에만 마지막 문장
+    경계에서 절단한다 (어절 중간 절단 방지).
+    """
     tweet = f"📝 AI 시장 해설\n\n{narrative}\n\n#ETF #투자 #미국증시 #AI분석"
-    if len(tweet) > 280:
-        # 초과 시 내러티브 자르기
-        max_narr = 280 - len("📝 AI 시장 해설\n\n\n\n#ETF #투자 #미국증시 #AI분석") - 3
-        tweet = f"📝 AI 시장 해설\n\n{narrative[:max_narr]}...\n\n#ETF #투자 #미국증시 #AI분석"
-    return tweet
+
+    if len(tweet) <= X_PREMIUM_TWEET_LENGTH:
+        return tweet
+
+    # 25,000자를 넘는 비정상 케이스 안전장치
+    logger.warning(
+        f"[Narrative] 트윗 길이 {len(tweet)}자가 Premium 한도({X_PREMIUM_TWEET_LENGTH})를 초과 — 절단"
+    )
+    suffix = "\n\n#ETF #투자 #미국증시 #AI분석"
+    header = "📝 AI 시장 해설\n\n"
+    max_narr = X_PREMIUM_TWEET_LENGTH - len(header) - len(suffix)
+    truncated = narrative[:max_narr]
+    # 마지막 문장 경계에서 절단 (마침표/물음표/느낌표)
+    last_period = max(
+        truncated.rfind("."), truncated.rfind("?"),
+        truncated.rfind("!"), truncated.rfind("。")
+    )
+    if last_period > max_narr * 0.7:
+        truncated = truncated[:last_period + 1]
+    return f"{header}{truncated}{suffix}"
 
 
 def format_narrative_telegram(narrative: str, data: dict) -> str:
