@@ -401,8 +401,10 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 10
     env:
+      env:
       ALERT_TZ: America/New_York
       ALERT_WINDOWS: "09:30,10:30,15:30"
+      ALERT_GRACE_MINUTES: "5"
       TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
       TELEGRAM_FREE_CHANNEL_ID: ${{ secrets.TELEGRAM_FREE_CHANNEL_ID }}
       FRED_API_KEY: ${{ secrets.FRED_API_KEY }}
