@@ -32,27 +32,47 @@ logging.basicConfig(
 )
 logger = logging.getLogger("run_alert")
 
+from datetime import datetime, timezone
+from zoneinfo import ZoneInfo
+import os
+
+
 def _is_alert_window() -> tuple[bool, str]:
     """
     미국 동부시간 기준 Alert 실행 허용 시간인지 판정.
-    workflow는 넓게 돌고, 실제 발행 시간은 여기서 제한한다.
+    exact match 대신 grace window를 둔다.
+    예: 09:30 target, grace=5 이면 09:30:00 ~ 09:35:59 허용
     """
     tz_name = os.getenv("ALERT_TZ", "America/New_York")
     windows_raw = os.getenv("ALERT_WINDOWS", "09:30,10:30,15:30")
-    allowed = {x.strip() for x in windows_raw.split(",") if x.strip()}
+    grace_minutes = int(os.getenv("ALERT_GRACE_MINUTES", "5"))
 
     now_et = datetime.now(ZoneInfo(tz_name))
-    now_hm = now_et.strftime("%H:%M")
     weekday = now_et.weekday()  # Mon=0 ... Sun=6
 
-    # 미국 기준 평일만 허용
     if weekday >= 5:
         return False, f"weekend_et:{now_et.isoformat()}"
 
-    if now_hm not in allowed:
-        return False, f"outside_window_et:{now_et.isoformat()} allowed={sorted(allowed)}"
+    allowed = [x.strip() for x in windows_raw.split(",") if x.strip()]
 
-    return True, f"inside_window_et:{now_et.isoformat()}"
+    now_total_min = now_et.hour * 60 + now_et.minute
+
+    for hhmm in allowed:
+        hh, mm = map(int, hhmm.split(":"))
+        target_total_min = hh * 60 + mm
+        diff = now_total_min - target_total_min
+
+        # target 시각 이후 ~ grace 분 이내만 허용
+        if 0 <= diff <= grace_minutes:
+            return True, (
+                f"inside_window_et:{now_et.isoformat()} "
+                f"target={hhmm} grace={grace_minutes}m diff={diff}m"
+            )
+
+    return False, (
+        f"outside_window_et:{now_et.isoformat()} "
+        f"allowed={allowed} grace={grace_minutes}m"
+    )
 
 
 def _load_prev_snapshot() -> dict:
