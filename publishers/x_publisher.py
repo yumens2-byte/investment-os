@@ -5,6 +5,8 @@ DRY_RUN=true 시 실제 발행 없이 로그만 출력.
 """
 import logging
 import time
+import random
+import time
 
 from typing import Optional
 try:
