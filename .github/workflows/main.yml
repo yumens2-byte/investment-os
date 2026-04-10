@@ -146,19 +146,31 @@ jobs:
           path: data/published/weekly_log.json
           key: weekly-log-${{ github.ref }}
           restore-keys: weekly-log-
-      - name: Anti-bot random delay
-        run: |
-          DELAY=$((RANDOM % 100))
-          echo "⏱️ Random delay: ${DELAY}s ($((DELAY/60))m $((DELAY%60))s)"
-          sleep $DELAY    
-      - run: python main.py run all --session morning --mode tweet
+
+        #수정   
       - name: Restore rank history cache
         uses: actions/cache@v4
         with:
           path: data/published/rank_history.json
           key: rank-history-${{ github.ref }}
           restore-keys: rank-history-
+      - name: Anti-bot random delay
+        run: |
+          DELAY=$((RANDOM % 100))
+          echo "⏱️ Random delay: ${DELAY}s ($((DELAY/60))m $((DELAY%60))s)"
+          sleep $DELAY    
+      - run: python main.py run all --session morning --mode tweet
+      - name: Save rank history cache
+        uses: actions/cache/save@v4
+        if: always()
+        with:
+          path: data/published/rank_history.json
+          key: rank-history-${{ github.ref }}-${{ github.run_id }}
       - name: Save weekly log cache
+
+
+
+      
         uses: actions/cache/save@v4
         if: always()
         with:
@@ -401,7 +413,6 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 10
     env:
-      env:
       ALERT_TZ: America/New_York
       ALERT_WINDOWS: "09:30,10:30,15:30"
       ALERT_GRACE_MINUTES: "5"
