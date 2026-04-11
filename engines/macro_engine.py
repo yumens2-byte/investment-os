@@ -26,6 +26,15 @@ from config.settings import (
     NASDAQ_REL_GROWTH_THRESHOLD, NASDAQ_REL_VALUE_THRESHOLD,
     BANK_STRESS_THRESHOLD,
 )
+from config.settings import (
+    # ... 기존 imports 유지 ...
+    # ── Priority A 임계값 (2026-04-11 추가) ──────────────────
+    GOLD_SAFE_HAVEN_STRONG, GOLD_SAFE_HAVEN_MILD, GOLD_RISK_ON_THRESHOLD,
+    SMALL_CAP_RISK_ON_THR, SMALL_CAP_RISK_OFF_THR, SMALL_CAP_RISK_OFF_EXTREME,
+    MOVE_CALM, MOVE_ELEVATED, MOVE_STRESSED,
+    STAGFLATION_SPY_THR, STAGFLATION_TLT_THR,
+    YIELD_SPREAD_NORMAL_BP, YIELD_SPREAD_FLAT_BP, YIELD_SPREAD_DEEP_BP,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -690,6 +699,255 @@ def _score_banking_stress(tier2_data: dict, etf_prices: dict) -> dict:
         "banking_stress_spread": round(spread, 2),
     }
 
+# ══════════════════════════════════════════════════════════════════
+# Priority A 확장 시그널 (2026-04-11 추가)
+# ══════════════════════════════════════════════════════════════════
+
+def _score_gold(snapshot: dict) -> dict:
+    """
+    [A-1] Gold Signal — 안전자산 플라이트 감지
+    ─────────────────────────────────────────────
+    gold 등락률 기준 안전자산 수요 판별.
+    VIX 동반 상승 시 "Fear + Safe Haven" 복합 신호로 격상.
+
+    출력: gold_score (1=안전자산강수요 ~ 4=리스크온)
+    """
+    gold_chg   = snapshot.get("gold_change")
+    gold_price = snapshot.get("gold")
+    vix        = snapshot.get("vix", 20.0)
+
+    if gold_chg is None:
+        return {"gold_score": 2, "gold_state": "No Data", "gold_price": None, "gold_change": None}
+
+    if gold_chg >= GOLD_SAFE_HAVEN_STRONG:
+        state, score = "Strong Safe Haven", 1
+    elif gold_chg >= GOLD_SAFE_HAVEN_MILD:
+        state, score = "Mild Safe Haven", 2
+    elif gold_chg <= GOLD_RISK_ON_THRESHOLD:
+        state, score = "Risk-ON (Gold Sell)", 4
+    else:
+        state, score = "Neutral", 3
+
+    # VIX 동반 상승 시 복합 위기 신호 (공포 + 안전자산 플라이트)
+    if gold_chg >= GOLD_SAFE_HAVEN_MILD and vix is not None and vix >= 25:
+        state = "Fear + Safe Haven"
+        score = 1
+
+    return {
+        "gold_score":  score,
+        "gold_state":  state,
+        "gold_price":  round(gold_price, 1) if gold_price is not None else None,
+        "gold_change": round(gold_chg, 2),
+    }
+
+
+def _score_small_cap_relative(tier2_data: dict, snapshot: dict) -> dict:
+    """
+    [A-2] Small Cap Relative Strength — IWM vs SPY
+    ──────────────────────────────────────────────────
+    IWM(소형주) - SPY(대형주) 초과수익률.
+    양수 = 리스크ON (소형주 리드), 음수 = 리스크OFF (대형주 도피).
+
+    출력: small_cap_score (1=리스크ON ~ 5=극단 리스크OFF)
+    """
+    iwm_chg = tier2_data.get("iwm_change") if tier2_data else None
+    spy_chg = snapshot.get("sp500") or (tier2_data.get("spy_change") if tier2_data else None)
+
+    if iwm_chg is None or spy_chg is None:
+        return {"small_cap_score": 2, "small_cap_state": "No Data",
+                "small_cap_gap": None, "iwm_change": iwm_chg}
+
+    gap = round(iwm_chg - spy_chg, 2)
+
+    if gap >= SMALL_CAP_RISK_ON_THR:
+        state, score = "Risk-ON Lead", 1
+    elif gap >= 0:
+        state, score = "Neutral-Positive", 2
+    elif gap >= SMALL_CAP_RISK_OFF_THR:
+        state, score = "Neutral-Negative", 3
+    elif gap >= SMALL_CAP_RISK_OFF_EXTREME:
+        state, score = "Risk-OFF", 4
+    else:
+        state, score = "Risk-OFF Extreme", 5
+
+    return {
+        "small_cap_score": score,
+        "small_cap_state": state,
+        "small_cap_gap":   gap,
+        "iwm_change":      round(iwm_chg, 2),
+    }
+
+
+def _score_move(tier2_data: dict, snapshot: dict) -> dict:
+    """
+    [A-3] MOVE Index — 채권 변동성 (채권 시장의 VIX)
+    ──────────────────────────────────────────────────
+    ^MOVE 수집 불안정 → None 허용, 중립 처리.
+    VIX와의 비율로 주식/채권 변동성 괴리 감지.
+
+    출력: move_score (1=안정 ~ 4=위기)
+    """
+    move = tier2_data.get("move_index") if tier2_data else None
+    vix  = snapshot.get("vix")
+
+    if move is None:
+        return {
+            "move_score":     2,
+            "move_state":     "No Data",
+            "move_value":     None,
+            "move_vix_ratio": None,
+        }
+
+    if move < MOVE_CALM:
+        state, score = "Bond Calm", 1
+    elif move < MOVE_ELEVATED:
+        state, score = "Bond Elevated", 2
+    elif move < MOVE_STRESSED:
+        state, score = "Bond Stressed", 3
+    else:
+        state, score = "Bond Crisis", 4
+
+    ratio = round(move / vix, 2) if vix and vix > 0 else None
+
+    return {
+        "move_score":     score,
+        "move_state":     state,
+        "move_value":     round(move, 1),
+        "move_vix_ratio": ratio,
+    }
+
+
+def _score_spy_tlt_regime(tier2_data: dict, snapshot: dict) -> dict:
+    """
+    [A-4] SPY/TLT 4상한 시장 국면 판별
+    ──────────────────────────────────────
+    Goldilocks / Reflation / Risk-OFF / Stagflation Fear
+    콘텐츠 자동 생성의 핵심 국면 분류기.
+
+    출력: market_quadrant (str), market_quadrant_score (1~4)
+    """
+    tlt_chg = tier2_data.get("tlt_change") if tier2_data else None
+    spy_chg = snapshot.get("sp500")
+
+    if tlt_chg is None or spy_chg is None:
+        return {
+            "market_quadrant":       "Unknown",
+            "market_quadrant_score": 2,
+            "tlt_change":            tlt_chg,
+        }
+
+    spy_up = spy_chg >= 0
+    tlt_up = tlt_chg >= 0
+
+    if spy_up and tlt_up:
+        quadrant, score = "Goldilocks", 1       # 주식+채권 동반 상승: 이상적
+    elif spy_up and not tlt_up:
+        quadrant, score = "Reflation", 2        # 주식↑ 채권↓: 성장기대+금리상승
+    elif not spy_up and tlt_up:
+        quadrant, score = "Risk-OFF", 3         # 주식↓ 채권↑: 전통 리스크오프
+    else:
+        quadrant, score = "Stagflation Fear", 4  # 주식↓ 채권↓: 가장 위험
+
+    return {
+        "market_quadrant":       quadrant,
+        "market_quadrant_score": score,
+        "tlt_change":            round(tlt_chg, 2),
+    }
+
+
+def _score_yield_spread(fred_data: dict) -> dict:
+    """
+    [A-5] 2Y-10Y Yield Spread 수치화 (기존 bool → bp 수치 추가)
+    ──────────────────────────────────────────────────────────────
+    기존 yield_curve_inverted(bool) 유지 + spread_2y10y_bp 수치 추가.
+    us2y 직접값도 포함하여 콘텐츠 표시 ("2Y 4.82% / 10Y 4.31%") 가능.
+
+    출력: spread_score (1=정상 ~ 4=심화역전)
+    """
+    spread_bp = fred_data.get("spread_2y10y_bp") if fred_data else None
+    us2y      = fred_data.get("us2y") if fred_data else None
+
+    if spread_bp is None:
+        return {
+            "spread_score":    2,
+            "spread_state":    "No Data",
+            "spread_2y10y_bp": None,
+            "us2y":            us2y,
+        }
+
+    if spread_bp >= YIELD_SPREAD_NORMAL_BP:
+        state, score = "Normal Steep", 1
+    elif spread_bp >= YIELD_SPREAD_FLAT_BP:
+        state, score = "Flat", 2
+    elif spread_bp >= YIELD_SPREAD_DEEP_BP:
+        state, score = "Inverted", 3
+    else:
+        state, score = "Deeply Inverted", 4
+
+    return {
+        "spread_score":    score,
+        "spread_state":    state,
+        "spread_2y10y_bp": spread_bp,
+        "us2y":            round(us2y, 3) if us2y is not None else None,
+    }
+
+
+def _score_spy_trend(spy_sma_data: dict) -> dict:
+    """
+    [A-6] SPY SMA50/200 기술적 추세 — 골든크로스/데스크로스 판별
+    ──────────────────────────────────────────────────────────────
+    SPY 현재가 vs SMA50/200 위치 + 골든/데스크로스 상태 판별.
+    200일선 이탈 = 기술적 약세장. 데스크로스 = 중장기 약세 신호.
+
+    출력: trend_score (1=강한상승추세 ~ 4=데스크로스 하락추세)
+    """
+    if not spy_sma_data:
+        return {"trend_score": 2, "trend_state": "No Data",
+                "spy_sma50": None, "spy_sma200": None,
+                "above_sma200": None, "golden_cross": None}
+
+    price  = spy_sma_data.get("spy_price")
+    sma50  = spy_sma_data.get("spy_sma50")
+    sma200 = spy_sma_data.get("spy_sma200")
+
+    if not all([price, sma50, sma200]):
+        return {"trend_score": 2, "trend_state": "Incomplete Data",
+                "spy_sma50": sma50, "spy_sma200": sma200,
+                "above_sma200": None, "golden_cross": None}
+
+    above_200    = price > sma200
+    above_50     = price > sma50
+    golden_cross = sma50 > sma200
+    death_cross  = sma50 < sma200
+    pct_from_200 = round((price - sma200) / sma200 * 100, 2)
+
+    if above_200 and golden_cross:
+        state, score = "Strong Uptrend (Golden Cross)", 1
+    elif above_200 and above_50:
+        state, score = "Uptrend", 2
+    elif above_200 and not above_50:
+        state, score = "Uptrend Pullback", 2
+    elif not above_200 and above_50:
+        state, score = "Bear Recovery", 3
+    elif not above_200 and death_cross:
+        state, score = "Death Cross Downtrend", 4
+    else:
+        state, score = "Downtrend", 4
+
+    return {
+        "trend_score":     score,
+        "trend_state":     state,
+        "above_sma200":    above_200,
+        "above_sma50":     above_50,
+        "golden_cross":    golden_cross,
+        "death_cross":     death_cross,
+        "spy_sma50":       sma50,
+        "spy_sma200":      sma200,
+        "pct_from_sma200": pct_from_200,
+        "spy_price":       price,
+    }
+    
+
 
 # ──────────────────────────────────────────────────────────────
 # 2. Market Score  (6개 축)
@@ -836,6 +1094,7 @@ def run_macro_engine(
     etf_prices: dict = None,
     tier2_data: dict = None,
     pcr_data: dict = None,
+    spy_sma_data=None,       # ← v신규 추가 (Priority A)
 ) -> dict:
     """
     시장 스냅샷 + FRED + 뉴스 감성 + 확장 데이터 → 신호 + Market Score 반환.
@@ -907,6 +1166,62 @@ def run_macro_engine(
     signals.update(_score_ai_momentum(tier2_data))                     # T3-1
     signals.update(_score_nasdaq_relative(snapshot))                   # T3-2
     signals.update(_score_banking_stress(tier2_data, etf_prices))      # T3-3
+
+    # ── Priority A 시그널 (2026-04-11 추가) ──────────────────
+    gold_sig        = _score_gold(snapshot)
+    small_cap_sig   = _score_small_cap_relative(tier2_data or {}, snapshot)
+    move_sig        = _score_move(tier2_data or {}, snapshot)
+    tlt_regime_sig  = _score_spy_tlt_regime(tier2_data or {}, snapshot)
+    yield_spread_sig= _score_yield_spread(fred_data or {})
+    spy_trend_sig   = _score_spy_trend(spy_sma_data or {})
+
+    signals.update({
+        # A-1: Gold
+        "gold_score":            gold_sig["gold_score"],
+        "gold_state":            gold_sig["gold_state"],
+        "gold_price":            gold_sig.get("gold_price"),
+        "gold_change":           gold_sig.get("gold_change"),
+        # A-2: Small Cap
+        "small_cap_score":       small_cap_sig["small_cap_score"],
+        "small_cap_state":       small_cap_sig["small_cap_state"],
+        "small_cap_gap":         small_cap_sig.get("small_cap_gap"),
+        "iwm_change":            small_cap_sig.get("iwm_change"),
+        # A-3: MOVE
+        "move_score":            move_sig["move_score"],
+        "move_state":            move_sig["move_state"],
+        "move_value":            move_sig.get("move_value"),
+        "move_vix_ratio":        move_sig.get("move_vix_ratio"),
+        # A-4: TLT Regime
+        "market_quadrant":       tlt_regime_sig["market_quadrant"],
+        "market_quadrant_score": tlt_regime_sig["market_quadrant_score"],
+        "tlt_change":            tlt_regime_sig.get("tlt_change"),
+        # A-5: Yield Spread
+        "spread_score":          yield_spread_sig["spread_score"],
+        "spread_state":          yield_spread_sig["spread_state"],
+        "spread_2y10y_bp":       yield_spread_sig.get("spread_2y10y_bp"),
+        "us2y":                  yield_spread_sig.get("us2y"),
+        # A-6: SPY Trend
+        "trend_score":           spy_trend_sig["trend_score"],
+        "trend_state":           spy_trend_sig["trend_state"],
+        "above_sma200":          spy_trend_sig.get("above_sma200"),
+        "golden_cross":          spy_trend_sig.get("golden_cross"),
+        "death_cross":           spy_trend_sig.get("death_cross"),
+        "spy_sma50":             spy_trend_sig.get("spy_sma50"),
+        "spy_sma200":            spy_trend_sig.get("spy_sma200"),
+        "pct_from_sma200":       spy_trend_sig.get("pct_from_sma200"),
+    })
+
+    logger.info(
+        f"[MacroEngine] Priority A — "
+        f"Gold={gold_sig['gold_state']} | "
+        f"SmallCap={small_cap_sig['small_cap_state']}({small_cap_sig.get('small_cap_gap'):+.1f}%p) | "
+        f"MOVE={move_sig['move_state']} | "
+        f"Quadrant={tlt_regime_sig['market_quadrant']} | "
+        f"Spread={yield_spread_sig.get('spread_2y10y_bp')}bp | "
+        f"Trend={spy_trend_sig['trend_state']}"
+        if small_cap_sig.get('small_cap_gap') is not None else
+        f"[MacroEngine] Priority A — Gold={gold_sig['gold_state']} | Trend={spy_trend_sig['trend_state']}"
+    )
 
     # Market Score (Tier 1 + 2 확장 시그널 포함)
     market_score = compute_market_score(signals)
