@@ -94,15 +94,20 @@ def run() -> dict:
     logger.info("=" * 50)
 
     # ── Pre-Step: 미국 동부시간 Alert 윈도우 체크 ─────────────
-    should_run, reason = _is_alert_window()
-    if not should_run:
-        logger.info(f"[run_alert] 시간 윈도우 아님 — 스킵: {reason}")
-        return {
-            "alerts_detected": 0,
-            "alerts_sent": 0,
-            "reason": "outside_alert_window",
-            "detail": reason,
-        }
+    # DRY_RUN=True이면 시간/주말 체크 완전 생략 (테스트 모드)
+    if DRY_RUN:
+        logger.info("[run_alert] DRY_RUN — 시간 윈도우 체크 생략, 강제 실행")
+    else:
+        should_run, reason = _is_alert_window()
+        if not should_run:
+            logger.info(f"[run_alert] 시간 윈도우 아님 — 스킵: {reason}")
+            return {
+                "alerts_detected": 0,
+                "alerts_sent": 0,
+                "reason": "outside_alert_window",
+                "detail": reason,
+            }
+        logger.info(f"[run_alert] 시간 윈도우 통과: {reason}")
 
     logger.info(f"[run_alert] 시간 윈도우 통과: {reason}")
 
