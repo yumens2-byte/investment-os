@@ -128,6 +128,47 @@ def run() -> dict:
     snapshot      = collect_market_snapshot()
     news_result   = collect_news_sentiment()
 
+     # ── Step 1-T2: Priority A — Tier2 + SPY SMA + FRED (v1.6.0 신규) ──
+    tier2_data = {}
+    try:
+        from collectors.yahoo_finance import collect_tier2_market_data
+        tier2_data = collect_tier2_market_data()
+        logger.info(
+            f"[Step 1-T2] Tier2 수집 완료 | "
+            f"IWM={tier2_data.get('iwm_change')} "
+            f"TLT={tier2_data.get('tlt_change')} "
+            f"MOVE={tier2_data.get('move_index')}"
+        )
+    except Exception as e:
+        logger.warning(f"[Step 1-T2] Tier2 수집 실패 (Alert 영향 없음): {e}")
+
+    spy_sma_data = {}
+    try:
+        from collectors.yahoo_finance import collect_spy_sma
+        spy_sma_data = collect_spy_sma()
+        logger.info(
+            f"[Step 1-SMA] SPY SMA 수집 완료 | "
+            f"Price=${spy_sma_data.get('spy_price')} "
+            f"SMA50=${spy_sma_data.get('spy_sma50')} "
+            f"SMA200=${spy_sma_data.get('spy_sma200')}"
+        )
+    except Exception as e:
+        logger.warning(f"[Step 1-SMA] SPY SMA 수집 실패 (Alert 영향 없음): {e}")
+
+    fred_data_alert = {}
+    try:
+        from collectors.fred_client import collect_macro_data
+        fred_data_alert = collect_macro_data()
+        logger.info(
+            f"[Step 1-FRED] FRED 수집 완료 | "
+            f"spread={fred_data_alert.get('spread_2y10y_bp')}bp "
+            f"us2y={fred_data_alert.get('us2y')}%"
+        )
+    except Exception as e:
+        logger.warning(f"[Step 1-FRED] FRED 수집 실패 (Alert 영향 없음): {e}")
+
+     
+
     # ── Step 1-M: FRED 경제지표 변화 감지 ────────────────
     try:
         from collectors.fred_client import collect_macro_data, detect_macro_changes
@@ -265,6 +306,10 @@ def run() -> dict:
         signal_diff_result=signal_diff_result,
         score_diff_result=score_diff_result,
         signals=signals_for_alert,          # v1.0.0: PCR/Basis Alert
+         # ── Priority A (v1.6.0 신규) ──────────────────────────
+        tier2_data=tier2_data,              # IWM/TLT/MOVE → A-2/A-3/A-4 Alert
+        fred_data=fred_data_alert,          # us2y/spread → A-5 Alert
+        spy_sma_data=spy_sma_data,          # SMA50/200 → A-6 Alert
     )
 
     if not alerts:
