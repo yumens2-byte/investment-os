@@ -133,6 +133,9 @@ MOVE_STRESSED = 140.0   # > 140 : 채권 위기 → Alert L1
 # [A-4] Stagflation Signal (SPY + TLT 동반 하락)
 STAGFLATION_SPY_THR = -1.0   # SPY < -1.0% 동시 조건
 STAGFLATION_TLT_THR = -1.0   # TLT < -1.0% 동시 조건 → L2 Alert
+# [A-4] SPY/TLT 4상한 판정 dead zone (보합 구간 노이즈 제거)
+# ±0.3% 이내 변동은 방향성 없는 노이즈로 처리 → Stagflation Fear 과민 방지
+QUADRANT_FLAT_THRESHOLD = 0.3
 
 # [A-5] Yield Spread (bp 기준, 10Y - 2Y)
 YIELD_SPREAD_NORMAL_BP = 50.0    # > +50bp : 정상 스티프
