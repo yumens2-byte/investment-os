@@ -45,7 +45,8 @@ def _save(data: dict) -> None:
 
 def detect_rank_change(
     new_rank: dict,
-    dt_utc: Optional[datetime] = None
+    dt_utc: Optional[datetime] = None,
+    dry_run: bool = False,          # ← [변경 1] 파라미터 추가
 ) -> Optional[dict]:
     """
     ETF 랭킹 변화 감지
@@ -53,6 +54,8 @@ def detect_rank_change(
     Args:
         new_rank: {"XLE": 1, "TLT": 2, ...}
         dt_utc:   기준 시각
+        dry_run:  True이면 이력 저장 생략 + 날짜 중복 체크 무시
+                  → DRY_RUN 환경에서 매 실행마다 감지/발송 테스트 가능
 
     Returns:
         변화 있으면 dict, 없으면 None
@@ -71,21 +74,25 @@ def detect_rank_change(
     kst   = dt_utc + timedelta(hours=9)
     today = kst.strftime("%Y-%m-%d")
 
-    history = _load()
+    history  = _load()
     old_rank = history.get("last_rank", {})
 
     # 첫 실행이면 저장만 하고 변화 없음 반환
     if not old_rank:
-        history["last_rank"]    = new_rank
-        history["last_updated"] = today
-        _save(history)
-        logger.info("[RankTracker] 첫 실행 — 기준 랭킹 저장")
+        if not dry_run:                   # ← [변경 2] DRY_RUN이면 저장 생략
+            history["last_rank"]    = new_rank
+            history["last_updated"] = today
+            _save(history)
+        logger.info("[RankTracker] 첫 실행 — 기준 랭킹 저장" if not dry_run
+                    else "[RankTracker] DRY_RUN 첫 실행 — 저장 생략")
         return None
 
-    # 오늘 이미 처리했으면 스킵
+    # 오늘 이미 처리했으면 스킵 (DRY_RUN이면 무시)
     if history.get("last_updated") == today:
-        logger.info("[RankTracker] 오늘 이미 처리됨 — 스킵")
-        return None
+        if not dry_run:                   # ← [변경 3] DRY_RUN이면 스킵 안 함
+            logger.info("[RankTracker] 오늘 이미 처리됨 — 스킵")
+            return None
+        logger.info("[RankTracker] DRY_RUN — 날짜 중복 체크 무시, 재감지 진행")
 
     # 변화 감지
     moved_up   = []
@@ -105,10 +112,11 @@ def detect_rank_change(
     top1_changed = old_top1 != new_top1
 
     if not moved_up and not moved_down:
-        # 변화 없음 — 날짜만 업데이트
-        history["last_rank"]    = new_rank
-        history["last_updated"] = today
-        _save(history)
+        # 변화 없음 — 날짜만 업데이트 (DRY_RUN이면 저장 생략)
+        if not dry_run:                   # ← [변경 4] DRY_RUN이면 저장 생략
+            history["last_rank"]    = new_rank
+            history["last_updated"] = today
+            _save(history)
         logger.info("[RankTracker] 랭킹 변화 없음")
         return None
 
@@ -122,16 +130,17 @@ def detect_rank_change(
         "new_rank":     new_rank,
     }
 
-    # 이력 저장
-    history["last_rank"]    = new_rank
-    history["last_updated"] = today
-    changes = history.get("changes", [])
-    changes.append({"date": today, **change})
-    history["changes"] = changes[-30:]  # 최근 30일만 유지
-    _save(history)
+    # 이력 저장 (DRY_RUN이면 저장 생략)
+    if not dry_run:                       # ← [변경 4] 동일 블록 내 저장 조건
+        history["last_rank"]    = new_rank
+        history["last_updated"] = today
+        changes = history.get("changes", [])
+        changes.append({"date": today, **change})
+        history["changes"] = changes[-30:]  # 최근 30일만 유지
+        _save(history)
 
     logger.info(
-        f"[RankTracker] 변화 감지 — "
+        f"[RankTracker] {'DRY_RUN ' if dry_run else ''}변화 감지 — "
         f"1위:{old_top1}→{new_top1} | "
         f"상승:{[x['etf'] for x in moved_up]} | "
         f"하락:{[x['etf'] for x in moved_down]}"
