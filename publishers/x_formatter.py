@@ -3,7 +3,10 @@ publishers/x_formatter.py
 JSON Core Data → X 트윗 텍스트 변환.
 출력 형식은 project-summary.html 기준.
 
-VERSION = "1.2.0"  # 비한국어 문자 가드 추가 (Gemini 외국어 누출 차단)
+v1.3.0 (2026-04-11): AI 트윗/스레드 프롬프트에 미사용 신호 추가
+  - generate_ai_tweet(): crypto_basis_state, pcr_state 프롬프트 입력 추가
+  - generate_ai_thread(): crypto_basis_state, pcr_state, breadth_state 추가
+  - Gemini가 크립토 시장 심리·옵션 심리를 트윗 내러티브에 자연스럽게 반영 가능
 
 v1.2.0 (2026-04-07): Gemini AI 트윗 비한국어 문자 가드
   - 14:06 morning에서 Gemini가 'सावधानी'(힌디어) 단어를 트윗에 포함하여 발행
@@ -24,6 +27,8 @@ from typing import Optional
 from config.settings import X_MAX_TWEET_LENGTH, X_HASHTAGS
 
 logger = logging.getLogger(__name__)
+
+VERSION = "1.3.0"
 
 
 # ──────────────────────────────────────────────────────────────
@@ -430,6 +435,7 @@ def generate_ai_tweet(data: dict, session_label: str = "Market Snapshot") -> str
         trading_info = data.get("trading_signal", {})
         alloc = data.get("etf_allocation", {}).get("allocation", data.get("etf_allocation", {}))
         fg = data.get("fear_greed", {})
+        signals_data = data.get("signals", {})
 
         sp500 = snap.get("sp500", 0.0)
         vix = snap.get("vix", 20.0)
@@ -440,6 +446,10 @@ def generate_ai_tweet(data: dict, session_label: str = "Market Snapshot") -> str
         signal = trading_info.get("trading_signal", "HOLD")
         fg_val = fg.get("value", 50) if fg else 50
         fg_label = fg.get("label", "") if fg else ""
+
+        # v1.3.0: 미사용 신호 추출
+        crypto_basis_state = signals_data.get("crypto_basis_state", "") or ""
+        pcr_state          = signals_data.get("pcr_state", "") or ""
 
         # ETF Top3
         top3 = []
@@ -460,7 +470,9 @@ def generate_ai_tweet(data: dict, session_label: str = "Market Snapshot") -> str
             f"- 레짐: {regime}, 리스크: {risk}, 시그널: {signal}\n"
             f"- F&G: {fg_val} ({fg_label})\n"
             f"- Top ETF: {', '.join(top3)}\n"
-            f"조건:\n"
+            + (f"- BTC Basis: {crypto_basis_state}\n" if crypto_basis_state and crypto_basis_state not in ("Unknown", "") else "")
+            + (f"- PCR: {pcr_state}\n" if pcr_state and pcr_state not in ("Unknown", "—") else "")
+            + f"조건:\n"
             f"- 반드시 140~200자 이내, 한국어\n"
             f"- 이모지 2~3개 포함\n"
             f"- 톤: {tone} (이 톤 하나로만 작성)\n"
@@ -581,6 +593,11 @@ def generate_ai_thread(data: dict) -> list:
         risk = regime_info.get("market_risk_level", "MEDIUM")
         signal = trading_info.get("trading_signal", "HOLD")
 
+        # v1.3.0: 미사용 신호 추출
+        crypto_basis_state = signals_data.get("crypto_basis_state", "") or ""
+        pcr_state          = signals_data.get("pcr_state", "") or ""
+        breadth_state      = signals_data.get("breadth_state", "") or ""
+
         # ETF 배분
         alloc_str = ", ".join(f"{e}:{w}%" for e, w in alloc.items()) if alloc else "없음"
 
@@ -590,6 +607,16 @@ def generate_ai_thread(data: dict) -> list:
             iss.get("topic", "") for iss in top_issues[:3] if isinstance(iss, dict)
         ) if top_issues else "특이사항 없음"
 
+        # 시장 심리 보조 지표 문자열 (값 있을 때만 포함)
+        extra_signals = []
+        if crypto_basis_state and crypto_basis_state not in ("Unknown", ""):
+            extra_signals.append(f"BTC Basis: {crypto_basis_state}")
+        if pcr_state and pcr_state not in ("Unknown", "—"):
+            extra_signals.append(f"PCR: {pcr_state}")
+        if breadth_state and breadth_state not in ("Unknown", "—", "No Data"):
+            extra_signals.append(f"시장폭: {breadth_state}")
+        extra_str = ", ".join(extra_signals) if extra_signals else ""
+
         prompt = (
             f"투자 분석 X 스레드를 JSON 배열로 생성해줘.\n"
             f"캐릭터: Max Bullhorn(강세), Baron Bearsworth(약세), The Volatician(혼돈)\n\n"
@@ -597,8 +624,9 @@ def generate_ai_thread(data: dict) -> list:
             f"- SPY: {sp500:+.2f}%, VIX: {vix:.1f}, WTI: ${oil:.1f}\n"
             f"- 레짐: {regime}, 리스크: {risk}, 시그널: {signal}\n"
             f"- ETF 배분: {alloc_str}\n"
-            f"- 주요 뉴스: {issues_str}\n\n"
-            f"구조 (5~7개):\n"
+            f"- 주요 뉴스: {issues_str}\n"
+            + (f"- 시장 심리 보조: {extra_str}\n" if extra_str else "")
+            + f"\n구조 (5~7개):\n"
             f"1. 후킹 요약 (1줄 + 이모지)\n"
             f"2. 오늘 시장 무슨 일? (레짐/수치)\n"
             f"3. 왜 이런 일이? (뉴스 배경)\n"
