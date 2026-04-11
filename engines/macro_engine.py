@@ -25,6 +25,7 @@ from config.settings import (
     AI_MOM_STRONG_THRESHOLD, AI_MOM_WEAK_THRESHOLD,
     NASDAQ_REL_GROWTH_THRESHOLD, NASDAQ_REL_VALUE_THRESHOLD,
     BANK_STRESS_THRESHOLD,
+    QUADRANT_FLAT_THRESHOLD,
 )
 from config.settings import (
     # ... 기존 imports 유지 ...
