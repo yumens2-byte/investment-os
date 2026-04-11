@@ -820,12 +820,23 @@ def _score_move(tier2_data: dict, snapshot: dict) -> dict:
 
 def _score_spy_tlt_regime(tier2_data: dict, snapshot: dict) -> dict:
     """
-    [A-4] SPY/TLT 4상한 시장 국면 판별
-    ──────────────────────────────────────
-    Goldilocks / Reflation / Risk-OFF / Stagflation Fear
-    콘텐츠 자동 생성의 핵심 국면 분류기.
+    [A-4] SPY/TLT 4상한 시장 국면 판별 — v1.1 3분법 적용
+    ──────────────────────────────────────────────────────
+    Goldilocks / Reflation / Risk-OFF / Stagflation Fear / Neutral
 
-    출력: market_quadrant (str), market_quadrant_score (1~4)
+    v1.0: 0% 이분법 → SPY -0.1%도 Stagflation Fear 판정 (과민)
+    v1.1: ±0.3% dead zone 도입 → 노이즈 보합 구간 Neutral 처리
+
+    판정 매트릭스:
+      up   + up   → Goldilocks      (1)
+      up   + flat → Reflation       (2)
+      up   + down → Reflation       (2)
+      down + up   → Risk-OFF        (3)
+      flat + up   → Risk-OFF Mild   (3)
+      flat + flat → Neutral         (2)  ← 핵심: 소폭 변동 구간
+      flat + down → Neutral-Weak    (3)
+      down + flat → Neutral-Weak    (3)
+      down + down → Stagflation Fear (4) ← 실제 위기만
     """
     tlt_chg = tier2_data.get("tlt_change") if tier2_data else None
     spy_chg = snapshot.get("sp500")
@@ -837,17 +848,31 @@ def _score_spy_tlt_regime(tier2_data: dict, snapshot: dict) -> dict:
             "tlt_change":            tlt_chg,
         }
 
-    spy_up = spy_chg >= 0
-    tlt_up = tlt_chg >= 0
+    # 3분법: up / flat / down
+    def _dir(chg: float) -> str:
+        if chg >= QUADRANT_FLAT_THRESHOLD:
+            return "up"
+        elif chg <= -QUADRANT_FLAT_THRESHOLD:
+            return "down"
+        else:
+            return "flat"
 
-    if spy_up and tlt_up:
-        quadrant, score = "Goldilocks", 1       # 주식+채권 동반 상승: 이상적
-    elif spy_up and not tlt_up:
-        quadrant, score = "Reflation", 2        # 주식↑ 채권↓: 성장기대+금리상승
-    elif not spy_up and tlt_up:
-        quadrant, score = "Risk-OFF", 3         # 주식↓ 채권↑: 전통 리스크오프
+    spy_dir = _dir(spy_chg)
+    tlt_dir = _dir(tlt_chg)
+
+    if spy_dir == "up" and tlt_dir == "up":
+        quadrant, score = "Goldilocks", 1
+    elif spy_dir == "up":
+        quadrant, score = "Reflation", 2
+    elif tlt_dir == "up":
+        quadrant, score = "Risk-OFF", 3
+    elif spy_dir == "flat" and tlt_dir == "flat":
+        quadrant, score = "Neutral", 2
+    elif spy_dir == "flat" or tlt_dir == "flat":
+        quadrant, score = "Neutral-Weak", 3
     else:
-        quadrant, score = "Stagflation Fear", 4  # 주식↓ 채권↓: 가장 위험
+        # both down
+        quadrant, score = "Stagflation Fear", 4
 
     return {
         "market_quadrant":       quadrant,
