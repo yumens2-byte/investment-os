@@ -52,6 +52,16 @@ def assemble_core_data(
     news_analysis: dict = None,
     crypto_basis: dict = None,
     btc_sentiment: dict = None,
+    spy_sma_data: dict = None,  # ← 신규 추가 (Priority A)
+
+    # ── Priority A: spy_sma_data를 signals에 반영 ────────────
+    # (이미 macro_engine에서 signals에 포함되어 있음 — 추가 보존용)
+    if spy_sma_data:
+        data.setdefault("spy_sma", {}).update({
+            "spy_price":  spy_sma_data.get("spy_price"),
+            "spy_sma50":  spy_sma_data.get("spy_sma50"),
+            "spy_sma200": spy_sma_data.get("spy_sma200"),
+        })
 ) -> dict:
     """
     각 엔진 출력을 단일 data dict로 조립.
