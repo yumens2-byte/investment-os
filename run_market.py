@@ -457,7 +457,12 @@ def run(session: str) -> dict:
         from core.rank_tracker import detect_rank_change
         etf_rank = envelope.get("data", {}).get("etf_analysis", {}).get("etf_rank", {})
         if etf_rank:
-            change = detect_rank_change(etf_rank, dt_utc=datetime.now(timezone.utc))
+            # 수정
+            change = detect_rank_change(
+                etf_rank,
+                dt_utc=datetime.now(timezone.utc),
+                dry_run=DRY_RUN,
+            )
             if change:
                 from publishers.telegram_publisher import send_message, format_rank_change
 
