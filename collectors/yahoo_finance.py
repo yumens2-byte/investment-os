@@ -164,6 +164,8 @@ def collect_market_snapshot() -> dict:
     """
     시장 스냅샷 수집.
     수집 실패 필드 → None 유지 → validator에서 FAIL 처리.
+
+    v1.7.0: Gold(GC=F) price + change 추가
     """
     logger.info("[YF] 시장 스냅샷 수집 시작")
 
@@ -173,6 +175,9 @@ def collect_market_snapshot() -> dict:
     us10y      = _fetch(TICKER_MAP["US10Y"],  "price")
     oil        = _fetch(TICKER_MAP["OIL"],    "price")
     dxy        = _fetch(TICKER_MAP["DXY"],    "price")
+    # ── v1.7.0: Gold 추가 ──────────────────────────────────
+    gold       = _fetch(TICKER_MAP.get("GOLD", "GC=F"), "price")
+    gold_chg   = _fetch(TICKER_MAP.get("GOLD", "GC=F"), "change")
 
     if us10y is not None and us10y > 20:
         us10y = us10y / 10
@@ -184,11 +189,20 @@ def collect_market_snapshot() -> dict:
         "us10y":        us10y,
         "oil":          oil,
         "dollar_index": dxy,
+        "gold":         gold,       # 신규 v1.7.0
+        "gold_change":  gold_chg,   # 신규 v1.7.0
     }
 
     collected = sum(1 for v in snapshot.values() if v is not None)
     total = len(snapshot)
-    logger.info(f"[YF] 스냅샷 완료: {collected}/{total}개 | SPY={snapshot['sp500']} VIX={snapshot['vix']}")
+    logger.info(
+        f"[YF] 스냅샷 완료: {collected}/{total}개 | "
+        f"SPY={snapshot['sp500']} VIX={snapshot['vix']} "
+        f"Gold=${snapshot.get('gold')} ({snapshot.get('gold_change'):+.2f}%)"
+        if snapshot.get('gold_change') is not None else
+        f"[YF] 스냅샷 완료: {collected}/{total}개 | "
+        f"SPY={snapshot['sp500']} VIX={snapshot['vix']} Gold=${snapshot.get('gold')}"
+    )
     if collected < 3:
         logger.error(f"[YF] 수집 실패 과다 ({total-collected}개 None) — validator 차단 예정")
 
@@ -700,46 +714,98 @@ def _fetch_price_and_change(ticker: str):
 # ──────────────────────────────────────────────────────────────
 def collect_tier2_market_data() -> dict:
     """
-    [Tier 2 + Tier 3] 분석 엔진 고도화용 추가 시장 데이터 수집
-    ──────────────────────────────────────────────────
+    [Tier 2 + Tier 3 + Priority A] 분석 엔진 고도화용 추가 시장 데이터 수집
+
     수집 항목:
       Tier 2:
-        - RSP (균등가중 S&P500) 등락률 → Market Breadth (T2-1)
-        - SPY 등락률 → RSP 비교 기준
-        - VIX3M (3개월 VIX) → Vol Term Structure (T2-2)
-        - EEM (신흥국 ETF) → EM Stress (T2-5)
+        - RSP  → Market Breadth (T2-1)
+        - SPY  → RSP 비교 기준
+        - VIX3M→ Vol Term Structure (T2-2)
+        - EEM  → EM Stress (T2-5)
       Tier 3:
-        - SOXX (반도체 ETF) → AI 모멘텀 (T3-1)
-        - QQQ → SOXX 비교 기준
-        - KRE (지역은행 ETF) → 은행 스트레스 (T3-3)
+        - SOXX → AI 모멘텀 (T3-1)
+        - QQQ  → SOXX 비교 기준
+        - KRE  → 은행 스트레스 (T3-3)
+      Priority A (v1.7.0 신규):
+        - IWM  → Russell 2000, 소형주 상대강도 (A-2)
+        - TLT  → 장기국채 ETF, SPY/TLT 4상한 (A-4)
+        - MOVE → 채권 변동성, 수집 실패 허용 (A-3)
 
     Returns:
-        {
-          "rsp_change":  float,  # %
-          "spy_change":  float,  # %
-          "vix3m":       float,  # 포인트
-          "eem_change":  float,  # %
-          "soxx_change": float,  # %
-          "qqq_change":  float,  # %
-          "kre_change":  float,  # %
-        }
-        수집 실패 시 해당 필드 None
+        dict — 수집 실패 시 해당 필드 None
     """
-    logger.info("[YF_T2] Tier 2/3 시장 데이터 수집 시작")
+    logger.info("[YF_T2] Tier 2/3/A 시장 데이터 수집 시작")
 
     result = {
         # Tier 2
-        "rsp_change":  _fetch(TICKER_MAP.get("RSP",  "RSP"),  "change"),
-        "spy_change":  _fetch(TICKER_MAP.get("SPY",  "SPY"),  "change"),
+        "rsp_change":  _fetch(TICKER_MAP.get("RSP",  "RSP"),   "change"),
+        "spy_change":  _fetch(TICKER_MAP.get("SPY",  "SPY"),   "change"),
         "vix3m":       _fetch(TICKER_MAP.get("VIX3M","^VIX3M"),"price"),
-        "eem_change":  _fetch(TICKER_MAP.get("EEM",  "EEM"),  "change"),
+        "eem_change":  _fetch(TICKER_MAP.get("EEM",  "EEM"),   "change"),
         # Tier 3
-        "soxx_change": _fetch(TICKER_MAP.get("SOXX", "SOXX"), "change"),
-        "qqq_change":  _fetch(TICKER_MAP.get("QQQ",  "QQQ"),  "change"),
-        "kre_change":  _fetch(TICKER_MAP.get("KRE",  "KRE"),  "change"),
+        "soxx_change": _fetch(TICKER_MAP.get("SOXX", "SOXX"),  "change"),
+        "qqq_change":  _fetch(TICKER_MAP.get("QQQ",  "QQQ"),   "change"),
+        "kre_change":  _fetch(TICKER_MAP.get("KRE",  "KRE"),   "change"),
+        # ── Priority A v1.7.0 신규 ────────────────────────────
+        "iwm_change":  _fetch(TICKER_MAP.get("IWM",  "IWM"),   "change"),   # A-2
+        "tlt_change":  _fetch(TICKER_MAP.get("TLT",  "TLT"),   "change"),   # A-4
+        "move_index":  _fetch("^MOVE", "price"),                             # A-3 (실패 허용)
     }
 
-    # 개별 필드 로깅 (장애 추적용)
+
+  def collect_spy_sma() -> dict:
+    """
+    SPY SMA 4종 수집 — Priority A v1.0.0 (2026-04-11)
+    ─────────────────────────────────────────────────────
+    수집: SMA5 / SMA20 / SMA50 / SMA200
+    목적: 기술적 추세 판단 (골든크로스/데스크로스/200선 이탈)
+
+    SMA200 계산을 위해 270일치 종가 수집 (영업일 여유 포함).
+    _fetch_closes_fallback() 기존 함수 재활용.
+
+    Returns:
+        {
+          "spy_price":  float | None,
+          "spy_sma5":   float | None,
+          "spy_sma20":  float | None,
+          "spy_sma50":  float | None,
+          "spy_sma200": float | None,
+        }
+    """
+    logger.info("[YF_SMA] SPY SMA 수집 시작 (SMA5/20/50/200)")
+
+    closes = _fetch_closes_fallback("SPY", days=270)
+
+    if not closes or len(closes) < 5:
+        logger.warning(f"[YF_SMA] SPY 종가 부족({len(closes) if closes else 0}일) → 전체 None")
+        return {k: None for k in ["spy_price", "spy_sma5", "spy_sma20", "spy_sma50", "spy_sma200"]}
+
+    def _sma(n: int):
+        if len(closes) < n:
+            logger.warning(f"[YF_SMA] SMA{n} 계산 데이터 부족({len(closes)}일 < {n})")
+            return None
+        return round(sum(closes[-n:]) / n, 2)
+
+    result = {
+        "spy_price":  round(closes[-1], 2),
+        "spy_sma5":   _sma(5),
+        "spy_sma20":  _sma(20),
+        "spy_sma50":  _sma(50),
+        "spy_sma200": _sma(200),
+    }
+
+    logger.info(
+        f"[YF_SMA] SPY ${result['spy_price']} | "
+        f"SMA50=${result['spy_sma50']} | "
+        f"SMA200=${result['spy_sma200']} | "
+        f"above200={'Yes' if result['spy_price'] and result['spy_sma200'] and result['spy_price'] > result['spy_sma200'] else 'No'}"
+    )
+    return result
+
+    # MOVE 수집 실패는 경고만 (validator FAIL 제외 대상)
+    if result.get("move_index") is None:
+        logger.warning("[YF_T2] ^MOVE 수집 실패 → None 유지 (엔진에서 중립 처리)")
+
     for key, val in result.items():
         if val is None:
             logger.warning(f"[YF_T2] {key} 수집 실패 → None")
