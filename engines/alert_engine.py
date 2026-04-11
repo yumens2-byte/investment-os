@@ -9,6 +9,8 @@ Alert 감지 엔진 — 2번(SPY 급락) + 5번(Fed RSS) 조합 구현.
   3. Oil Shock Alert          (단독 L1)
   4. Fed 충격 Alert           (SPY 급락 + Fed RSS 키워드 조합 → L2~L3)
   5. 복합 위기 Alert          (VIX + SPY + US10Y 동시 악화 → L3)
+  6. PCR 극단값 Alert         (옵션 시장 극단 심리 → L1)  ← v1.0.0 신규
+  7. Crypto Basis Alert       (BTC 백워데이션 극단 → L1)  ← v1.0.0 신규
 
 등급:
   L1 — 주의    (단일 지표 임계값 돌파)
@@ -22,6 +24,8 @@ from typing import List, Optional
 from dataclasses import dataclass, field
 
 logger = logging.getLogger(__name__)
+
+VERSION = "1.0.0"
 
 # ─── Alert 임계값 ───────────────────────────────────────────
 # VIX
@@ -55,6 +59,13 @@ FED_KEYWORDS = [
     "interest rate decision", "rate decision",
     "fed raises", "fed cuts", "bps",
 ]
+
+# ── v1.0.0 신규: PCR (Put/Call Ratio) 임계값 ────────────────
+PCR_EXTREME_FEAR  = 1.5   # PCR > 1.5 → 극단 공포 (헤지 폭증) → L1
+PCR_EXTREME_GREED = 0.5   # PCR < 0.5 → 극단 탐욕 (콜 폭증)  → L1
+
+# ── v1.0.0 신규: Crypto Basis 임계값 ─────────────────────────
+CRYPTO_BASIS_BACKWARDATION = -1.0   # basis_spread < -1.0% → 극단 백워데이션 → L1
 
 
 @dataclass
@@ -460,6 +471,84 @@ def _regime_etf_hints(regime: str):
     return _HINTS.get(regime, ([], []))
 
 
+def _pcr_alert(signals: dict, snapshot: dict) -> Optional[AlertSignal]:
+    """
+    [v1.0.0] PCR 극단값 Alert — 옵션 시장 심리 극단 감지.
+
+    PCR > 1.5 : 극단 공포 — 풋 옵션 폭증, 패닉 헤징 신호
+    PCR < 0.5 : 극단 탐욕 — 콜 옵션 폭증, 과열 신호
+
+    과거 사례: PCR > 1.5는 2020-03, 2022-09~10 저점권과 일치
+               PCR < 0.5는 2021-11 고점권과 일치
+    """
+    pcr = signals.get("pcr_value", 0) or 0
+    state = signals.get("pcr_state", "") or ""
+
+    if pcr <= 0:
+        return None
+
+    if pcr > PCR_EXTREME_FEAR:
+        return AlertSignal(
+            alert_type="PCR_EXTREME",
+            level="L1",
+            reason=(
+                f"PCR {pcr:.2f} ({state}) — 극단 공포. "
+                f"풋 옵션 폭증, 시장 패닉 헤징 구간"
+            ),
+            snapshot=snapshot,
+            etf_hints=["TLT", "SPYM"],
+            avoid_etfs=["QQQM", "XLK"],
+        )
+
+    if 0 < pcr < PCR_EXTREME_GREED:
+        return AlertSignal(
+            alert_type="PCR_EXTREME",
+            level="L1",
+            reason=(
+                f"PCR {pcr:.2f} ({state}) — 극단 탐욕. "
+                f"콜 옵션 폭증, 단기 과열 주의"
+            ),
+            snapshot=snapshot,
+            etf_hints=[],
+            avoid_etfs=[],
+        )
+
+    return None
+
+
+def _crypto_basis_alert(signals: dict, snapshot: dict) -> Optional[AlertSignal]:
+    """
+    [v1.0.0] Crypto Basis 극단 백워데이션 Alert.
+
+    basis_spread < -1.0% : BTC 현물 수요가 선물을 압도하는 극단 상황.
+    현물 패닉 매도 또는 선물 롤오버 위기를 의미.
+    2022-11 FTX 붕괴, 2020-03 COVID 급락 직전에 관측된 패턴.
+
+    단, 백워데이션이 항상 하락 신호는 아님 (강세장에서 현물 수급이 강할 때도 발생).
+    참고 정보로만 제공.
+    """
+    spread = signals.get("crypto_basis_spread")
+    state  = signals.get("crypto_basis_state", "") or ""
+
+    if spread is None:
+        return None
+
+    if spread < CRYPTO_BASIS_BACKWARDATION:
+        return AlertSignal(
+            alert_type="CRYPTO_BASIS",
+            level="L1",
+            reason=(
+                f"BTC Basis {spread:+.3f}% ({state}) — "
+                f"극단 백워데이션. 현물·선물 괴리 확대 주의"
+            ),
+            snapshot=snapshot,
+            etf_hints=[],
+            avoid_etfs=[],
+        )
+
+    return None
+
+
 def _vix_countdown_alert(
     snapshot: dict,
     prev_snapshot: Optional[dict] = None,
@@ -509,6 +598,7 @@ def run_alert_engine(
     regime_change: Optional[dict] = None,
     signal_diff_result: Optional[dict] = None,
     score_diff_result: Optional[dict] = None,
+    signals: Optional[dict] = None,
 ) -> List[AlertSignal]:
     """
     전체 Alert 감지 실행.
@@ -521,12 +611,14 @@ def run_alert_engine(
         regime_change: regime_tracker.detect_regime_change() 결과 (B-6)
         signal_diff_result: signal_diff.compute_signal_diff() 결과 (B-5/B-6)
         score_diff_result:  signal_diff.compute_score_diff() 결과 (B-6)
+        signals:      core_data signals dict (PCR/Basis Alert용)  ← v1.0.0
 
     Returns:
         발송 대상 AlertSignal 리스트 (우선순위 정렬)
     """
-    logger.info("[AlertEngine] Alert 감지 시작")
+    logger.info(f"[AlertEngine] v{VERSION} Alert 감지 시작")
     alerts: List[AlertSignal] = []
+    _signals = signals or {}
 
     # 1. Fed 키워드 감지 (공통)
     fed_detected = _detect_fed_keywords(news_result)
@@ -571,6 +663,20 @@ def run_alert_engine(
     )
     if regime_sig:
         alerts.append(regime_sig)
+
+    # ── v1.0.0: PCR 극단값 Alert ──────────────────────────────
+    if _signals:
+        pcr_sig = _pcr_alert(_signals, snapshot)
+        if pcr_sig:
+            alerts.append(pcr_sig)
+            logger.info(f"[AlertEngine] PCR Alert: {pcr_sig.reason}")
+
+    # ── v1.0.0: Crypto Basis 극단 백워데이션 Alert ──────────────
+    if _signals:
+        basis_sig = _crypto_basis_alert(_signals, snapshot)
+        if basis_sig:
+            alerts.append(basis_sig)
+            logger.info(f"[AlertEngine] Crypto Basis Alert: {basis_sig.reason}")
 
     # 6. 프리미엄 알람 정보 — AlertSignal에 vix_level, regime_changed 부착
     vix_now = snapshot.get("vix", 0)
