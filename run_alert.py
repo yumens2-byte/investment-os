@@ -107,7 +107,7 @@ def run() -> dict:
                 "reason": "outside_alert_window",
                 "detail": reason,
             }
-        logger.info(f"[run_alert] 시간 윈도우 통과: {reason}")
+        logger.info(f"[run_alert] 시간 윈도우 통과: {reason}")  # ← 4칸 추가
 
     logger.info(f"[run_alert] 시간 윈도우 통과: {reason}")
 
