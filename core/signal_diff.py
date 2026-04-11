@@ -79,6 +79,13 @@ _SIGNAL_STATE_MAP = {
     "ai_momentum_score":         "ai_momentum_state",
     "nasdaq_rel_score":          "nasdaq_rel_state",
     "banking_stress_score":      "banking_stress_state",
+    # ── Priority A (2026-04-11) ───────────────────────────────
+    "gold_score":            "gold_state",
+    "small_cap_score":       "small_cap_state",
+    "move_score":            "move_state",
+    "market_quadrant_score": "market_quadrant",
+    "spread_score":          "spread_state",
+    "trend_score":           "trend_state",
 }
 
 # ── 시그널 한국어 라벨 ────────────────────────────────────
@@ -101,6 +108,13 @@ _SIGNAL_LABEL_KR = {
     "ai_momentum_score":         "AI모멘텀",
     "nasdaq_rel_score":          "나스닥상대",
     "banking_stress_score":      "은행스트레스",
+    # ── Priority A (2026-04-11) ───────────────────────────────
+    "gold_score":            "금현물",
+    "small_cap_score":       "소형주",
+    "move_score":            "채권변동성",
+    "market_quadrant_score": "시장국면",
+    "spread_score":          "금리스프레드",
+    "trend_score":           "기술추세",
 }
 
 # ── Market Score 키 ───────────────────────────────────────
