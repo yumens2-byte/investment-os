@@ -32,6 +32,11 @@ v1.5.2: GitHub Actions 환경 멈춤 문제 수정
 - yfinance 전체에 signal 기반 타임아웃 적용 (무한 대기 차단)
 - requests fallback도 timeout=10 강제
 - 수집 불가 시 None 반환 → validator 차단
+
+Priority A (2026-04-11):
+- collect_market_snapshot(): Gold(GC=F) price + change 추가
+- collect_tier2_market_data(): IWM, TLT, MOVE 추가
+- collect_spy_sma(): 신규 함수 (SMA5/20/50/200)
 """
 import logging
 import re
@@ -45,14 +50,12 @@ from config.settings import TICKER_MAP, ETF_CORE, ETF_SIGNAL
 
 logger = logging.getLogger(__name__)
 
+VERSION = "1.7.0"
+
 # ─────────────────────────────────────────────────────────────────────────────
 # v1.7.0: yfinance 라이브러리 로그 noise 차단
 # ─────────────────────────────────────────────────────────────────────────────
-# 마스터 환경(GitHub Actions)에서 yfinance가 ticker당 1차 시도 후 ERROR 2줄 도배
-# 후 requests fallback으로 정상 복구. ERROR 로그는 사용자에게 거짓 신호이므로
-# CRITICAL 이상으로 차단. 우리 logger가 [YF] requests fallback 시도 한 줄로 통제.
 logging.getLogger("yfinance").setLevel(logging.CRITICAL)
-# peewee, urllib3 등 yfinance 의존 라이브러리가 만들 수 있는 추가 noise도 차단
 logging.getLogger("peewee").setLevel(logging.CRITICAL)
 
 # 티커 1개당 최대 대기 시간 (초)
@@ -83,7 +86,6 @@ def _run_with_timeout(fn, timeout_sec: int):
         finally:
             signal.alarm(0)
     except AttributeError:
-        # Windows: SIGALRM 없음 → 그냥 실행
         return fn()
     except _TimeoutError:
         logger.warning(f"[YF] {timeout_sec}초 타임아웃 초과")
@@ -129,7 +131,7 @@ def _fetch_with_requests(ticker_symbol: str, mode: str = "change") -> Optional[f
         params = {"interval": "1d", "range": "5d"}
         resp = requests.get(
             url, headers=headers, params=params,
-            timeout=10  # 반드시 timeout 명시
+            timeout=10
         )
         if resp.status_code != 200:
             logger.warning(f"[YF] requests HTTP {resp.status_code}: {ticker_symbol}")
@@ -189,20 +191,23 @@ def collect_market_snapshot() -> dict:
         "us10y":        us10y,
         "oil":          oil,
         "dollar_index": dxy,
-        "gold":         gold,       # 신규 v1.7.0
-        "gold_change":  gold_chg,   # 신규 v1.7.0
+        "gold":         gold,
+        "gold_change":  gold_chg,
     }
 
     collected = sum(1 for v in snapshot.values() if v is not None)
     total = len(snapshot)
-    logger.info(
-        f"[YF] 스냅샷 완료: {collected}/{total}개 | "
-        f"SPY={snapshot['sp500']} VIX={snapshot['vix']} "
-        f"Gold=${snapshot.get('gold')} ({snapshot.get('gold_change'):+.2f}%)"
-        if snapshot.get('gold_change') is not None else
-        f"[YF] 스냅샷 완료: {collected}/{total}개 | "
-        f"SPY={snapshot['sp500']} VIX={snapshot['vix']} Gold=${snapshot.get('gold')}"
-    )
+    if snapshot.get("gold_change") is not None:
+        logger.info(
+            f"[YF] 스냅샷 완료: {collected}/{total}개 | "
+            f"SPY={snapshot['sp500']} VIX={snapshot['vix']} "
+            f"Gold=${snapshot.get('gold')} ({snapshot.get('gold_change'):+.2f}%)"
+        )
+    else:
+        logger.info(
+            f"[YF] 스냅샷 완료: {collected}/{total}개 | "
+            f"SPY={snapshot['sp500']} VIX={snapshot['vix']} Gold=${snapshot.get('gold')}"
+        )
     if collected < 3:
         logger.error(f"[YF] 수집 실패 과다 ({total-collected}개 None) — validator 차단 예정")
 
@@ -233,13 +238,6 @@ def collect_etf_sma() -> dict:
     SMA5 > SMA20 → "golden_cross" (상승 추세)
     SMA5 < SMA20 → "dead_cross" (하락 추세)
     else → "flat"
-
-    Returns:
-        {
-          "QQQM": {"sma5": 180.5, "sma20": 178.2, "trend": "golden_cross"},
-          "XLK":  {"sma5": 200.1, "sma20": 202.3, "trend": "dead_cross"},
-          ...
-        }
     """
     logger.info("[YF_SMA] ETF SMA 수집 시작")
     result = {}
@@ -251,7 +249,6 @@ def collect_etf_sma() -> dict:
             hist = ticker.history(period="1mo")
 
             if hist is None or len(hist) < 5:
-                # requests fallback
                 closes = _fetch_closes_fallback(symbol, 22)
                 if not closes or len(closes) < 5:
                     result[etf] = {"sma5": 0, "sma20": 0, "trend": "flat"}
@@ -259,11 +256,9 @@ def collect_etf_sma() -> dict:
             else:
                 closes = hist["Close"].tolist()
 
-            # SMA 계산
-            sma5 = sum(closes[-5:]) / min(5, len(closes[-5:])) if len(closes) >= 5 else 0
+            sma5  = sum(closes[-5:])  / min(5,  len(closes[-5:]))  if len(closes) >= 5  else 0
             sma20 = sum(closes[-20:]) / min(20, len(closes[-20:])) if len(closes) >= 20 else sma5
 
-            # 트렌드 판별
             if sma5 > 0 and sma20 > 0:
                 diff_pct = (sma5 - sma20) / sma20 * 100
                 if diff_pct > 0.5:
@@ -291,7 +286,6 @@ def collect_etf_sma() -> dict:
 
 # ──────────────────────────────────────────────────────────────
 # D-2: CBOE Put/Call Ratio 수집 v2.0 (2026-04-07)
-# ^CPCE Yahoo 의존 제거 → CBOE 공식 + Stooq 다중 fallback
 # ──────────────────────────────────────────────────────────────
 
 def collect_put_call_ratio() -> dict:
@@ -299,51 +293,31 @@ def collect_put_call_ratio() -> dict:
     D-2: CBOE Equity Put/Call Ratio 수집 (v2.0)
 
     데이터 소스 우선순위:
-      1순위: CBOE JSON API (cdn.cboe.com)
-      2순위: CBOE HTML 페이지 정규식 파싱 (www.cboe.com)
-      3순위: Stooq.com CSV (^cpc.us)
+      1순위: CBOE JSON API
+      2순위: CBOE HTML 페이지 정규식 파싱
+      3순위: Stooq.com CSV
       4순위: Unknown fallback
-
-    PCR 해석:
-      > 1.2  → Extreme Bearish (과도한 풋 매수, 바닥 신호)
-      > 1.0  → Bearish (풋 우세)
-      0.7~1.0 → Neutral (정상 범위)
-      < 0.7  → Bullish (Complacency, 과도한 콜 매수, 과열 경고)
-
-    Returns:
-        {
-            "pcr":        float,  # PCR 값
-            "pcr_state":  str,    # 상태 라벨
-            "pcr_score":  int,    # 1~4
-            "pcr_source": str,    # "cboe_json" | "cboe_html" | "stooq" | "fallback"
-        }
     """
     logger.info("[YF_PCR] Put/Call Ratio 수집 시작 (v2.1 graceful)")
 
-    # ── 1순위: CBOE JSON API ──
     pcr = _fetch_pcr_cboe_json()
     if pcr is not None:
         result = _build_pcr_result(pcr, source="cboe_json")
         logger.info(f"[YF_PCR] PCR={pcr} → {result['pcr_state']} (source=cboe_json)")
         return result
 
-    # ── 2순위: CBOE HTML 파싱 ──
     pcr = _fetch_pcr_cboe_html()
     if pcr is not None:
         result = _build_pcr_result(pcr, source="cboe_html")
         logger.info(f"[YF_PCR] PCR={pcr} → {result['pcr_state']} (source=cboe_html)")
         return result
 
-    # ── 3순위: Stooq fallback ──
     pcr = _fetch_pcr_stooq()
     if pcr is not None:
         result = _build_pcr_result(pcr, source="stooq")
         logger.info(f"[YF_PCR] PCR={pcr} → {result['pcr_state']} (source=stooq)")
         return result
 
-    # ── 4순위: Graceful degradation (운영 결정 2026-04-07) ──
-    # GitHub Actions 클라우드 IP 환경에서 무료 PCR 수집 불가 확정.
-    # 파이프라인 무영향(publish_eligible=True), 한 줄 INFO만 남김.
     logger.info("[YF_PCR] Unknown (graceful — 모든 무료 소스 사용 불가, 파이프라인 무영향)")
     return {
         "pcr": 0.0,
@@ -357,7 +331,6 @@ def _fetch_pcr_cboe_json() -> Optional[float]:
     """CBOE JSON API에서 Equity P/C Ratio 최신값 추출"""
     try:
         import requests
-
         url = "https://cdn.cboe.com/api/global/us_indices/daily_prices/PUT-CALL-EQUITY_history.json"
         headers = {
             "User-Agent": (
@@ -367,14 +340,12 @@ def _fetch_pcr_cboe_json() -> Optional[float]:
             ),
             "Accept": "application/json",
         }
-
         resp = requests.get(url, headers=headers, timeout=_PCR_TIMEOUT_SEC)
         if resp.status_code != 200:
             logger.debug(f"[YF_PCR] CBOE JSON HTTP {resp.status_code}")
             return None
 
         data = resp.json()
-        # 응답 구조 후보: { "data": [...] } 또는 { "history": [...] } 또는 [...]
         records = None
         if isinstance(data, dict):
             records = data.get("data") or data.get("history")
@@ -385,18 +356,16 @@ def _fetch_pcr_cboe_json() -> Optional[float]:
             logger.debug("[YF_PCR] CBOE JSON 구조 인식 실패")
             return None
 
-        # 최신 레코드 추출 (마지막 또는 첫 항목)
         latest = records[-1] if isinstance(records[-1], dict) else records[0]
         if not isinstance(latest, dict):
             return None
 
-        # 가능한 키 후보 순회
         for key in ("ratio", "pcr", "value", "close", "p/c ratio", "Close"):
             val = latest.get(key)
             if val is not None:
                 try:
                     pcr = round(float(val), 3)
-                    if 0.1 < pcr < 5.0:  # 합리적 범위
+                    if 0.1 < pcr < 5.0:
                         return pcr
                 except (ValueError, TypeError):
                     continue
@@ -413,7 +382,6 @@ def _fetch_pcr_cboe_html() -> Optional[float]:
     """CBOE daily statistics HTML 페이지에서 Equity P/C Ratio 정규식 파싱"""
     try:
         import requests
-
         url = "https://www.cboe.com/us/options/market_statistics/daily/"
         headers = {
             "User-Agent": (
@@ -423,21 +391,17 @@ def _fetch_pcr_cboe_html() -> Optional[float]:
             ),
             "Accept": "text/html,application/xhtml+xml",
         }
-
         resp = requests.get(url, headers=headers, timeout=_PCR_TIMEOUT_SEC)
         if resp.status_code != 200:
             logger.debug(f"[YF_PCR] CBOE HTML HTTP {resp.status_code}")
             return None
 
         html = resp.text
-
-        # "EQUITY PUT/CALL RATIO" 근처의 숫자 추출
         patterns = [
             r"EQUITY\s+PUT/CALL\s+RATIO[^0-9]*([0-9]+\.[0-9]+)",
             r"Equity\s+P/C\s+Ratio[^0-9]*([0-9]+\.[0-9]+)",
             r"equity[^0-9]{0,50}?([0-9]+\.[0-9]{2,3})",
         ]
-
         for pattern in patterns:
             match = re.search(pattern, html, re.IGNORECASE)
             if match:
@@ -457,16 +421,9 @@ def _fetch_pcr_cboe_html() -> Optional[float]:
 
 
 def _fetch_pcr_stooq() -> Optional[float]:
-    """
-    Stooq.com에서 Equity Put/Call Ratio 수집 (CSV)
-
-    심볼: ^cpc.us
-    URL: https://stooq.com/q/d/l/?s=^cpc.us&i=d
-    응답: CSV (Date,Open,High,Low,Close,Volume)
-    """
+    """Stooq.com에서 Equity Put/Call Ratio 수집 (CSV)"""
     try:
         import requests
-
         url = "https://stooq.com/q/d/l/?s=^cpc.us&i=d"
         headers = {
             "User-Agent": (
@@ -476,7 +433,6 @@ def _fetch_pcr_stooq() -> Optional[float]:
             ),
             "Accept": "text/csv",
         }
-
         resp = requests.get(url, headers=headers, timeout=_PCR_TIMEOUT_SEC)
         if resp.status_code != 200:
             logger.debug(f"[YF_PCR] Stooq HTTP {resp.status_code}")
@@ -490,18 +446,15 @@ def _fetch_pcr_stooq() -> Optional[float]:
         if len(lines) < 2:
             return None
 
-        # 첫 줄이 헤더인지 확인
         header = lines[0].lower()
         if "date" not in header:
             logger.debug("[YF_PCR] Stooq CSV 헤더 없음")
             return None
 
-        # 마지막 줄 = 최신 데이터
         last = lines[-1].split(",")
         if len(last) < 5:
             return None
 
-        # CSV 컬럼: Date,Open,High,Low,Close,Volume
         try:
             close_val = float(last[4])
             pcr = round(close_val, 3)
@@ -545,16 +498,9 @@ def collect_etf_volume_trend() -> dict:
     """
     D-4: ETF 6종목의 20일 평균 거래량 대비 오늘 거래량 비율.
 
-    ratio > 1.3 → "inflow" (자금 유입 추정, 비중 상향 근거)
-    ratio < 0.7 → "outflow" (자금 유출 추정, 비중 하향 근거)
+    ratio > 1.3 → "inflow"
+    ratio < 0.7 → "outflow"
     else → "normal"
-
-    Returns:
-        {
-          "XLE": {"today_vol": 25000000, "avg_vol": 18000000, "ratio": 1.39, "flow": "inflow"},
-          "QQQM": {"today_vol": 5000000, "avg_vol": 8000000, "ratio": 0.63, "flow": "outflow"},
-          ...
-        }
     """
     logger.info("[YF_VOL] ETF 거래량 트렌드 수집 시작")
     result = {}
@@ -572,7 +518,6 @@ def collect_etf_volume_trend() -> dict:
             volumes = hist["Volume"].tolist()
             today_vol = volumes[-1] if volumes else 0
             avg_vol = sum(volumes[:-1]) / max(1, len(volumes) - 1) if len(volumes) > 1 else today_vol
-
             ratio = today_vol / max(1, avg_vol)
 
             if ratio > 1.3:
@@ -615,21 +560,17 @@ def _fetch_closes_fallback(symbol: str, days: int = 22) -> list:
 
 def collect_fx_rates() -> dict:
     """
-    FX 환율 3종 수집 (yfinance 무료 — 추가 API 비용 없음)
+    FX 환율 3종 수집 (yfinance 무료)
     - USD/KRW : KRW=X
     - EUR/USD : EURUSD=X
     - USD/JPY : JPY=X
-
-    Returns:
-        {"usdkrw": float, "eurusd": float, "usdjpy": float}
-        수집 실패 시 해당 필드 None
     """
     logger.info("[YF_FX] FX 환율 수집 시작")
 
     fx_tickers = {
         "usdkrw": "KRW=X",
-        "eurusd":  "EURUSD=X",
-        "usdjpy":  "JPY=X",
+        "eurusd": "EURUSD=X",
+        "usdjpy": "JPY=X",
     }
 
     result = {}
@@ -649,14 +590,6 @@ def collect_fx_rates() -> dict:
 def collect_crypto_prices() -> dict:
     """
     BTC/ETH 실시간 가격 수집 (yfinance)
-
-    Returns:
-        {
-          "btc_usd": 85000.0,
-          "eth_usd": 3200.0,
-          "btc_change_pct": -1.2,   # 24h 등락률
-          "eth_change_pct": 0.8,
-        }
     """
     TICKERS = {
         "btc_usd": "BTC-USD",
@@ -678,10 +611,10 @@ def collect_crypto_prices() -> dict:
 
     if result.get("btc_usd"):
         logger.info(
-            f"[YF_CRYPTO] BTC=${result.get('btc_usd',0):,.0f} "
-            f"({result.get('btc_change_pct',0):+.2f}%) | "
-            f"ETH=${result.get('eth_usd',0):,.0f} "
-            f"({result.get('eth_change_pct',0):+.2f}%)"
+            f"[YF_CRYPTO] BTC=${result.get('btc_usd', 0):,.0f} "
+            f"({result.get('btc_change_pct', 0):+.2f}%) | "
+            f"ETH=${result.get('eth_usd', 0):,.0f} "
+            f"({result.get('eth_change_pct', 0):+.2f}%)"
         )
     return result
 
@@ -709,51 +642,52 @@ def _fetch_price_and_change(ticker: str):
 
 # ──────────────────────────────────────────────────────────────
 # Tier 2 + Tier 3 수집 함수 (2026-04-01 추가, 2026-04-07 통합)
-# 목적: 분석 엔진 고도화를 위한 추가 데이터 소스 수집
-# 비용: 전부 yfinance 무료 데이터
+# Priority A (2026-04-11): IWM, TLT, MOVE 추가
 # ──────────────────────────────────────────────────────────────
+
 def collect_tier2_market_data() -> dict:
     """
     [Tier 2 + Tier 3 + Priority A] 분석 엔진 고도화용 추가 시장 데이터 수집
 
     수집 항목:
-      Tier 2:
-        - RSP  → Market Breadth (T2-1)
-        - SPY  → RSP 비교 기준
-        - VIX3M→ Vol Term Structure (T2-2)
-        - EEM  → EM Stress (T2-5)
-      Tier 3:
-        - SOXX → AI 모멘텀 (T3-1)
-        - QQQ  → SOXX 비교 기준
-        - KRE  → 은행 스트레스 (T3-3)
-      Priority A (v1.7.0 신규):
-        - IWM  → Russell 2000, 소형주 상대강도 (A-2)
-        - TLT  → 장기국채 ETF, SPY/TLT 4상한 (A-4)
-        - MOVE → 채권 변동성, 수집 실패 허용 (A-3)
-
-    Returns:
-        dict — 수집 실패 시 해당 필드 None
+      Tier 2: RSP, SPY, VIX3M, EEM
+      Tier 3: SOXX, QQQ, KRE
+      Priority A (v1.7.0): IWM, TLT, MOVE(실패 허용)
     """
     logger.info("[YF_T2] Tier 2/3/A 시장 데이터 수집 시작")
 
     result = {
         # Tier 2
-        "rsp_change":  _fetch(TICKER_MAP.get("RSP",  "RSP"),   "change"),
-        "spy_change":  _fetch(TICKER_MAP.get("SPY",  "SPY"),   "change"),
-        "vix3m":       _fetch(TICKER_MAP.get("VIX3M","^VIX3M"),"price"),
-        "eem_change":  _fetch(TICKER_MAP.get("EEM",  "EEM"),   "change"),
+        "rsp_change":  _fetch(TICKER_MAP.get("RSP",   "RSP"),    "change"),
+        "spy_change":  _fetch(TICKER_MAP.get("SPY",   "SPY"),    "change"),
+        "vix3m":       _fetch(TICKER_MAP.get("VIX3M", "^VIX3M"), "price"),
+        "eem_change":  _fetch(TICKER_MAP.get("EEM",   "EEM"),    "change"),
         # Tier 3
-        "soxx_change": _fetch(TICKER_MAP.get("SOXX", "SOXX"),  "change"),
-        "qqq_change":  _fetch(TICKER_MAP.get("QQQ",  "QQQ"),   "change"),
-        "kre_change":  _fetch(TICKER_MAP.get("KRE",  "KRE"),   "change"),
-        # ── Priority A v1.7.0 신규 ────────────────────────────
-        "iwm_change":  _fetch(TICKER_MAP.get("IWM",  "IWM"),   "change"),   # A-2
-        "tlt_change":  _fetch(TICKER_MAP.get("TLT",  "TLT"),   "change"),   # A-4
-        "move_index":  _fetch("^MOVE", "price"),                             # A-3 (실패 허용)
+        "soxx_change": _fetch(TICKER_MAP.get("SOXX",  "SOXX"),   "change"),
+        "qqq_change":  _fetch(TICKER_MAP.get("QQQ",   "QQQ"),    "change"),
+        "kre_change":  _fetch(TICKER_MAP.get("KRE",   "KRE"),    "change"),
+        # Priority A v1.7.0 신규
+        "iwm_change":  _fetch(TICKER_MAP.get("IWM",   "IWM"),    "change"),
+        "tlt_change":  _fetch(TICKER_MAP.get("TLT",   "TLT"),    "change"),
+        "move_index":  _fetch("^MOVE", "price"),                            # 실패 허용
     }
 
+    # MOVE 수집 실패는 경고만 (validator FAIL 제외)
+    if result.get("move_index") is None:
+        logger.warning("[YF_T2] ^MOVE 수집 실패 → None 유지 (엔진에서 중립 처리)")
 
-  def collect_spy_sma() -> dict:
+    for key, val in result.items():
+        if val is None:
+            logger.warning(f"[YF_T2] {key} 수집 실패 → None")
+        else:
+            logger.info(f"[YF_T2] {key} = {val}")
+
+    collected = sum(1 for v in result.values() if v is not None)
+    logger.info(f"[YF_T2] 수집 완료: {collected}/{len(result)}개")
+    return result
+
+
+def collect_spy_sma() -> dict:
     """
     SPY SMA 4종 수집 — Priority A v1.0.0 (2026-04-11)
     ─────────────────────────────────────────────────────
@@ -761,7 +695,6 @@ def collect_tier2_market_data() -> dict:
     목적: 기술적 추세 판단 (골든크로스/데스크로스/200선 이탈)
 
     SMA200 계산을 위해 270일치 종가 수집 (영업일 여유 포함).
-    _fetch_closes_fallback() 기존 함수 재활용.
 
     Returns:
         {
@@ -800,18 +733,4 @@ def collect_tier2_market_data() -> dict:
         f"SMA200=${result['spy_sma200']} | "
         f"above200={'Yes' if result['spy_price'] and result['spy_sma200'] and result['spy_price'] > result['spy_sma200'] else 'No'}"
     )
-    return result
-
-    # MOVE 수집 실패는 경고만 (validator FAIL 제외 대상)
-    if result.get("move_index") is None:
-        logger.warning("[YF_T2] ^MOVE 수집 실패 → None 유지 (엔진에서 중립 처리)")
-
-    for key, val in result.items():
-        if val is None:
-            logger.warning(f"[YF_T2] {key} 수집 실패 → None")
-        else:
-            logger.info(f"[YF_T2] {key} = {val}")
-
-    collected = sum(1 for v in result.values() if v is not None)
-    logger.info(f"[YF_T2] 수집 완료: {collected}/{len(result)}개")
     return result
