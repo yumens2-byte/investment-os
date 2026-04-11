@@ -16,6 +16,14 @@ v1.5.0 변경:
   - Reddit 제거 → 다중 RSS(rss_extended) 단독 감성 사용
   - 감성 통합 로직 단순화
 
+run_market.py (v1.6.0)
+=======================
+v1.6.0 (2026-04-11) — Priority A 6개 핵심 지표 추가
+  - Gold(GC=F), IWM, TLT, MOVE, US2Y(DGS2), SPY SMA50/200 수집
+  - macro_engine에 spy_sma_data 전달
+  - assemble_core_data()에 spy_sma_data 전달
+  - detect_alerts()에 spy_sma_data, fred_data 전달
+
 파이프라인:
   수집(yfinance / FRED / 다중RSS / Crypto.com / LunarCrush)
   → Macro Engine → Regime Engine → ETF Engine → Risk Engine
@@ -167,6 +175,22 @@ def run(session: str) -> dict:
     except Exception as e:
         logger.warning(f"[Step 2-T2] Tier 2 데이터 수집 실패 (영향 없음): {e}")
 
+
+    # ── Step 2-SMA: Priority A — SPY SMA50/200 수집 (v1.6.0) ──
+    spy_sma_data = {}
+    try:
+        from collectors.yahoo_finance import collect_spy_sma
+        spy_sma_data = collect_spy_sma()
+        logger.info(
+            f"[Step 2-SMA] SPY SMA 수집 완료: "
+            f"Price=${spy_sma_data.get('spy_price')} | "
+            f"SMA50=${spy_sma_data.get('spy_sma50')} | "
+            f"SMA200=${spy_sma_data.get('spy_sma200')}"
+        )
+    except Exception as e:
+        logger.warning(f"[Step 2-SMA] SPY SMA 수집 실패 (영향 없음): {e}")
+  
+
     # D-2: Put/Call Ratio 수집
     pcr_data = {}
     try:
@@ -186,6 +210,7 @@ def run(session: str) -> dict:
         etf_prices=etf_prices,       # T1-4: XLF/GLD → 금융안정 보강
         tier2_data=tier2_data,       # T2-1,2,5: Breadth/VolTerm/EM
         pcr_data=pcr_data,           # T1-5: Put/Call Ratio (D-2)
+        spy_sma_data=spy_sma_data,    # ← 신규 추가
         # T1-3: snapshot 내 sp500/nasdaq 등락률은 이미 snapshot에 포함
         # T2-3,4: fred_data 내 initial_claims/inflation_exp는 이미 fred_data에 포함
     )
@@ -358,6 +383,7 @@ def run(session: str) -> dict:
         # ── Phase 1A (v1.5.1 BUGFIX): 누락되어 있던 파라미터 추가 ──
         crypto_basis=crypto_basis_result,
         btc_sentiment=btc_sentiment_result,
+        spy_sma_data=spy_sma_data,     # ← 신규 추가
     )
     envelope = build_envelope(f"run market ({session})", data)
 
