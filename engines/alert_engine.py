@@ -674,34 +674,38 @@ def run_alert_engine(
         if pcr_sig:
             alerts.append(pcr_sig)
             logger.info(f"[AlertEngine] PCR Alert: {pcr_sig.reason}")
-            # ── v1.1.0: Priority A Alert (2026-04-11 신규) ─────────────────
-            _tier2 = tier2_data or {}
-            _fred  = fred_data or {}
-            _sma   = spy_sma_data or {}
-        
-            # A-3: MOVE Index 급등
-            move_sig = _detect_move_spike(_tier2)
-            if move_sig:
-                alerts.append(move_sig)
-                logger.info(f"[AlertEngine] MOVE Alert: {move_sig.reason}")
-        
-            # A-6: SPY 200일선 이탈 / 데스크로스
-            sma_sig = _detect_sma200_break(_sma)
-            if sma_sig:
-                alerts.append(sma_sig)
-                logger.info(f"[AlertEngine] SMA Alert: {sma_sig.reason}")
-        
-            # A-4: 스태그플레이션 공포 (SPY↓ + TLT↓)
-            stag_sig = _detect_stagflation(_tier2, snapshot)
-            if stag_sig:
-                alerts.append(stag_sig)
-                logger.info(f"[AlertEngine] Stagflation Alert: {stag_sig.reason}")
-        
-            # A-5: 금리역전 심화
-            spread_sig = _detect_yield_spread_deep(_fred)
-            if spread_sig:
-                alerts.append(spread_sig)
-                logger.info(f"[AlertEngine] Yield Spread Alert: {spread_sig.reason}")
+
+    # ── v1.1.0: Priority A Alert (2026-04-11 신규) ─────────────
+    # PCR과 독립적으로 실행 (if pcr_sig 블록 밖으로 이동)
+    _tier2 = tier2_data or {}
+    _fred  = fred_data or {}
+    _sma   = spy_sma_data or {}
+
+    # A-3: MOVE Index 급등
+    move_sig = _detect_move_spike(_tier2)
+    if move_sig:
+        alerts.append(move_sig)
+        logger.info(f"[AlertEngine] MOVE Alert: {move_sig.reason}")
+
+    # A-6: SPY 200일선 이탈 / 데스크로스
+    sma_sig = _detect_sma200_break(_sma)
+    if sma_sig:
+        alerts.append(sma_sig)
+        logger.info(f"[AlertEngine] SMA Alert: {sma_sig.reason}")
+
+    # A-4: 스태그플레이션 공포 (SPY↓ + TLT↓)
+    stag_sig = _detect_stagflation(_tier2, snapshot)
+    if stag_sig:
+        alerts.append(stag_sig)
+        logger.info(f"[AlertEngine] Stagflation Alert: {stag_sig.reason}")
+
+    # A-5: 금리역전 심화
+    spread_sig = _detect_yield_spread_deep(_fred)
+    if spread_sig:
+        alerts.append(spread_sig)
+        logger.info(f"[AlertEngine] Yield Spread Alert: {spread_sig.reason}")
+
+    # ── v1.0.0: Crypto Basis 극단 백워데이션 Alert ──────────────
 
     # ── v1.0.0: Crypto Basis 극단 백워데이션 Alert ──────────────
     if _signals:
