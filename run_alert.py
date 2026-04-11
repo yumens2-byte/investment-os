@@ -552,20 +552,20 @@ def run() -> dict:
                 logger.info(f"[run_alert] 유료 채널 레짐 전환 알람 발송")
 
             # ── B-5/B-6 유료 채널 (L2 이상만) ─────────────────
-            # B-5: ETF 랭킹 Top1 변경 (L2) → 프리미엄 전체 랭킹 + 원인
-            if (signal.alert_type == "ETF_RANK"
-                    and signal.level == "L2"
-                    and rank_change):
-                from publishers.premium_alert_formatter import format_etf_rank_premium
-                pm_text = format_etf_rank_premium(
-                    rank_change,
-                    signal_diff_result=signal_diff_result,
-                    regime=regime,
-                    risk_level=risk,
-                    trading_signal=sig_val,
-                )
-                tg_send(pm_text, channel="paid")
-                logger.info("[run_alert] 유료 채널 B-5 ETF 랭킹 프리미엄 발송")
+            # # B-5: ETF 랭킹 Top1 변경 (L2) → 프리미엄 전체 랭킹 + 원인
+            # if (signal.alert_type == "ETF_RANK"
+            #         and signal.level == "L2"
+            #         and rank_change):
+            #     from publishers.premium_alert_formatter import format_etf_rank_premium
+            #     pm_text = format_etf_rank_premium(
+            #         rank_change,
+            #         signal_diff_result=signal_diff_result,
+            #         regime=regime,
+            #         risk_level=risk,
+            #         trading_signal=sig_val,
+            #     )
+            #     tg_send(pm_text, channel="paid")
+            #     logger.info("[run_alert] 유료 채널 B-5 ETF 랭킹 프리미엄 발송")
 
             # B-6: 레짐 전환 danger/Shock (L2) → 프리미엄 Score + 전략
             if (signal.alert_type == "REGIME_CHANGE"
