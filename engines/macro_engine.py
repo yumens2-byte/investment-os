@@ -737,7 +737,7 @@ def _score_gold(snapshot: dict) -> dict:
     return {
         "gold_score":  score,
         "gold_state":  state,
-        "gold_price":  round(gold_price, 1) if gold_price is not None else None,
+        "gold_price": round(gold_price) if gold_price is not None else None,
         "gold_change": round(gold_chg, 2),
     }
 
