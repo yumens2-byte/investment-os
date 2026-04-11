@@ -161,7 +161,21 @@ def run(session: str) -> dict:
             logger.info("[Step 1-YT] 최근 영상 없음 → 스킵")
     except Exception as e:
         logger.warning(f"[Step 1-YT] 유튜버 요약 실패 (영향 없음): {e}")
-
+      
+    # ── Step 2-PrevSig: signal_diff용 이전 signals 사전 로드 ──
+    # run_regime_engine()이 regime_tracker의 last_signals를 갱신하기 전에
+    # 이전 값을 먼저 읽어두어야 Step 8-R에서 signal_diff 계산 가능
+    _prev_signals = {}
+    try:
+        from core.regime_tracker import _load as _rt_load
+        _prev_signals = _rt_load().get("last_signals", {})
+        if _prev_signals:
+            logger.info(f"[Step 2-PrevSig] 이전 signals 로드 완료: {len(_prev_signals)}개")
+        else:
+            logger.info("[Step 2-PrevSig] 이전 signals 없음 (첫 실행 또는 초기화)")
+    except Exception as e:
+        logger.warning(f"[Step 2-PrevSig] 이전 signals 로드 실패 (영향 없음): {e}")
+      
     # ── Step 2: Macro Engine ───────────────────────────────────
     # Tier 1+2 확장 (2026-04-01): fear_greed, crypto, etf_prices,
     # tier2_data를 macro_engine에 전달하여 확장 시그널 산출에 활용
@@ -435,6 +449,10 @@ def run(session: str) -> dict:
         logger.warning(f"[Step 8-DB] Supabase 적재 실패 (영향 없음): {e}")
 
     # ── Step 8-R: ETF 랭킹 변화 감지 + 텔레그램 알림 ───────────
+    # v1.6.0 재설계: format_rank_change(paid) DEPRECATED 제거
+    #   → format_etf_rank_premium() + signal_diff로 교체
+    #   → B-5(run_alert.py) 프리미엄 발송 역할 흡수
+    #   → rank_history 정상 저장 후 alert 재감지 불가 구조 수정
     try:
         from core.rank_tracker import detect_rank_change
         etf_rank = envelope.get("data", {}).get("etf_analysis", {}).get("etf_rank", {})
@@ -442,11 +460,48 @@ def run(session: str) -> dict:
             change = detect_rank_change(etf_rank, dt_utc=datetime.now(timezone.utc))
             if change:
                 from publishers.telegram_publisher import send_message, format_rank_change
-                # 무료 채널 — 핵심 변화
+
+                # ── 무료 채널: 핵심 변화 요약 (기존 유지) ─────────────
                 send_message(format_rank_change(change, channel="free"), channel="free")
-                # 유료 채널 — 상세 (1위 교체 시에만)
+                logger.info("[Step 8-R] 무료 채널 ETF 랭킹 변화 발송 완료")
+
+                # ── 유료 채널: 💎 프리미엄 랭킹 전환 리포트 ──────────
+                # Top1 교체 시에만 발송 — signal_diff 원인 분석 포함
                 if change.get("top1_changed"):
-                    send_message(format_rank_change(change, channel="paid"), channel="paid")
+                    try:
+                        from publishers.premium_alert_formatter import format_etf_rank_premium
+                        from core.signal_diff import compute_signal_diff
+
+                        # signal_diff: Step 2-PrevSig에서 사전 로드한 이전 signals 활용
+                        _signal_diff = None
+                        if _prev_signals:
+                            _signal_diff = compute_signal_diff(_prev_signals, signals)
+                            logger.info(
+                                f"[Step 8-R] signal_diff 계산 완료: "
+                                f"{_signal_diff.get('summary', 'N/A')}"
+                            )
+                        else:
+                            logger.info("[Step 8-R] signal_diff 계산 불가 (prev_signals 없음) — 원인 분석 생략")
+
+                        _regime = market_regime.get("market_regime", "—")
+                        _risk   = market_regime.get("market_risk_level", "—")
+                        _sig    = risk_result["trading_signal"]["trading_signal"]
+
+                        pm_text = format_etf_rank_premium(
+                            change,
+                            signal_diff_result=_signal_diff,
+                            regime=_regime,
+                            risk_level=_risk,
+                            trading_signal=_sig,
+                        )
+                        send_message(pm_text, channel="paid")
+                        logger.info(
+                            f"[Step 8-R] 💎 프리미엄 ETF 랭킹 리포트 발송 완료 "
+                            f"({change.get('old_top1')}→{change.get('new_top1')})"
+                        )
+                    except Exception as pm_e:
+                        logger.warning(f"[Step 8-R] 💎 프리미엄 발송 실패 (영향 없음): {pm_e}")
+
                 logger.info("[Step 8-R] ETF 랭킹 변화 알림 발송 완료")
     except Exception as e:
         logger.warning(f"[Step 8-R] 랭킹 변화 감지 실패 (영향 없음): {e}")
