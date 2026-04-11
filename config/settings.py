@@ -114,6 +114,35 @@ NASDAQ_REL_VALUE_THRESHOLD = -0.5    # NASDAQ-SP500 < -0.5% → Value 선호
 # 2023 SVB 사태 시 KRE가 XLF 대비 대폭 하락한 패턴
 BANK_STRESS_THRESHOLD = -1.5         # KRE-XLF < -1.5% → 은행 스트레스
 
+# ─── Priority A 확장 시그널 임계값 (2026-04-11 추가) ──────
+# [A-1] Gold 안전자산 시그널
+GOLD_SAFE_HAVEN_STRONG = 1.5    # gold_change > 1.5% → 강한 안전자산 수요
+GOLD_SAFE_HAVEN_MILD   = 0.5    # gold_change > 0.5% → 소폭 수요
+GOLD_RISK_ON_THRESHOLD = -1.0   # gold_change < -1.0% → 리스크온 (금 매도)
+
+# [A-2] Small Cap Relative Strength (IWM - SPY 등락률 차이, %p)
+SMALL_CAP_RISK_ON_THR      =  1.5   # IWM - SPY > +1.5%p → 리스크ON
+SMALL_CAP_RISK_OFF_THR     = -1.5   # IWM - SPY < -1.5%p → 리스크OFF
+SMALL_CAP_RISK_OFF_EXTREME = -3.0   # IWM - SPY < -3.0%p → 극단 리스크OFF
+
+# [A-3] MOVE Index (ICE 채권 변동성)
+MOVE_CALM     = 80.0    # < 80  : 채권 시장 안정
+MOVE_ELEVATED = 110.0   # 80~110: 긴장 경계
+MOVE_STRESSED = 140.0   # > 140 : 채권 위기 → Alert L1
+
+# [A-4] Stagflation Signal (SPY + TLT 동반 하락)
+STAGFLATION_SPY_THR = -1.0   # SPY < -1.0% 동시 조건
+STAGFLATION_TLT_THR = -1.0   # TLT < -1.0% 동시 조건 → L2 Alert
+
+# [A-5] Yield Spread (bp 기준, 10Y - 2Y)
+YIELD_SPREAD_NORMAL_BP = 50.0    # > +50bp : 정상 스티프
+YIELD_SPREAD_FLAT_BP   =  0.0    # 0 ~ +50 : 평탄화 경계
+YIELD_SPREAD_DEEP_BP   = -50.0   # < -50bp : 심화 역전 → L1 Alert
+
+# [A-6] SPY SMA 기간 설정
+SPY_SMA_DAYS_SHORT  = 22    # SMA5/20용 (기존 1mo ≈ 22 영업일)
+SPY_SMA_DAYS_LONG   = 270   # SMA50/200용 (1년치 여유분)
+
 # ─── ETF Universe ─────────────────────────────────────────
 ETF_CORE = ["QQQM", "XLK", "SPYM", "XLE", "ITA", "TLT"]
 ETF_SIGNAL = ["XLF", "GLD"]
@@ -143,6 +172,10 @@ TICKER_MAP = {
     # ── Tier 3 확장 (2026-04-01 추가) ──
     "SOXX":  "SOXX",       # T3-1: iShares Semiconductor (AI Momentum)
     "KRE":   "KRE",        # T3-3: SPDR Regional Banking (Banking Stress)
+    # ── Priority A 확장 (2026-04-11 추가) ──────────────────
+    "IWM":  "IWM",      # Russell 2000 ETF
+    "GOLD": "GC=F",     # Gold Futures (현물 대리)
+    # MOVE: ^MOVE는 직접 fetch (수집 불안정으로 TICKER_MAP 제외)
 }
 
 # FRED 시리즈 ID
@@ -154,6 +187,8 @@ FRED_SERIES = {
     # ── Tier 2 확장 (2026-04-01 추가) ──
     "initial_claims": "ICSA",        # T2-3: 주간 신규 실업수당 청구건수 (천 명)
     "inflation_exp":  "T5YIFR",      # T2-4: 5년 기대 인플레이션율 (%)
+    # ── Priority A 확장 (2026-04-11 추가) ──────────────────
+    "us2y": "DGS2",     # 2-Year Treasury Constant Maturity Rate
 }
 
 # ─── 다중 RSS 소스 설정 (Reddit 대체) ──────────────────────
