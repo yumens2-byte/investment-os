@@ -183,6 +183,7 @@ def run() -> dict:
     # ── Step 2-B5: ETF 랭킹 변화 감지 (B-5, 2026-04-01 추가) ──
     rank_change = None
     signal_diff_result = None
+    signals_for_alert  = {}   # v1.0.0: PCR/Basis Alert용 signals
     try:
         from core.rank_tracker import detect_rank_change
         from core.signal_diff import compute_signal_diff
@@ -193,6 +194,7 @@ def run() -> dict:
         _data = _cd.get("data", {})
         new_rank = _data.get("etf_analysis", {}).get("etf_rank", {})
         new_signals = _data.get("signals", {})
+        signals_for_alert = new_signals  # PCR/Basis Alert에 전달
 
         if new_rank:
             rank_change = detect_rank_change(new_rank)
@@ -262,6 +264,7 @@ def run() -> dict:
         regime_change=regime_change,
         signal_diff_result=signal_diff_result,
         score_diff_result=score_diff_result,
+        signals=signals_for_alert,          # v1.0.0: PCR/Basis Alert
     )
 
     if not alerts:
