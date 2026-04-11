@@ -3,6 +3,11 @@ publishers/x_formatter.py
 JSON Core Data → X 트윗 텍스트 변환.
 출력 형식은 project-summary.html 기준.
 
+v1.4.0 (2026-04-11): format_image_tweet에 crypto_basis·btc_sentiment·PCR 직접 출력
+  - signals_line 1줄 추가: ₿ Basis: Contango · 소셜 72 · PCR 0.88 Normal
+  - 전 세션(morning/close/intraday/full) 적용
+  - 값 없거나 Unknown이면 라인 생략 (graceful)
+
 v1.3.0 (2026-04-11): AI 트윗/스레드 프롬프트에 미사용 신호 추가
   - generate_ai_tweet(): crypto_basis_state, pcr_state 프롬프트 입력 추가
   - generate_ai_thread(): crypto_basis_state, pcr_state, breadth_state 추가
@@ -28,7 +33,7 @@ from config.settings import X_MAX_TWEET_LENGTH, X_HASHTAGS
 
 logger = logging.getLogger(__name__)
 
-VERSION = "1.3.0"
+VERSION = "1.4.0"
 
 
 # ──────────────────────────────────────────────────────────────
@@ -345,12 +350,15 @@ def format_image_tweet(data: dict, session: str = "morning") -> str:
     이미지 첨부 시 간결한 트윗 텍스트 생성 (60~80자).
     이미지가 상세 정보를 담으므로 텍스트는 핵심만.
 
+    v1.4.0: signals_line 추가 — Basis · 소셜감성 · PCR 직접 표시
+
     Returns: 트윗 텍스트 (280자 이내)
     """
     snap        = data.get("market_snapshot", {})
     regime      = data.get("market_regime", {})
     signal_data = data.get("trading_signal", {})
     helpers     = data.get("output_helpers", {})
+    signals     = data.get("signals", {})          # v1.4.0
 
     regime_name = regime.get("market_regime", "")
     risk_level  = regime.get("market_risk_level", "")
@@ -391,12 +399,34 @@ def format_image_tweet(data: dict, session: str = "morning") -> str:
             chg_str  = f" ({fg_chg:+d})" if fg_chg else ""
             fg_line  = f"{fg_emoji} F&G: {fg_val}/100 {fg_lbl}{chg_str}"
 
+    # ── v1.4.0: Crypto Basis · BTC 소셜감성 · PCR 직접 표시 ──────
+    signals_line = ""
+    _basis_state = signals.get("crypto_basis_state", "") or ""
+    _btc_sent    = signals.get("btc_social_sentiment")
+    _pcr_val     = signals.get("pcr_value", 0) or 0
+    _pcr_state   = signals.get("pcr_state", "") or ""
+
+    _parts = []
+    if _basis_state and _basis_state not in ("Unknown", ""):
+        _basis_short = "Con↑" if "Contango" in _basis_state else ("Back↓" if "Backwardation" in _basis_state else _basis_state[:4])
+        _parts.append(f"Basis {_basis_short}")
+    if _btc_sent is not None:
+        _sent_emoji = "🔥" if _btc_sent >= 70 else ("❄️" if _btc_sent <= 30 else "")
+        _parts.append(f"소셜 {_btc_sent:.0f}{_sent_emoji}")
+    if _pcr_val > 0 and _pcr_state and _pcr_state not in ("Unknown", "—"):
+        _parts.append(f"PCR {_pcr_val:.2f}")
+    if _parts:
+        signals_line = f"₿ {' · '.join(_parts)}"
+    # ──────────────────────────────────────────────────────────────
+
     # 해시태그 랜덤 생성 (고정 패턴 제거)
     tags = _random_hashtags(regime=regime_name, session=session)
 
     body = f"{line1}\n\n{line2}\n{line3}"
     if fg_line:
         body += f"\n{fg_line}"
+    if signals_line:                                # v1.4.0
+        body += f"\n{signals_line}"
     if line4:
         body += f"\n{line4}"
     tweet = f"{body}\n\n{tags}"
