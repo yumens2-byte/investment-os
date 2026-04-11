@@ -622,7 +622,8 @@ def collect_crypto_prices() -> dict:
 def _fetch_price_and_change(ticker: str):
     """yfinance fallback 방식으로 가격 + 24h 등락률 수집"""
     import requests as req
-    url = f"https://query1.finance.yahoo.com/v8/finance/chart/{ticker}?interval=1d&range=2d"
+    # range=5d: 주말/공휴일 연휴에도 2개 이상 거래일 데이터 보장
+    url = f"https://query1.finance.yahoo.com/v8/finance/chart/{ticker}?interval=1d&range=5d"
     headers = {"User-Agent": "Mozilla/5.0"}
     try:
         r = req.get(url, headers=headers, timeout=10)
