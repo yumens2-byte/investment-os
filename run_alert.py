@@ -101,15 +101,10 @@ def run() -> dict:
         should_run, reason = _is_alert_window()
         if not should_run:
             logger.info(f"[run_alert] 시간 윈도우 아님 — 스킵: {reason}")
-            return {
-                "alerts_detected": 0,
-                "alerts_sent": 0,
-                "reason": "outside_alert_window",
-                "detail": reason,
-            }
-        logger.info(f"[run_alert] 시간 윈도우 통과: {reason}")  # ← 4칸 추가
+            return { ... }
+        logger.info(f"[run_alert] 시간 윈도우 통과: {reason}")  # ← else 안에만 있어야 함
 
-    logger.info(f"[run_alert] 시간 윈도우 통과: {reason}")
+    # ← 여기에 아무것도 없어야 함
 
     # ── Step 0: DLQ 재처리 (B-17) ────────────────────────────
     try:
