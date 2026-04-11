@@ -66,6 +66,12 @@ PCR_EXTREME_GREED = 0.5   # PCR < 0.5 → 극단 탐욕 (콜 폭증)  → L1
 
 # ── v1.0.0 신규: Crypto Basis 임계값 ─────────────────────────
 CRYPTO_BASIS_BACKWARDATION = -1.0   # basis_spread < -1.0% → 극단 백워데이션 → L1
+# ── v1.1.0: Priority A 임계값 import ──────────────────────
+from config.settings import (
+    MOVE_STRESSED,
+    STAGFLATION_SPY_THR, STAGFLATION_TLT_THR,
+    YIELD_SPREAD_DEEP_BP,
+)
 
 
 @dataclass
@@ -546,6 +552,135 @@ def _crypto_basis_alert(signals: dict, snapshot: dict) -> Optional[AlertSignal]:
             avoid_etfs=[],
         )
 
+    return None
+
+# ──────────────────────────────────────────────────────────────
+# v1.1.0: Priority A Alert 감지 함수 (2026-04-11 신규)
+# ──────────────────────────────────────────────────────────────
+
+def _detect_move_spike(tier2_data: dict) -> Optional[AlertSignal]:
+    """
+    [A-3] MOVE Index 급등 Alert
+    MOVE > 140 → 채권 변동성 위기 수준 → L1
+    """
+    move = tier2_data.get("move_index") if tier2_data else None
+    if move is None:
+        return None
+    if move >= MOVE_STRESSED:
+        return AlertSignal(
+            alert_type="MOVE_SPIKE",
+            level="L1",
+            reason=(
+                f"MOVE Index {move:.1f} — 채권 변동성 위기 수준 "
+                f"(임계값 {MOVE_STRESSED}). 금리 불확실성 급등"
+            ),
+            snapshot={},
+            etf_hints=["TLT", "SPYM"],
+            avoid_etfs=["QQQM", "XLK"],
+        )
+    return None
+
+
+def _detect_sma200_break(spy_sma_data: dict) -> Optional[AlertSignal]:
+    """
+    [A-6] SPY SMA200 이탈 / 데스크로스 Alert
+    SMA50 < SMA200 (데스크로스) → L2
+    가격 < SMA200 (200선 이탈) → L1
+    """
+    if not spy_sma_data:
+        return None
+    price  = spy_sma_data.get("spy_price")
+    sma50  = spy_sma_data.get("spy_sma50")
+    sma200 = spy_sma_data.get("spy_sma200")
+    if not all([price, sma50, sma200]):
+        return None
+
+    death_cross = sma50 < sma200
+    below_200   = price < sma200
+    pct         = round((price - sma200) / sma200 * 100, 2)
+
+    if death_cross and below_200:
+        return AlertSignal(
+            alert_type="SMA200_BREAK",
+            level="L2",
+            reason=(
+                f"SPY 데스크로스 + 200일선 이탈 "
+                f"(${price} | SMA200 ${sma200} | {pct:+.1f}%) "
+                f"— 기술적 약세장 진입 신호"
+            ),
+            snapshot={},
+            etf_hints=["TLT", "SPYM"],
+            avoid_etfs=["QQQM", "XLK"],
+        )
+    elif below_200:
+        return AlertSignal(
+            alert_type="SMA200_BREAK",
+            level="L1",
+            reason=(
+                f"SPY 200일선 이탈 "
+                f"(${price} | SMA200 ${sma200} | {pct:+.1f}%) "
+                f"— 추세 전환 경고"
+            ),
+            snapshot={},
+            etf_hints=["TLT", "SPYM"],
+            avoid_etfs=["QQQM", "XLK"],
+        )
+    return None
+
+
+def _detect_stagflation(tier2_data: dict, snapshot: dict) -> Optional[AlertSignal]:
+    """
+    [A-4] 스태그플레이션 공포 Alert
+    SPY < -1.0% AND TLT < -1.0% 동반 하락 → L2
+    (주식·채권 동반 약세 = 금리 상승 + 경기 둔화)
+    """
+    tlt_chg = (tier2_data or {}).get("tlt_change")
+    spy_chg = (snapshot or {}).get("sp500")
+
+    if tlt_chg is None or spy_chg is None:
+        return None
+
+    if spy_chg < STAGFLATION_SPY_THR and tlt_chg < STAGFLATION_TLT_THR:
+        return AlertSignal(
+            alert_type="STAGFLATION",
+            level="L2",
+            reason=(
+                f"스태그플레이션 공포 — "
+                f"SPY {spy_chg:+.2f}% + TLT {tlt_chg:+.2f}% 동반 하락 "
+                f"(금리 상승 + 경기 둔화 동시 신호)"
+            ),
+            snapshot=snapshot or {},
+            etf_hints=["XLE", "ITA"],
+            avoid_etfs=["QQQM", "TLT"],
+        )
+    return None
+
+
+def _detect_yield_spread_deep(fred_data: dict) -> Optional[AlertSignal]:
+    """
+    [A-5] 금리역전 심화 Alert
+    10Y-2Y 스프레드 < -50bp → L1
+    경기침체 선행 지표
+    """
+    spread_bp = (fred_data or {}).get("spread_2y10y_bp")
+    if spread_bp is None:
+        return None
+
+    if spread_bp < YIELD_SPREAD_DEEP_BP:
+        us2y = (fred_data or {}).get("us2y")
+        us2y_str = f" | 2Y {us2y:.2f}%" if us2y else ""
+        return AlertSignal(
+            alert_type="YIELD_SPREAD_DEEP",
+            level="L1",
+            reason=(
+                f"금리역전 심화 — 10Y-2Y {spread_bp:.1f}bp"
+                f"{us2y_str} "
+                f"(임계값 {YIELD_SPREAD_DEEP_BP}bp)"
+            ),
+            snapshot={},
+            etf_hints=["TLT", "SPYM"],
+            avoid_etfs=[],
+        )
     return None
 
 
