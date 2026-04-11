@@ -415,7 +415,7 @@ jobs:
     env:
       ALERT_TZ: America/New_York
       ALERT_WINDOWS: "09:30,10:30,15:30"
-      ALERT_GRACE_MINUTES: "5"
+      ALERT_GRACE_MINUTES: "12"
       TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
       TELEGRAM_FREE_CHANNEL_ID: ${{ secrets.TELEGRAM_FREE_CHANNEL_ID }}
       FRED_API_KEY: ${{ secrets.FRED_API_KEY }}
@@ -436,11 +436,11 @@ jobs:
           cache: pip
 
       # Alert 발생시간 램덤 하게 동작하기 위함
-      - name: Anti-bot random delay
-        run: |
-          DELAY=$((RANDOM % 100))
-          echo "⏱️ Random delay: ${DELAY}s ($((DELAY/60))m $((DELAY%60))s)"
-          sleep $DELAY    
+      # - name: Anti-bot random delay
+      #   run: |
+      #     DELAY=$((RANDOM % 100))
+      #     echo "⏱️ Random delay: ${DELAY}s ($((DELAY/60))m $((DELAY%60))s)"
+      #     sleep $DELAY    
 
       # Alert 이력 캐시 복원 (등급 변화 감지 핵심)
       - name: Restore alert history cache
@@ -451,7 +451,6 @@ jobs:
           restore-keys: alert-history-
 
       - run: pip install -r requirements.txt
-      - run: playwright install chromium --with-deps
       - run: python main.py alert
 
       # Alert 이력 캐시 저장 (다음 실행 시 복원)
