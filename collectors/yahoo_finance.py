@@ -180,6 +180,9 @@ def collect_market_snapshot() -> dict:
     # ── v1.7.0: Gold 추가 ──────────────────────────────────
     gold       = _fetch(TICKER_MAP.get("GOLD", "GC=F"), "price")
     gold_chg   = _fetch(TICKER_MAP.get("GOLD", "GC=F"), "change")
+    # ── 금 가격 정수 보정 (소수점 불필요, 4761.8999 → 4762) ──
+    if gold is not None:
+        gold = round(gold)
 
     if us10y is not None and us10y > 20:
         us10y = us10y / 10
