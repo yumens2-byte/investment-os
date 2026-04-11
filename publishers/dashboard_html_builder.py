@@ -2,6 +2,11 @@
 publishers/dashboard_html_builder.py
 ======================================
 HTML/Playwright 기반 대시보드 이미지 생성기
+v3.1.0 — 미사용 데이터 활용 (3순위): full 세션 대시보드 신규 지표 추가
+  - Crypto 섹션: BTC Basis State + BTC 소셜 감성(LunarCrush) 표시
+  - FRED Macro 섹션: Initial Claims + Inflation Exp 5Y 행 추가
+  - Market Signals 패널: PCR + Tier2/3 핵심 6종 상태값 그리드 신설
+
 v3.0.0 — F-2: 전 세션 HTML 통일 (morning/close/intraday/full/weekly)
 
 데이터 소스: core_data.json["data"] 필드만 사용
@@ -18,7 +23,7 @@ from typing import Optional
 
 logger = logging.getLogger(__name__)
 
-VERSION = "v3.0.0"
+VERSION = "v3.1.0"
 
 REGIME_COLOR = {
     "Risk-On": "#22ee88", "Risk-Off": "#ff4466", "Oil Shock": "#ffbb00",
@@ -66,6 +71,7 @@ def _build_full_html(data: dict, dt_utc: datetime, session_label: str = "Full <e
     fg      = data.get("fear_greed", {})
     crypto  = data.get("crypto", {})
     macro   = data.get("macro_data", {})
+    signals = data.get("signals", {})
 
     sp500_chg  = snap.get("sp500", 0) or 0
     nasdaq_chg = snap.get("nasdaq", 0) or 0
@@ -94,10 +100,58 @@ def _build_full_html(data: dict, dt_utc: datetime, session_label: str = "Full <e
     yield_curve = macro.get("yield_curve")
     curve_inverted = macro.get("yield_curve_inverted", False)
 
+    # ── v3.1.0: 신규 지표 추출 ────────────────────────────────
+    # Phase 1A: Crypto Basis + BTC Social Sentiment
+    crypto_basis_state  = signals.get("crypto_basis_state", "") or ""
+    crypto_basis_spread = signals.get("crypto_basis_spread")
+    btc_sentiment_val   = signals.get("btc_social_sentiment")
+    btc_sentiment_state = signals.get("btc_sentiment_state", "") or ""
+
+    # FRED 확장: Initial Claims + Inflation Expectations
+    initial_claims = macro.get("initial_claims")
+    inflation_exp  = macro.get("inflation_exp")
+
+    # Market Signals 패널: PCR + Tier2/3 핵심 6종
+    pcr_value           = signals.get("pcr_value", 0) or 0
+    pcr_state           = signals.get("pcr_state", "—") or "—"
+    breadth_state       = signals.get("breadth_state", "—") or "—"
+    vol_term_state      = signals.get("vol_term_state", "—") or "—"
+    em_stress_state     = signals.get("em_stress_state", "—") or "—"
+    ai_momentum_state   = signals.get("ai_momentum_state", "—") or "—"
+    banking_stress_state = signals.get("banking_stress_state", "—") or "—"
+
     def _fmt_fred(v):
         if v is None: return "—"
         try: return f"{float(v):.2f}%"
         except (ValueError, TypeError): return str(v)
+
+    def _fmt_claims(v):
+        """Initial Claims: K 단위 포맷 + 색상"""
+        if v is None: return ""
+        try:
+            val = float(v)
+            c = "#ff4466" if val > 260 else ("#ffbb33" if val > 220 else "#33ff99")
+            return (
+                f'<div class="fd"><div class="fdn">Initial Claims</div>'
+                f'<div class="fdv" style="color:{c}">{val:,.0f}K</div>'
+                f'<div class="dot" style="background:{c};box-shadow:0 0 4px {c}88"></div></div>'
+            )
+        except (ValueError, TypeError):
+            return ""
+
+    def _fmt_inflation_exp(v):
+        """기대인플레 5Y: % 포맷 + 색상"""
+        if v is None: return ""
+        try:
+            val = float(v)
+            c = "#ff4466" if val >= 2.5 else ("#ffbb33" if val >= 2.0 else "#33ff99")
+            return (
+                f'<div class="fd"><div class="fdn">Inflation Exp 5Y</div>'
+                f'<div class="fdv" style="color:{c}">{val:.2f}%</div>'
+                f'<div class="dot" style="background:{c};box-shadow:0 0 4px {c}88"></div></div>'
+            )
+        except (ValueError, TypeError):
+            return ""
 
     yc_color = "#ff4466" if curve_inverted else "#33ff99"
 
@@ -130,6 +184,66 @@ def _build_full_html(data: dict, dt_utc: datetime, session_label: str = "Full <e
         ("Inflation", ms.get("inflation_score",0)), ("Liquidity", ms.get("liquidity_score",0)),
         ("Commodity", ms.get("commodity_pressure_score",0)), ("Stability", ms.get("financial_stability_score",0)),
     ]
+
+    def _crypto_signal_row():
+        """BTC Basis + 소셜 감성 한 줄 (값 있을 때만 렌더)"""
+        parts = []
+        if crypto_basis_state and crypto_basis_state not in ("Unknown", ""):
+            bc = ("#33ff99" if "Contango" in crypto_basis_state
+                  else "#ff4466" if "Backwardation" in crypto_basis_state
+                  else "#ffee44")
+            spread_str = f" ({crypto_basis_spread:+.3f}%)" if crypto_basis_spread is not None else ""
+            parts.append(
+                f'<span style="color:{bc};font-size:9px;font-family:\'IBM Plex Mono\',monospace">'
+                f'Basis: {crypto_basis_state}{spread_str}</span>'
+            )
+        if btc_sentiment_val is not None:
+            sc = ("#33ff99" if btc_sentiment_val >= 70
+                  else "#ff4466" if btc_sentiment_val <= 30
+                  else "#ffee44")
+            parts.append(
+                f'<span style="color:{sc};font-size:9px;font-family:\'IBM Plex Mono\',monospace">'
+                f'소셜 {btc_sentiment_val:.0f}/100</span>'
+            )
+        if not parts:
+            return ""
+        return (
+            f'<div class="cr" style="flex-wrap:wrap;gap:6px;padding:2px 6px;'
+            f'background:rgba(255,187,51,.05);border-color:#ffbb3344">'
+            f'{"  ·  ".join(parts)}</div>'
+        )
+
+    def _signal_panel():
+        """Market Signals 패널: PCR + Tier2/3 6종 2열 그리드"""
+        def _state_color(state: str) -> str:
+            _green = {"low", "contango", "strong", "normal", "bullish",
+                      "stable", "no stress", "no data"}
+            _red   = {"high", "backwardation", "weak", "stress",
+                      "bearish", "crisis", "extreme fear", "extreme greed"}
+            s = state.lower()
+            if any(k in s for k in _green): return "#33ff99"
+            if any(k in s for k in _red):   return "#ff4466"
+            return "#ffee44"
+
+        pcr_label = f"{pcr_value:.2f}" if pcr_value else "—"
+        items = [
+            ("PCR",     f"{pcr_state}  {pcr_label}"),
+            ("Breadth", breadth_state),
+            ("VolTerm", vol_term_state),
+            ("EM",      em_stress_state),
+            ("AI Mom",  ai_momentum_state),
+            ("Banking", banking_stress_state),
+        ]
+        rows = []
+        for lbl, st in items:
+            c = _state_color(st)
+            rows.append(
+                f'<div class="sgi">'
+                f'<div class="sgl">{lbl}</div>'
+                f'<div class="sgv" style="color:{c}">{st}</div>'
+                f'</div>'
+            )
+        return f'<div class="sg">{"".join(rows)}</div>'
 
     def _etf_rows():
         r = []
@@ -227,6 +341,10 @@ body{{width:1080px;overflow:hidden;background:#070b11;font-family:'Barlow',sans-
 .pi{{background:rgba(255,255,255,.035);border:1px solid #1e3048;border-radius:3px;padding:2px 5px;}}
 .pl{{font-family:'IBM Plex Mono',monospace;font-size:9px;font-weight:600;color:#99bbdd;}}
 .pv{{font-family:'IBM Plex Mono',monospace;font-size:10px;font-weight:700;}}
+.sg{{display:grid;grid-template-columns:1fr 1fr;gap:2px;}}
+.sgi{{background:rgba(255,255,255,.03);border:1px solid #1e3048;border-radius:3px;padding:2px 5px;}}
+.sgl{{font-family:'IBM Plex Mono',monospace;font-size:8px;color:#99bbdd;}}
+.sgv{{font-family:'IBM Plex Mono',monospace;font-size:10px;font-weight:700;}}
 .er{{display:flex;align-items:center;padding:2px 5px;background:rgba(255,255,255,.03);border:1px solid #1e3048;border-radius:3px;margin-bottom:1px;}}
 .et{{font-family:'IBM Plex Mono',monospace;font-size:12px;font-weight:800;color:#eef6ff;width:38px;}}
 .em{{display:flex;flex-direction:column;width:72px;}}
@@ -268,10 +386,13 @@ body{{width:1080px;overflow:hidden;background:#070b11;font-family:'Barlow',sans-
     <div class="fd"><div class="fdn">Fed Funds Rate</div><div class="fdv" style="color:#99bbdd">{_fmt_fred(fed_rate)}</div><div class="dot" style="background:#99bbdd;box-shadow:0 0 4px #99bbdd88"></div></div>
     <div class="fd"><div class="fdn">HY Spread</div><div class="fdv" style="color:#99bbdd">{_fmt_fred(hy_spread)}</div><div class="dot" style="background:#99bbdd;box-shadow:0 0 4px #99bbdd88"></div></div>
     <div class="fd"><div class="fdn">Yield Curve</div><div class="fdv" style="color:{yc_color}">{_fmt_fred(yield_curve)}</div><div class="dot" style="background:{yc_color};box-shadow:0 0 4px {yc_color}88"></div></div>
+    {_fmt_claims(initial_claims)}
+    {_fmt_inflation_exp(inflation_exp)}
   </div>
   <div class="s"><div class="sl">Crypto</div>
     <div class="cr"><div class="cn">BTC</div><div class="cv">${btc_usd:,.0f}</div><div class="cc" style="color:{_dn_up(btc_chg)}">{_sign(btc_chg)}</div></div>
     <div class="cr"><div class="cn">ETH</div><div class="cv">${eth_usd:,.0f}</div><div class="cc" style="color:{_dn_up(eth_chg)}">{_sign(eth_chg)}</div></div>
+    {_crypto_signal_row()}
   </div>
 </div>
 <div class="col">
@@ -309,6 +430,7 @@ body{{width:1080px;overflow:hidden;background:#070b11;font-family:'Barlow',sans-
 </div>
 <div class="col">
   <div class="s"><div class="sl">ETF Strategy · Signal · Allocation</div>{_etf_rows()}</div>
+  <div class="s"><div class="sl">Market Signals</div>{_signal_panel()}</div>
   <div class="s"><div class="sl">Market Brief</div><div class="br">{brief_text}</div></div>
 </div>
 </div>
