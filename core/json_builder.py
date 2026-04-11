@@ -18,7 +18,8 @@ from config.settings import (
 
 logger = logging.getLogger(__name__)
 
-VERSION = "1.1.0"
+# 변경
+VERSION = "1.2.0"
 
 
 def build_envelope(command: str, data: dict) -> dict:
