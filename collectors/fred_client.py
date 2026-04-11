@@ -43,7 +43,7 @@ import logging
 from typing import Optional
 from config.settings import FRED_API_KEY, FRED_SERIES
 
-VERSION = "1.1.0"
+VERSION = "1.2.0"
 
 logger = logging.getLogger(__name__)
 
@@ -138,6 +138,18 @@ def collect_macro_data() -> dict:
     #   - 일간 업데이트
     #   - 수집 실패 시 None → macro_engine에서 중립 처리
     inflation_exp = _fetch_latest(FRED_SERIES.get("inflation_exp", "T5YIFR"))
+
+
+    # ── Priority A: 2Y Treasury Yield (DGS2) ────────────────
+    # 단기 금리 직접값 + 장단기 스프레드 수치 계산
+    # FRED DGS2는 전일 기준 (lag 1일) — 실시간 불필요, 방향성 판단용
+    us2y = _fetch_latest(FRED_SERIES.get("us2y", "DGS2"))
+    if us2y is not None:
+        logger.info(f"[FRED] 2Y Treasury Yield: {us2y:.3f}%")
+    else:
+        logger.warning("[FRED] DGS2 수집 실패 → None (엔진에서 중립 처리)")
+  
+  
     if inflation_exp is not None:
         logger.info(f"[FRED] 기대 인플레이션: {inflation_exp:.2f}%")
     else:
@@ -155,12 +167,25 @@ def collect_macro_data() -> dict:
         "yield_curve_inverted": (yield_curve is not None and yield_curve < 0),
         "initial_claims": initial_claims,
         "inflation_exp": inflation_exp,
+        "us2y":          us2y,           # Priority A: 2Y Treasury Yield
+  
+        # ── Priority A: 10Y-2Y 스프레드 bp 계산 ─────────────────
+        # yield_curve (T10Y2Y) 이미 수집됨 — 10Y-2Y 기준
+        # bp 단위로 별도 저장하여 콘텐츠/시그널에서 활용
+        if data.get("yield_curve") is not None:
+            data["spread_2y10y_bp"] = round(data["yield_curve"] * 100, 1)
+        elif data.get("us2y") is not None:
+            # T10Y2Y 실패 시 us10y - us2y 직접 계산 (run_market에서 snapshot의 us10y 활용 불가 → None)
+            data["spread_2y10y_bp"] = None
+        else:
+            data["spread_2y10y_bp"] = None
     }
 
     logger.info(
         f"[FRED] 수집 완료: 기준금리 {_fmt_pct(fed_rate)} | "
         f"HY 스프레드 {_fmt_pct(hy_spread)} | "
         f"수익률 곡선 {_fmt_pct(yield_curve)} | "
+        f"2Y금리 {_fmt_pct(us2y)} | "        # 신규
         f"실업수당 {_fmt_int_k(initial_claims)} | "
         f"기대인플레 {_fmt_pct(inflation_exp)}"
     )
