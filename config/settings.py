@@ -146,6 +146,33 @@ YIELD_SPREAD_DEEP_BP   = -50.0   # < -50bp : 심화 역전 → L1 Alert
 SPY_SMA_DAYS_SHORT  = 22    # SMA5/20용 (기존 1mo ≈ 22 영업일)
 SPY_SMA_DAYS_LONG   = 270   # SMA50/200용 (1년치 여유분)
 
+# ─── Priority B 확장 시그널 임계값 (2026-04-11 추가) ──────
+# [B-1] CPI YoY 기준 (%)
+CPI_HOT       = 3.5    # YoY > 3.5% → Hot (연준 긴축 압박)
+CPI_ELEVATED  = 2.5    # YoY > 2.5% → Elevated
+CPI_COOL      = 1.5    # YoY < 1.5% → Cool (디스인플레이션)
+
+# [B-2] NFP MoM 기준 (천 명)
+NFP_STRONG    = 200    # +200K 이상 → 강한 고용
+NFP_MODERATE  = 50     # +50K 이상  → 보통
+NFP_WEAK      = 0      # 0 미만      → 고용 감소 (위험)
+
+# [B-3] 섹터 로테이션 기준 (방어 vs 경기민감 등락률 차이 %p)
+SECTOR_DEFENSIVE_THR = 1.0    # 방어주 > 경기민감 1%p 이상 → 방어 로테이션
+SECTOR_CYCLICAL_THR  = 1.0    # 경기민감 > 방어주 1%p 이상 → 공격 로테이션
+
+# [B-4] Copper/Gold Ratio 변화율 기준 (5일 변화율 %)
+COPPER_GOLD_OPTIMISM  =  2.0  # +2% 이상 → 경기 낙관
+COPPER_GOLD_PESSIMISM = -2.0  # -2% 이하 → 경기 비관
+
+# [B-7] 연준 자산 주간 변화 기준 (10억 달러 단위)
+FED_BS_QE_THR = 30.0   # +300억 이상 → QE Active (유동성 확장)
+FED_BS_QT_THR = -30.0  # -300억 이하 → QT Active (유동성 축소)
+
+# [B-8] SOFR 스트레스 기준 (SOFR - Fed Funds Rate 차이 %p)
+SOFR_STRESS_THR  = 0.5   # 차이 > 0.5%p → 단기자금 스트레스
+SOFR_TENSION_THR = 0.2   # 차이 > 0.2%p → 긴장 경계
+
 # ─── ETF Universe ─────────────────────────────────────────
 ETF_CORE = ["QQQM", "XLK", "SPYM", "XLE", "ITA", "TLT"]
 ETF_SIGNAL = ["XLF", "GLD"]
@@ -179,6 +206,14 @@ TICKER_MAP = {
     "IWM":  "IWM",      # Russell 2000 ETF
     "GOLD": "GC=F",     # Gold Futures (현물 대리)
     # MOVE: ^MOVE는 직접 fetch (수집 불안정으로 TICKER_MAP 제외)
+    # ── Priority B 확장 (2026-04-11 추가) ──────────────────
+    "COPPER": "HG=F",   # B-4: 구리 선물 (닥터 코퍼)
+    "XLV":  "XLV",      # B-3: 헬스케어
+    "XLU":  "XLU",      # B-3: 유틸리티
+    "XLI":  "XLI",      # B-3: 산업재
+    "XLP":  "XLP",      # B-3: 필수소비재
+    "XLRE": "XLRE",     # B-3: 리츠
+    "XLB":  "XLB",      # B-3: 소재
 }
 
 # FRED 시리즈 ID
@@ -192,6 +227,13 @@ FRED_SERIES = {
     "inflation_exp":  "T5YIFR",      # T2-4: 5년 기대 인플레이션율 (%)
     # ── Priority A 확장 (2026-04-11 추가) ──────────────────
     "us2y": "DGS2",     # 2-Year Treasury Constant Maturity Rate
+    # ── Priority B 확장 (2026-04-11 추가) ──────────────────
+    "cpi":               "CPIAUCSL",   # B-1: 소비자물가지수
+    "core_cpi":          "CPILFESL",   # B-1: 근원 CPI (식품·에너지 제외)
+    "nfp":               "PAYEMS",     # B-2: 비농업부문 고용 (천 명)
+    "unemployment":      "UNRATE",     # B-2: 실업률 (%)
+    "fed_balance_sheet": "WALCL",      # B-7: 연준 총자산 (백만 달러)
+    "sofr":              "SOFR",       # B-8: SOFR (담보부 익일물 금리)
 }
 
 # ─── 다중 RSS 소스 설정 (Reddit 대체) ──────────────────────
