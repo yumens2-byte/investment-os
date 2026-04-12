@@ -710,6 +710,7 @@ def collect_spy_sma() -> dict:
         }
     """
     logger.info("[YF_SMA] SPY SMA 수집 시작 (SMA5/20/50/200)")
+  
 
     closes = _fetch_closes_fallback("SPY", days=270)
 
@@ -737,4 +738,47 @@ def collect_spy_sma() -> dict:
         f"SMA200=${result['spy_sma200']} | "
         f"above200={'Yes' if result['spy_price'] and result['spy_sma200'] and result['spy_price'] > result['spy_sma200'] else 'No'}"
     )
+    return result
+
+def collect_sector_etfs() -> dict:
+    """
+    [Priority B] B-3 섹터 로테이션 + B-4 Copper/Gold 수집 (2026-04-11)
+    ─────────────────────────────────────────────────────────────────────
+    섹터 ETF 6종 + 구리 선물 일간 등락률 수집.
+
+    섹터 구분:
+      방어: XLV(헬스케어), XLU(유틸리티), XLP(필수소비재)
+      경기민감: XLI(산업재), XLRE(리츠), XLB(소재)
+      경기선행: COPPER(HG=F) vs Gold → Copper/Gold Ratio 변화
+
+    Returns:
+        {
+          "xlv_change", "xlu_change", "xli_change",
+          "xlp_change", "xlre_change", "xlb_change",
+          "copper_price", "copper_change"
+        }
+    """
+    logger.info("[YF_SECTOR] 섹터 ETF + 구리 수집 시작")
+
+    result = {
+        # ── B-3: 섹터 ETF 6종 ──────────────────────────────
+        "xlv_change":  _fetch(TICKER_MAP.get("XLV",  "XLV"),  "change"),
+        "xlu_change":  _fetch(TICKER_MAP.get("XLU",  "XLU"),  "change"),
+        "xli_change":  _fetch(TICKER_MAP.get("XLI",  "XLI"),  "change"),
+        "xlp_change":  _fetch(TICKER_MAP.get("XLP",  "XLP"),  "change"),
+        "xlre_change": _fetch(TICKER_MAP.get("XLRE", "XLRE"), "change"),
+        "xlb_change":  _fetch(TICKER_MAP.get("XLB",  "XLB"),  "change"),
+        # ── B-4: 구리 선물 ──────────────────────────────────
+        "copper_price":  _fetch(TICKER_MAP.get("COPPER", "HG=F"), "price"),
+        "copper_change": _fetch(TICKER_MAP.get("COPPER", "HG=F"), "change"),
+    }
+
+    for key, val in result.items():
+        if val is not None:
+            logger.info(f"[YF_SECTOR] {key} = {val}")
+        else:
+            logger.warning(f"[YF_SECTOR] {key} 수집 실패 → None")
+
+    collected = sum(1 for v in result.values() if v is not None)
+    logger.info(f"[YF_SECTOR] 수집 완료: {collected}/{len(result)}개")
     return result
