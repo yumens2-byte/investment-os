@@ -5,6 +5,7 @@ DRY_RUN=true 시 실제 발행 없이 로그만 출력.
 """
 import logging
 import time
+import random
 
 from typing import Optional
 try:
@@ -135,8 +136,6 @@ def _publish_single(client, text: str, reply_to_id: Optional[str] = None) -> Opt
 
 
 def publish_tweet(tweet_text: str) -> dict:
-    
-    
     """
     단일 트윗 발행 (텍스트만).
 
@@ -199,8 +198,6 @@ def publish_tweet(tweet_text: str) -> dict:
 
 
 def publish_tweet_with_image(tweet_text: str, image_path: str) -> dict:
-
-    
     """
     이미지 첨부 트윗 발행.
     이미지 업로드 실패 시 텍스트만 발행 (소프트 폴백).
@@ -239,12 +236,13 @@ def publish_tweet_with_image(tweet_text: str, image_path: str) -> dict:
     return result
 
 
-def publish_thread(posts: list) -> dict:
-
-    time.sleep(random.randint(15, 30))  # 트윗 간 쿨다운
-    
+def publish_thread(posts: list, reply_to: str = None) -> dict:
     """
     X 쓰레드 발행 (순차적으로 reply 연결).
+
+    Args:
+        posts:    발행할 트윗 텍스트 목록
+        reply_to: 첫 포스트를 reply로 달 기존 tweet_id (표지 이미지 트윗 연결용)
 
     Returns:
         {
@@ -254,6 +252,8 @@ def publish_thread(posts: list) -> dict:
             "dry_run": bool,
         }
     """
+    time.sleep(random.randint(15, 30))  # 트윗 간 쿨다운
+
     logger.info(
         f"[XPublisher] {'[DRY RUN] ' if DRY_RUN else ''}쓰레드 발행 시작 "
         f"({len(posts)}개 포스트)"
@@ -274,7 +274,7 @@ def publish_thread(posts: list) -> dict:
         return {"success": False, "published_count": 0, "tweet_ids": [], "dry_run": False}
 
     tweet_ids = []
-    reply_to = None
+    # reply_to: 파라미터로 받은 시작 tweet_id (표지 트윗 연결) 또는 None
 
     for i, post in enumerate(posts, 1):
         tweet_id = _publish_single(client, post, reply_to_id=reply_to)
