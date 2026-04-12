@@ -214,7 +214,7 @@ def _build_full_html(data: dict, dt_utc: datetime, session_label: str = "Full <e
         )
 
     def _signal_panel():
-        """Market Signals 패널: PCR + Tier2/3 6종 2열 그리드"""
+        """Market Signals 패널: PCR + Tier2/3 6종 + Priority B 2열 그리드"""
         def _state_color(state: str) -> str:
             _green = {"low", "contango", "strong", "normal", "bullish",
                       "stable", "no stress", "no data"}
@@ -226,6 +226,8 @@ def _build_full_html(data: dict, dt_utc: datetime, session_label: str = "Full <e
             return "#ffee44"
 
         pcr_label = f"{pcr_value:.2f}" if pcr_value else "—"
+
+        # ── 기존 Tier2/3 시그널 ─────────────────────────────
         items = [
             ("PCR",     f"{pcr_state}  {pcr_label}"),
             ("Breadth", breadth_state),
@@ -234,6 +236,21 @@ def _build_full_html(data: dict, dt_utc: datetime, session_label: str = "Full <e
             ("AI Mom",  ai_momentum_state),
             ("Banking", banking_stress_state),
         ]
+
+        # ── Priority B 시그널 추가 (2026-04-11) ─────────────
+        priority_b_items = [
+            ("CPI인플레",    signals.get("cpi_state",        "") or ""),
+            ("고용시장",     signals.get("labor_state",       "") or ""),
+            ("섹터로테이션", signals.get("sector_state",      "") or ""),
+            ("구리/금비율",  signals.get("copper_gold_state", "") or ""),
+            ("연준자산",     signals.get("fed_bs_state",      "") or ""),
+            ("단기자금",     signals.get("sofr_state",        "") or ""),
+        ]
+        # No Data / Incomplete / 빈 값은 제외
+        for lbl, st in priority_b_items:
+            if st and st not in ("No Data", "Incomplete", "Unknown", ""):
+                items.append((lbl, st))
+
         rows = []
         for lbl, st in items:
             c = _state_color(st)
