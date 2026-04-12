@@ -288,6 +288,7 @@ def run(session: str) -> dict:
 
                 if new_risk != old_risk:
                     market_regime["market_risk_level"] = new_risk
+                    regime_result["market_risk_level"] = new_risk   # ← 이 줄 추가
                     logger.warning(
                         f"[Step 3.5] 🔺 Risk Level 상향: {old_risk} → {new_risk} "
                         f"(Gemini confidence={confidence:.1f})"
