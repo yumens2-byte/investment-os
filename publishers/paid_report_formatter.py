@@ -147,10 +147,6 @@ def format_paid_report(data: dict) -> str:
     if reason:
         lines.append(f"\n<i>{reason}</i>")
 
-
-    if reason:
-        lines.append(f"\n<i>{reason}</i>")
-
     # ── Priority B: 거시 환경 지표 (2026-04-11 추가) ──────────
     signals = data.get("signals", {})
     cpi_yoy      = signals.get("cpi_yoy")
