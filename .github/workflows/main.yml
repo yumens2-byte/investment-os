@@ -160,6 +160,14 @@ jobs:
           echo "⏱️ Random delay: ${DELAY}s ($((DELAY/60))m $((DELAY%60))s)"
           sleep $DELAY    
       - run: python main.py run all --session morning --mode tweet
+      #== 26.04.12 추가==
+      - name: Save core_data cache
+        uses: actions/cache/save@v4
+        if: always()
+        with:
+          path: data/outputs/core_data.json
+          key: core-data-${{ github.ref }}-${{ github.run_id }}
+          
       - name: Save rank history cache
         uses: actions/cache/save@v4
         if: always()
@@ -167,10 +175,6 @@ jobs:
           path: data/published/rank_history.json
           key: rank-history-${{ github.ref }}-${{ github.run_id }}
       - name: Save weekly log cache
-
-
-
-      
         uses: actions/cache/save@v4
         if: always()
         with:
@@ -449,6 +453,13 @@ jobs:
           path: data/published/alert_history.json
           key: alert-history-${{ github.ref }}
           restore-keys: alert-history-
+
+      - name: Restore core_data cache
+        uses: actions/cache@v4
+        with:
+          path: data/outputs/core_data.json
+          key: core-data-${{ github.ref }}
+          restore-keys: core-data-
 
       - run: pip install -r requirements.txt
       - run: python main.py alert
