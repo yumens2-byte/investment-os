@@ -363,6 +363,7 @@ def gemini_cross_check(
                 "reason": reason,
                 "suggested_regime": suggested,
                 "checked": True,
+                "risk_level_up": not agree and confidence >= 0.7,  # ← 추가
             }
 
         logger.warning("[RegimeEngine] Gemini 검증 응답 파싱 실패")
