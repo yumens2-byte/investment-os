@@ -147,6 +147,51 @@ def format_paid_report(data: dict) -> str:
     if reason:
         lines.append(f"\n<i>{reason}</i>")
 
+
+    if reason:
+        lines.append(f"\n<i>{reason}</i>")
+
+    # ── Priority B: 거시 환경 지표 (2026-04-11 추가) ──────────
+    signals = data.get("signals", {})
+    cpi_yoy      = signals.get("cpi_yoy")
+    core_cpi     = signals.get("core_cpi_yoy")
+    labor_state  = signals.get("labor_state", "")
+    nfp_change   = signals.get("nfp_change")
+    cu_au_state  = signals.get("copper_gold_state", "")
+    fed_bs_state = signals.get("fed_bs_state", "")
+    fed_bs_chg   = signals.get("fed_bs_change_bn")
+    sofr_state   = signals.get("sofr_state", "")
+
+    # 하나라도 데이터가 있으면 섹션 출력
+    has_b_data = any([
+        cpi_yoy is not None,
+        labor_state and labor_state != "No Data",
+        cu_au_state and cu_au_state != "No Data",
+        fed_bs_state and fed_bs_state != "No Data",
+        sofr_state and sofr_state != "No Data",
+    ])
+
+    if has_b_data:
+        lines += [
+            "",
+            "─────────────────────────",
+            "📊 <b>거시 환경 (Priority B)</b>",
+            "",
+        ]
+        if cpi_yoy is not None:
+            core_str = f" · Core {core_cpi:.1f}%" if core_cpi else ""
+            lines.append(f"  💹 CPI: <b>{cpi_yoy:.2f}% YoY</b>{core_str}")
+        if labor_state and labor_state != "No Data":
+            nfp_str = f" (NFP {nfp_change:+.0f}K)" if nfp_change is not None else ""
+            lines.append(f"  👷 고용: <b>{labor_state}</b>{nfp_str}")
+        if cu_au_state and cu_au_state != "No Data":
+            lines.append(f"  🔶 Cu/Au: <b>{cu_au_state}</b>")
+        if fed_bs_state and fed_bs_state != "No Data":
+            chg_str = f" ({fed_bs_chg:+.0f}B/주)" if fed_bs_chg is not None else ""
+            lines.append(f"  🏦 연준자산: <b>{fed_bs_state}</b>{chg_str}")
+        if sofr_state and sofr_state != "No Data":
+            lines.append(f"  💧 SOFR: <b>{sofr_state}</b>")
+
     # ── B-16: Gemini 뉴스 심층 분석 (있으면 표시) ──
     news_analysis = data.get("news_analysis", {})
     top_issues = news_analysis.get("top_issues", [])
