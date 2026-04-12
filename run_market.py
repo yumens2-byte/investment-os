@@ -282,7 +282,8 @@ def run(session: str) -> dict:
             )
 
             # ── 보완 1: confidence >= 0.7 시 Risk Level 보수적 상향 ──
-            if confidence >= 0.7:
+            # ── 보완 2: confidence >= 0.8 시 Risk Level 보수적 상향 ──
+            if confidence >= 0.8:
                 RISK_UP = {"LOW": "MEDIUM", "MEDIUM": "HIGH", "HIGH": "HIGH"}
                 new_risk = RISK_UP.get(old_risk, old_risk)
 
