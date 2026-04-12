@@ -326,6 +326,74 @@ def format_free_signal(data: dict, session: str = "morning") -> str:
         except Exception:
             pass
 
+        # ── Priority B: 거시지표 블록 ─────────────────────────
+        signals = data.get("signals", {})
+
+        def _fmt_b(label, state, val_str="", score=2):
+            state_e = "🔴" if score >= 4 else "🟠" if score == 3 else "🟢" if score == 1 else "🟡"
+            val = f" · {val_str}" if val_str else ""
+            return f"  {state_e} {label}: {state}{val}"
+
+        b_lines = []
+
+        # B-1: CPI
+        cpi_yoy  = signals.get("cpi_yoy")
+        cpi_state = signals.get("cpi_state", "")
+        cpi_score = signals.get("cpi_score", 2)
+        core_cpi  = signals.get("core_cpi_yoy")
+        if cpi_yoy is not None:
+            core_str = f"Core {core_cpi:.1f}%" if core_cpi else ""
+            b_lines.append(_fmt_b("CPI", cpi_state,
+                f"{cpi_yoy:.2f}% YoY {core_str}".strip(), cpi_score))
+
+        # B-2: 노동시장
+        labor_state = signals.get("labor_state", "")
+        labor_score = signals.get("labor_score", 2)
+        nfp_change  = signals.get("nfp_change")
+        unemployment = signals.get("unemployment")
+        if labor_state and labor_state != "No Data":
+            nfp_str = f"NFP {nfp_change:+.0f}K" if nfp_change is not None else ""
+            ur_str  = f"UR {unemployment:.1f}%" if unemployment else ""
+            b_lines.append(_fmt_b("고용", labor_state,
+                " · ".join(filter(None, [nfp_str, ur_str])), labor_score))
+
+        # B-3: 섹터 로테이션
+        sector_state = signals.get("sector_state", "")
+        sector_score = signals.get("sector_score", 2)
+        if sector_state and sector_state not in ("No Data", "Incomplete"):
+            b_lines.append(_fmt_b("섹터", sector_state, "", sector_score))
+
+        # B-4: Copper/Gold
+        cg_state = signals.get("copper_gold_state", "")
+        cg_score = signals.get("copper_gold_score", 2)
+        cg_spread = signals.get("copper_gold_spread")
+        if cg_state and cg_state != "No Data":
+            cg_str = f"{cg_spread:+.1f}%p" if cg_spread is not None else ""
+            b_lines.append(_fmt_b("Cu/Au", cg_state, cg_str, cg_score))
+
+        # B-7: 연준자산
+        fed_bs_state = signals.get("fed_bs_state", "")
+        fed_bs_score = signals.get("fed_bs_score", 2)
+        fed_bs_chg   = signals.get("fed_bs_change_bn")
+        if fed_bs_state and fed_bs_state != "No Data":
+            chg_str = f"{fed_bs_chg:+.0f}B/주" if fed_bs_chg is not None else ""
+            b_lines.append(_fmt_b("연준자산", fed_bs_state, chg_str, fed_bs_score))
+
+        # B-8: SOFR
+        sofr_state  = signals.get("sofr_state", "")
+        sofr_score  = signals.get("sofr_score", 2)
+        sofr_spread = signals.get("sofr_spread")
+        if sofr_state and sofr_state != "No Data":
+            sp_str = f"spread {sofr_spread:.3f}%p" if sofr_spread else ""
+            b_lines.append(_fmt_b("SOFR", sofr_state, sp_str, sofr_score))
+
+        # 블록이 있을 때만 추가
+        if b_lines:
+            morning_lines += [
+                "",
+                "📊 <b>거시지표</b>",
+            ] + b_lines
+
         # BTC 추가
         if btc:
             btc_sign = "▲" if btc_chg >= 0 else "▼"
