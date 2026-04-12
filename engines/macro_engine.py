@@ -26,6 +26,13 @@ from config.settings import (
     NASDAQ_REL_GROWTH_THRESHOLD, NASDAQ_REL_VALUE_THRESHOLD,
     BANK_STRESS_THRESHOLD,
     QUADRANT_FLAT_THRESHOLD,
+    # ── Priority B 임계값 (2026-04-11 추가) ──────────────────
+    CPI_HOT, CPI_ELEVATED, CPI_COOL,
+    NFP_STRONG, NFP_MODERATE, NFP_WEAK,
+    SECTOR_DEFENSIVE_THR, SECTOR_CYCLICAL_THR,
+    COPPER_GOLD_OPTIMISM, COPPER_GOLD_PESSIMISM,
+    FED_BS_QE_THR, FED_BS_QT_THR,
+    SOFR_STRESS_THR, SOFR_TENSION_THR,
 )
 from config.settings import (
     # ... 기존 imports 유지 ...
@@ -972,6 +979,213 @@ def _score_spy_trend(spy_sma_data: dict) -> dict:
         "pct_from_sma200": pct_from_200,
         "spy_price":       price,
     }
+
+
+# ──────────────────────────────────────────────────────────────
+# 1-D. Priority B 시그널 (2026-04-11 추가)
+# ──────────────────────────────────────────────────────────────
+
+def _score_cpi(fred_data: dict) -> dict:
+    """
+    [B-1] CPI YoY 인플레이션 시그널
+    연준 금리 경로의 핵심 지표. 목표치(2%)와의 괴리가 클수록 긴축/완화 압박.
+    """
+    cpi_yoy      = fred_data.get("cpi_yoy") if fred_data else None
+    core_cpi_yoy = fred_data.get("core_cpi_yoy") if fred_data else None
+
+    if cpi_yoy is None:
+        return {
+            "cpi_score": 2, "cpi_state": "No Data",
+            "cpi_yoy": None, "core_cpi_yoy": core_cpi_yoy,
+        }
+
+    if cpi_yoy > CPI_HOT:
+        state, score = "Hot", 4
+    elif cpi_yoy > CPI_ELEVATED:
+        state, score = "Elevated", 3
+    elif cpi_yoy > CPI_COOL:
+        state, score = "Normal", 2
+    else:
+        state, score = "Cool", 1
+
+    return {
+        "cpi_score":     score,
+        "cpi_state":     state,
+        "cpi_yoy":       cpi_yoy,
+        "core_cpi_yoy":  core_cpi_yoy,
+    }
+
+
+def _score_labor_market(fred_data: dict) -> dict:
+    """
+    [B-2] NFP 비농업고용 + 실업률 복합 노동시장 시그널
+    NFP MoM 변화량과 실업률을 결합하여 경기 사이클 판단.
+    """
+    nfp_change   = fred_data.get("nfp_change") if fred_data else None
+    unemployment = fred_data.get("unemployment") if fred_data else None
+
+    if nfp_change is None:
+        return {
+            "labor_score": 2, "labor_state": "No Data",
+            "nfp_change": None, "unemployment": unemployment,
+        }
+
+    if nfp_change >= NFP_STRONG:
+        state, score = "Strong Labor", 1
+    elif nfp_change >= NFP_MODERATE:
+        state, score = "Moderate Labor", 2
+    elif nfp_change >= NFP_WEAK:
+        state, score = "Weak Labor", 3
+    else:
+        state, score = "Job Loss", 4
+
+    # 실업률 보정: 5% 이상이면 score +1
+    if unemployment is not None and unemployment >= 5.0:
+        score = min(score + 1, 4)
+        state = f"{state} (UR {unemployment:.1f}%)"
+
+    return {
+        "labor_score":   score,
+        "labor_state":   state,
+        "nfp_change":    nfp_change,
+        "unemployment":  unemployment,
+    }
+
+
+def _score_sector_rotation(sector_data: dict) -> dict:
+    """
+    [B-3] 섹터 로테이션 시그널
+    방어주(XLV/XLU/XLP) vs 경기민감주(XLI/XLRE/XLB) 상대강도로
+    현재 경기 사이클 국면 판단.
+    """
+    if not sector_data:
+        return {"sector_score": 2, "sector_state": "No Data", "sector_spread": None}
+
+    def _avg(*keys):
+        vals = [sector_data.get(k) for k in keys if sector_data.get(k) is not None]
+        return sum(vals) / len(vals) if vals else None
+
+    defensive = _avg("xlv_change", "xlu_change", "xlp_change")
+    cyclical  = _avg("xli_change", "xlre_change", "xlb_change")
+
+    if defensive is None or cyclical is None:
+        return {"sector_score": 2, "sector_state": "Incomplete", "sector_spread": None}
+
+    spread = cyclical - defensive  # 양수 = 경기민감 강세
+
+    if spread >= SECTOR_CYCLICAL_THR:
+        state, score = "Cyclical Rotation", 1    # 성장 국면
+    elif spread <= -SECTOR_DEFENSIVE_THR:
+        state, score = "Defensive Rotation", 3   # 방어 국면 (리스크 오프)
+    else:
+        state, score = "Neutral Rotation", 2
+
+    return {
+        "sector_score":    score,
+        "sector_state":    state,
+        "sector_spread":   round(spread, 2),
+        "defensive_avg":   round(defensive, 2),
+        "cyclical_avg":    round(cyclical, 2),
+    }
+
+
+def _score_copper_gold(snapshot: dict, sector_data: dict) -> dict:
+    """
+    [B-4] Copper/Gold Ratio 경기 선행 시그널 (닥터 코퍼)
+    구리(산업 수요) vs 금(안전자산) 상대강도로 경기 방향성 선행 판단.
+    Gold는 snapshot에서 이미 수집됨 → snapshot 재활용.
+    """
+    copper_chg = (sector_data or {}).get("copper_change")
+    gold_chg   = (snapshot or {}).get("gold_change")
+
+    if copper_chg is None or gold_chg is None:
+        return {
+            "copper_gold_score": 2, "copper_gold_state": "No Data",
+            "copper_gold_spread": None,
+        }
+
+    # 구리-금 등락률 차이 (양수 = 구리 강세 = 경기 낙관)
+    spread = copper_chg - gold_chg
+
+    if spread >= COPPER_GOLD_OPTIMISM:
+        state, score = "Economic Optimism", 1
+    elif spread >= 0:
+        state, score = "Mild Optimism", 2
+    elif spread >= COPPER_GOLD_PESSIMISM:
+        state, score = "Mild Concern", 3
+    else:
+        state, score = "Economic Pessimism", 4
+
+    return {
+        "copper_gold_score":  score,
+        "copper_gold_state":  state,
+        "copper_gold_spread": round(spread, 2),
+        "copper_change":      round(copper_chg, 2),
+    }
+
+
+def _score_fed_balance(fred_data: dict) -> dict:
+    """
+    [B-7] 연준 자산 (QE/QT) 유동성 시그널
+    주간 변화량 기준. 확장(QE) = 유동성 공급 = 주가 상방 압력.
+    """
+    change_bn = (fred_data or {}).get("fed_bs_change_bn")
+    total_bn  = (fred_data or {}).get("fed_balance_bn")
+
+    if change_bn is None:
+        return {
+            "fed_bs_score": 2, "fed_bs_state": "No Data",
+            "fed_bs_change_bn": None, "fed_balance_bn": total_bn,
+        }
+
+    if change_bn >= FED_BS_QE_THR:
+        state, score = "QE Active", 1
+    elif change_bn >= 0:
+        state, score = "Mild Expansion", 2
+    elif change_bn >= FED_BS_QT_THR:
+        state, score = "Mild QT", 3
+    else:
+        state, score = "QT Active", 4
+
+    return {
+        "fed_bs_score":    score,
+        "fed_bs_state":    state,
+        "fed_bs_change_bn": change_bn,
+        "fed_balance_bn":  total_bn,
+    }
+
+
+def _score_sofr(fred_data: dict) -> dict:
+    """
+    [B-8] SOFR 단기 자금시장 시그널
+    SOFR과 연방기금금리 차이로 단기 자금 경색 여부 판단.
+    """
+    sofr      = (fred_data or {}).get("sofr")
+    fed_rate  = (fred_data or {}).get("fed_funds_rate")
+
+    if sofr is None:
+        return {
+            "sofr_score": 2, "sofr_state": "No Data",
+            "sofr": None, "sofr_spread": None,
+        }
+
+    spread = abs(sofr - fed_rate) if fed_rate is not None else None
+
+    if spread is None:
+        state, score = "Unknown", 2
+    elif spread >= SOFR_STRESS_THR:
+        state, score = "Funding Stress", 4
+    elif spread >= SOFR_TENSION_THR:
+        state, score = "Mild Tension", 3
+    else:
+        state, score = "Normal", 2
+
+    return {
+        "sofr_score":  score,
+        "sofr_state":  state,
+        "sofr":        sofr,
+        "sofr_spread": round(spread, 3) if spread is not None else None,
+    }
     
 
 
@@ -1121,6 +1335,7 @@ def run_macro_engine(
     tier2_data: dict = None,
     pcr_data: dict = None,
     spy_sma_data=None,       # ← v신규 추가 (Priority A)
+    sector_data: dict = None,     # ← Priority B 신규 추가
 ) -> dict:
     """
     시장 스냅샷 + FRED + 뉴스 감성 + 확장 데이터 → 신호 + Market Score 반환.
@@ -1247,6 +1462,54 @@ def run_macro_engine(
         f"Trend={spy_trend_sig['trend_state']}"
         if small_cap_sig.get('small_cap_gap') is not None else
         f"[MacroEngine] Priority A — Gold={gold_sig['gold_state']} | Trend={spy_trend_sig['trend_state']}"
+    )
+
+    # ── Priority B 시그널 (2026-04-11 추가) ──────────────────
+    cpi_sig       = _score_cpi(fred_data)
+    labor_sig     = _score_labor_market(fred_data)
+    sector_sig    = _score_sector_rotation(sector_data or {})
+    copper_sig    = _score_copper_gold(snapshot, sector_data or {})
+    fed_bs_sig    = _score_fed_balance(fred_data)
+    sofr_sig      = _score_sofr(fred_data)
+
+    signals.update({
+        # B-1: CPI
+        "cpi_score":          cpi_sig["cpi_score"],
+        "cpi_state":          cpi_sig["cpi_state"],
+        "cpi_yoy":            cpi_sig.get("cpi_yoy"),
+        "core_cpi_yoy":       cpi_sig.get("core_cpi_yoy"),
+        # B-2: 노동시장
+        "labor_score":        labor_sig["labor_score"],
+        "labor_state":        labor_sig["labor_state"],
+        "nfp_change":         labor_sig.get("nfp_change"),
+        "unemployment":       labor_sig.get("unemployment"),
+        # B-3: 섹터 로테이션
+        "sector_score":       sector_sig["sector_score"],
+        "sector_state":       sector_sig["sector_state"],
+        "sector_spread":      sector_sig.get("sector_spread"),
+        # B-4: Copper/Gold
+        "copper_gold_score":  copper_sig["copper_gold_score"],
+        "copper_gold_state":  copper_sig["copper_gold_state"],
+        "copper_gold_spread": copper_sig.get("copper_gold_spread"),
+        # B-7: Fed Balance Sheet
+        "fed_bs_score":       fed_bs_sig["fed_bs_score"],
+        "fed_bs_state":       fed_bs_sig["fed_bs_state"],
+        "fed_bs_change_bn":   fed_bs_sig.get("fed_bs_change_bn"),
+        # B-8: SOFR
+        "sofr_score":         sofr_sig["sofr_score"],
+        "sofr_state":         sofr_sig["sofr_state"],
+        "sofr":               sofr_sig.get("sofr"),
+        "sofr_spread":        sofr_sig.get("sofr_spread"),
+    })
+
+    logger.info(
+        f"[MacroEngine] Priority B — "
+        f"CPI={cpi_sig['cpi_state']}({cpi_sig.get('cpi_yoy','N/A')}%) | "
+        f"Labor={labor_sig['labor_state']} | "
+        f"Sector={sector_sig['sector_state']} | "
+        f"Cu/Au={copper_sig['copper_gold_state']} | "
+        f"FedBS={fed_bs_sig['fed_bs_state']} | "
+        f"SOFR={sofr_sig['sofr_state']}"
     )
 
     # Market Score (Tier 1 + 2 확장 시그널 포함)
