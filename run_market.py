@@ -204,6 +204,20 @@ def run(session: str) -> dict:
         )
     except Exception as e:
         logger.warning(f"[Step 2-SMA] SPY SMA 수집 실패 (영향 없음): {e}")
+
+
+  # ── Step 2-Sector: Priority B — 섹터 ETF + 구리 수집 ─────
+    sector_data = {}
+    try:
+        from collectors.yahoo_finance import collect_sector_etfs
+        sector_data = collect_sector_etfs()
+        logger.info(
+            f"[Step 2-Sector] 섹터 수집 완료 | "
+            f"방어(XLV/XLU/XLP) avg={round((sector_data.get('xlv_change',0) or 0 + sector_data.get('xlu_change',0) or 0 + sector_data.get('xlp_change',0) or 0)/3,2)} | "
+            f"Cu={sector_data.get('copper_change')}%"
+        )
+    except Exception as e:
+        logger.warning(f"[Step 2-Sector] 섹터 수집 실패 (영향 없음): {e}")
   
 
     # D-2: Put/Call Ratio 수집
@@ -228,6 +242,7 @@ def run(session: str) -> dict:
         spy_sma_data=spy_sma_data,    # ← 신규 추가
         # T1-3: snapshot 내 sp500/nasdaq 등락률은 이미 snapshot에 포함
         # T2-3,4: fred_data 내 initial_claims/inflation_exp는 이미 fred_data에 포함
+        sector_data=sector_data,      # ← 추가
     )
     signals = macro_result["signals"]
     market_score = macro_result["market_score"]
