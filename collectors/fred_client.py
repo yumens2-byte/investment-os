@@ -1,10 +1,10 @@
 """
-collectors/fred_client.py (v1.2.0)
+collectors/fred_client.py (v1.3.0)
 ====================================
 FRED API에서 거시경제 지표를 수집한다.
 공식 무료 API. 데이터 갱신 주기: 일~주 단위.
 
-v1.2.0 (2026-04-11) Priority A — us2y(DGS2), spread_2y10y_bp 추가
+v1.3.0 (2026-04-11) Priority A — us2y(DGS2), spread_2y10y_bp 추가
 v1.1.0 (2026-04-07) — 다중 BUGFIX (운영 사고 위험 6건 수정)
 ─────────────────────────────────────────────────────────────
 BUG-F1 🚨 FEDFUNDS 하드코딩 fallback 5.25% 제거 (HIGH)
@@ -18,7 +18,7 @@ import logging
 from typing import Optional
 from config.settings import FRED_API_KEY, FRED_SERIES
 
-VERSION = "1.2.0"
+VERSION = "1.3.0"
 
 logger = logging.getLogger(__name__)
 
@@ -76,6 +76,45 @@ def _fmt_int_k(v: Optional[float]) -> str:
     except (TypeError, ValueError):
         return "N/A"
 
+def _fetch_yoy_change(series_id: str) -> Optional[float]:
+    """YoY 변화율 계산 (%). 최신값과 12개월 전 값 비교."""
+    client = _get_client()
+    if client is None:
+        return None
+    try:
+        series = client.get_series(series_id)
+        if series is None or series.empty:
+            return None
+        series = series.dropna()
+        if len(series) < 13:
+            return None
+        current  = float(series.iloc[-1])
+        prev_12m = float(series.iloc[-13])
+        if prev_12m == 0:
+            return None
+        return round((current - prev_12m) / prev_12m * 100, 2)
+    except Exception as e:
+        logger.error(f"[FRED] {series_id} YoY 계산 실패: {e}")
+        return None
+
+
+def _fetch_mom_change(series_id: str) -> Optional[float]:
+    """MoM 절대 변화량. 최신값 - 직전값 (단위: 시리즈 원단위)."""
+    client = _get_client()
+    if client is None:
+        return None
+    try:
+        series = client.get_series(series_id)
+        if series is None or series.empty:
+            return None
+        series = series.dropna()
+        if len(series) < 2:
+            return None
+        return round(float(series.iloc[-1]) - float(series.iloc[-2]), 1)
+    except Exception as e:
+        logger.error(f"[FRED] {series_id} MoM 계산 실패: {e}")
+        return None
+
 
 def collect_macro_data() -> dict:
     """
@@ -116,6 +155,22 @@ def collect_macro_data() -> dict:
     else:
         logger.warning("[FRED] DGS2 수집 실패 → None (엔진에서 중립 처리)")
 
+    # ── Priority B: CPI + NFP + Fed Balance Sheet + SOFR ────
+    cpi_yoy  = _fetch_yoy_change(FRED_SERIES.get("cpi",      "CPIAUCSL"))
+    core_cpi_yoy = _fetch_yoy_change(FRED_SERIES.get("core_cpi", "CPILFESL"))
+    nfp_change   = _fetch_mom_change(FRED_SERIES.get("nfp",   "PAYEMS"))
+    unemployment = _fetch_latest(FRED_SERIES.get("unemployment", "UNRATE"))
+    fed_bs_raw   = _fetch_latest(FRED_SERIES.get("fed_balance_sheet", "WALCL"))
+    fed_bs_change_bn = _fetch_mom_change(FRED_SERIES.get("fed_balance_sheet", "WALCL"))
+    sofr         = _fetch_latest(FRED_SERIES.get("sofr", "SOFR"))
+
+    if cpi_yoy is not None:
+        logger.info(f"[FRED] CPI YoY: {cpi_yoy:.2f}% | Core CPI YoY: {_fmt_pct(core_cpi_yoy)}")
+    if nfp_change is not None:
+        logger.info(f"[FRED] NFP MoM: {nfp_change:+.0f}K | 실업률: {_fmt_pct(unemployment)}")
+    if fed_bs_change_bn is not None:
+        logger.info(f"[FRED] 연준자산 주간변화: {fed_bs_change_bn/1000:+.1f}B | SOFR: {_fmt_pct(sofr)}")
+
     # ── 결과 dict 조립 ──────────────────────────────────────
     # ★ stale 하드코딩 fallback 절대 금지 (BUG-F1, F2 fix)
     data = {
@@ -127,6 +182,14 @@ def collect_macro_data() -> dict:
         "initial_claims":      initial_claims,
         "inflation_exp":       inflation_exp,
         "us2y":                us2y,
+        # ── Priority B ──────────────────────────────────────
+        "cpi_yoy":          cpi_yoy,
+        "core_cpi_yoy":     core_cpi_yoy,
+        "nfp_change":       nfp_change,        # MoM 변화량 (천 명)
+        "unemployment":     unemployment,       # 실업률 (%)
+        "fed_balance_bn":   round(fed_bs_raw / 1000, 1) if fed_bs_raw else None,  # 10억 달러
+        "fed_bs_change_bn": round(fed_bs_change_bn / 1000, 1) if fed_bs_change_bn else None,
+        "sofr":             sofr,
     }
 
     # ── Priority A: 10Y-2Y 스프레드 bp 계산 ─────────────────
