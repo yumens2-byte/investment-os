@@ -86,6 +86,13 @@ _SIGNAL_STATE_MAP = {
     "market_quadrant_score": "market_quadrant",
     "spread_score":          "spread_state",
     "trend_score":           "trend_state",
+    # ── Priority B (2026-04-11) ───────────────────────────────
+    "cpi_score":          "cpi_state",
+    "labor_score":        "labor_state",
+    "sector_score":       "sector_state",
+    "copper_gold_score":  "copper_gold_state",
+    "fed_bs_score":       "fed_bs_state",
+    "sofr_score":         "sofr_state",
 }
 
 # ── 시그널 한국어 라벨 ────────────────────────────────────
@@ -115,6 +122,13 @@ _SIGNAL_LABEL_KR = {
     "market_quadrant_score": "시장국면",
     "spread_score":          "금리스프레드",
     "trend_score":           "기술추세",
+    # ── Priority B (2026-04-11) ──────────────────────────────
+    "cpi_score":         "CPI인플레",
+    "labor_score":       "고용시장",
+    "sector_score":      "섹터로테이션",
+    "copper_gold_score": "구리/금비율",
+    "fed_bs_score":      "연준자산",
+    "sofr_score":        "단기자금",
 }
 
 # ── Market Score 키 ───────────────────────────────────────
