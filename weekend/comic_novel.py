@@ -56,78 +56,87 @@ def _get_week_label() -> str:
     return now.strftime("%G-W%V")
 
 
+def _get_this_week_range() -> tuple:
+    """이번 주 월요일~일요일 날짜 범위 반환 (KST 기준)"""
+    now = datetime.now(KST)
+    monday = now - timedelta(days=now.weekday())
+    monday = monday.replace(hour=0, minute=0, second=0, microsecond=0)
+    sunday = monday + timedelta(days=6)
+    return monday.strftime("%Y-%m-%d"), sunday.strftime("%Y-%m-%d")
+
+
 def get_episodes_from_notion() -> list:
     """
-    Notion 허브 하위 페이지 중 에피소드 페이지 검색.
-    Supabase에 마지막 적재된 에피소드 번호 이후만 필터링.
-    제목 형식: "[에피소드N]" 또는 "Ep N" 모두 지원.
+    EDT 에피소드 트래커 DB에서 이번 주 발행된 에피소드 조회.
+    발행일(날짜) 기준으로 이번 주(월~일 KST) 에피소드만 필터링.
+    Notion Database Query API 사용 (번호 property로 ep_no 추출).
     """
     if not NOTION_API_KEY:
         logger.warning("[ComicNovel] NOTION_API_KEY 미설정")
         return []
 
-    # ── 마지막 적재 에피소드 번호 조회 ──
-    last_ep = 0
-    try:
-        from db.daily_store import get_last_novel_episode_no
-        last_ep = get_last_novel_episode_no()
-        logger.info(f"[ComicNovel] 마지막 적재 에피소드: EP.{last_ep:02d}")
-    except Exception as e:
-        logger.warning(f"[ComicNovel] 마지막 에피소드 조회 실패 (전체 조회): {e}")
+    week_start, week_end = _get_this_week_range()
+    NOTION_DB_ID = "32a9e71588b843e1a650d2c9c87d1d9f"
 
     try:
         import requests
-        # Notion Search API로 에피소드 검색 (두 형식 모두 커버)
-        all_episodes = []
-        for query_keyword in ["에피소드", "Ep"]:
-            resp = requests.post(
-                "https://api.notion.com/v1/search",
-                headers=_notion_headers(),
-                json={
-                    "query": query_keyword,
-                    "filter": {"property": "object", "value": "page"},
-                    "sort": {"direction": "descending", "timestamp": "last_edited_time"},
-                    "page_size": 20,
+        resp = requests.post(
+            f"https://api.notion.com/v1/databases/{NOTION_DB_ID}/query",
+            headers=_notion_headers(),
+            json={
+                "filter": {
+                    "and": [
+                        {"property": "발행일", "date": {"on_or_after":  week_start}},
+                        {"property": "발행일", "date": {"on_or_before": week_end}},
+                    ]
                 },
-                timeout=15,
-            )
-            if resp.status_code != 200:
+                "sorts": [{"property": "번호", "direction": "ascending"}],
+                "page_size": 20,
+            },
+            timeout=15,
+        )
+        if resp.status_code != 200:
+            logger.warning(f"[ComicNovel] Notion DB 조회 실패: {resp.status_code}")
+            return []
+
+        results = resp.json().get("results", [])
+        episodes = []
+        for page in results:
+            props = page.get("properties", {})
+
+            # 에피소드 번호: 번호 property (number) 우선, 제목 파싱 fallback
+            ep_no = 0
+            ep_no_prop = props.get("번호", {})
+            if ep_no_prop.get("type") == "number" and ep_no_prop.get("number") is not None:
+                ep_no = int(ep_no_prop["number"])
+            else:
+                title_parts = props.get("에피소드", {}).get("title", [])
+                title_raw = "".join(t.get("plain_text", "") for t in title_parts)
+                m = re.search(r'(?:에피소드|[Ee][Pp]\s*\.?\s*)(\d+)', title_raw)
+                if m:
+                    ep_no = int(m.group(1))
+
+            if ep_no == 0:
                 continue
 
-            results = resp.json().get("results", [])
-            for page in results:
-                title_parts = page.get("properties", {}).get("title", {}).get("title", [])
-                title = "".join(t.get("plain_text", "") for t in title_parts) if title_parts else ""
+            # 에피소드 제목
+            title_parts = props.get("에피소드", {}).get("title", [])
+            title = "".join(t.get("plain_text", "") for t in title_parts)
 
-                # 에피소드 번호 추출 (두 형식 지원)
-                # "[에피소드10]" 또는 "Ep 01" 또는 "Ep.10"
-                ep_match = re.search(r'(?:에피소드|Ep\s*\.?\s*)(\d+)', title)
-                if not ep_match:
-                    continue
+            episodes.append({
+                "page_id": page["id"],
+                "episode_no": ep_no,
+                "title": title,
+            })
 
-                ep_no = int(ep_match.group(1))
-
-                # 이미 적재된 에피소드는 스킵
-                if ep_no <= last_ep:
-                    continue
-
-                # 중복 제거 (page_id 기준)
-                if any(e["page_id"] == page["id"] for e in all_episodes):
-                    continue
-
-                all_episodes.append({
-                    "page_id": page["id"],
-                    "episode_no": ep_no,
-                    "title": title,
-                    "last_edited": page.get("last_edited_time", ""),
-                })
-
-        all_episodes.sort(key=lambda x: x["episode_no"])
-        logger.info(f"[ComicNovel] Notion에서 {len(all_episodes)}개 신규 에피소드 발견 (EP.{last_ep:02d} 이후)")
-        return all_episodes
+        logger.info(
+            f"[ComicNovel] Notion DB: 이번 주({week_start}~{week_end}) "
+            f"{len(episodes)}개 에피소드"
+        )
+        return episodes
 
     except Exception as e:
-        logger.warning(f"[ComicNovel] Notion 조회 실패: {e}")
+        logger.warning(f"[ComicNovel] Notion DB 조회 실패: {e}")
         return []
 
 
@@ -554,15 +563,43 @@ def publish_novel_episode() -> dict:
         logger.info(f"[ComicNovel] 캐시 HIT — {cached.get('episode_range', '?')} (Claude 호출 0)")
         novel_data = cached
     else:
-        # ── Step 1: episode_context DB 우선 조회 ──
-        episodes = get_episodes_from_db()
-        if episodes:
-            logger.info(f"[ComicNovel] episode_context DB에서 {len(episodes)}개 에피소드 로드")
-        else:
-            # ── Step 1b: Notion fallback ──
-            logger.info("[ComicNovel] DB 없음 → Notion 조회 fallback")
-            episodes = get_episodes_from_notion()
+        # ── Step 1: 이번 주 에피소드 조회 (Notion DB 발행일 기준) ───────
+        week_start, week_end = _get_this_week_range()
+        logger.info(f"[ComicNovel] 이번 주 범위: {week_start} ~ {week_end}")
+
+        episodes = get_episodes_from_notion()  # 발행일 기반 이번 주 필터링
+
         if not episodes:
+            logger.warning("[ComicNovel] 이번 주 발행 에피소드 없음 → 스킵")
+            return {"success": False, "error": "이번 주 에피소드 없음"}
+
+        # ── Step 1b: episode_context에서 요약 정보 보완 ─────────────
+        # Notion에서 가져온 ep_no 기준으로 DB 요약만 주입 (없어도 무관)
+        try:
+            from db.supabase_client import get_client as _sb_client
+            _sb = _sb_client()
+            _ep_nos = [ep["episode_no"] for ep in episodes]
+            _ctx_resp = _sb.table("episode_context") \
+                .select("episode_no, comic_type, risk_level, title, summary") \
+                .in_("episode_no", _ep_nos) \
+                .execute()
+            _ctx_map = {row["episode_no"]: row for row in (_ctx_resp.data or [])}
+
+            for ep in episodes:
+                ctx = _ctx_map.get(ep["episode_no"])
+                if ctx:
+                    ep["content"] = (
+                        f"제목: {ctx.get('title', ep['title'])}\n"
+                        f"타입: {ctx.get('comic_type', '')}\n"
+                        f"Risk Level: {ctx.get('risk_level', '')}\n"
+                        f"요약: {ctx.get('summary', '')}"
+                    )
+            _ctx_count = len([e for e in episodes if e.get("content")])
+            logger.info(f"[ComicNovel] episode_context 보완: {_ctx_count}/{len(episodes)}개")
+        except Exception as _e:
+            logger.warning(f"[ComicNovel] episode_context 보완 실패 (무시): {_e}")
+
+
             logger.warning("[ComicNovel] 이번 주 에피소드 없음 → 스킵")
             return {"success": False, "error": "이번 주 에피소드 없음"}
 
