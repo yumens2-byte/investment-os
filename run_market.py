@@ -268,25 +268,68 @@ def run(session: str) -> dict:
             signals=signals,
             news_analysis=news_analysis,
         )
+
         if cross_check.get("checked") and not cross_check.get("agree"):
+            confidence = cross_check.get("confidence", 0.0)
+            suggested  = cross_check.get("suggested_regime", "")
+            reason_txt = cross_check.get("reason", "")
+            old_risk   = market_regime["market_risk_level"]
+
             logger.warning(
                 f"[Step 3.5] ⚠️ Gemini 레짐 불일치: "
                 f"rule={regime_result['market_regime']} → "
-                f"제안={cross_check.get('suggested_regime')} | "
-                f"{cross_check.get('reason')}"
+                f"제안={suggested} | confidence={confidence:.1f} | {reason_txt}"
             )
-            # TG 알림 (불일치 시)
-            try:
-                from publishers.telegram_publisher import send_message
-                send_message(
-                    f"⚠️ [레짐 크로스체크 불일치]\n"
-                    f"Rule: {regime_result['market_regime']}\n"
-                    f"Gemini 제안: {cross_check.get('suggested_regime')}\n"
-                    f"사유: {cross_check.get('reason')}\n"
-                    f"confidence: {cross_check.get('confidence', 0):.1f}"
+
+            # ── 보완 1: confidence >= 0.7 시 Risk Level 보수적 상향 ──
+            if confidence >= 0.7:
+                RISK_UP = {"LOW": "MEDIUM", "MEDIUM": "HIGH", "HIGH": "HIGH"}
+                new_risk = RISK_UP.get(old_risk, old_risk)
+
+                if new_risk != old_risk:
+                    market_regime["market_risk_level"] = new_risk
+                    logger.warning(
+                        f"[Step 3.5] 🔺 Risk Level 상향: {old_risk} → {new_risk} "
+                        f"(Gemini confidence={confidence:.1f})"
+                    )
+
+                # ── 보완 2: regime_reason에 AI 검증 경고 태그 추가 ──
+                market_regime["regime_reason"] = (
+                    f"[AI검증⚠️] {market_regime['regime_reason']} "
+                    f"| Gemini 제안={suggested}"
                 )
-            except Exception:
-                pass
+
+                # ── 보완 3: TG 알림 (Risk Level 변경 포함) ──
+                try:
+                    from publishers.telegram_publisher import send_message
+                    risk_msg = f"\n🔺 Risk Level {old_risk} → {new_risk} 상향 적용" if new_risk != old_risk else ""
+                    send_message(
+                        f"⚠️ [레짐 크로스체크 불일치]\n"
+                        f"Rule: {regime_result['market_regime']} ({old_risk})\n"
+                        f"Gemini 제안: {suggested} | confidence: {confidence:.1f}\n"
+                        f"사유: {reason_txt}"
+                        f"{risk_msg}"
+                    )
+                except Exception:
+                    pass
+            else:
+                # confidence < 0.7 → 경고만 (낮은 확신 무시)
+                logger.info(
+                    f"[Step 3.5] confidence={confidence:.1f} < 0.7 "
+                    f"— 경고만, Risk Level 유지"
+                )
+                try:
+                    from publishers.telegram_publisher import send_message
+                    send_message(
+                        f"ℹ️ [레짐 크로스체크 참고]\n"
+                        f"Rule: {regime_result['market_regime']} | "
+                        f"Gemini 제안: {suggested}\n"
+                        f"confidence={confidence:.1f} (낮음) — 레짐 유지\n"
+                        f"사유: {reason_txt}"
+                    )
+                except Exception:
+                    pass
+
     except Exception as e:
         logger.warning(f"[Step 3.5] Gemini 크로스체크 실패 (무시): {e}")
 
