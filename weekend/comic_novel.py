@@ -26,6 +26,7 @@ logger = logging.getLogger(__name__)
 KST = timezone(timedelta(hours=9))
 NOTION_API_KEY = os.environ.get("NOTION_API_KEY", "")
 HUB_PAGE_ID = "3299208cbdc38183814fdb7cfb1908e9"
+WEEKLY_NOVEL_EP_LIMIT = 5  # 주당 최대 커버 에피소드 수 (5편 고정)
 
 # ── EDT Universe 캐릭터 정보 (표지 프롬프트용) ──
 CHARACTER_VISUAL = {
@@ -67,15 +68,29 @@ def _get_this_week_range() -> tuple:
 
 def get_episodes_from_notion() -> list:
     """
-    EDT 에피소드 트래커 DB에서 이번 주 발행된 에피소드 조회.
-    발행일(날짜) 기준으로 이번 주(월~일 KST) 에피소드만 필터링.
+    EDT 에피소드 트래커 DB에서 이번 주기 에피소드 조회.
+
+    조건:
+      1) 번호 > last_ep  — 이전 소설에서 커버된 이후 에피소드만
+      2) 발행일 <= 오늘  — 미래 에피소드 제외
+      날짜 하한선 없음   — 어느 주에 발행됐든 미커버분 전부 포함
+
     Notion Database Query API 사용 (번호 property로 ep_no 추출).
     """
     if not NOTION_API_KEY:
         logger.warning("[ComicNovel] NOTION_API_KEY 미설정")
         return []
 
-    week_start, week_end = _get_this_week_range()
+    # ── 마지막 소설에서 커버된 에피소드 번호 조회 ──
+    last_ep = 0
+    try:
+        from db.daily_store import get_last_novel_episode_no
+        last_ep = get_last_novel_episode_no()
+        logger.info(f"[ComicNovel] 마지막 소설 커버: EP.{last_ep:02d}")
+    except Exception as e:
+        logger.warning(f"[ComicNovel] last_ep 조회 실패 (0으로 처리): {e}")
+
+    today = datetime.now(KST).strftime("%Y-%m-%d")
     NOTION_DB_ID = "32a9e71588b843e1a650d2c9c87d1d9f"
 
     try:
@@ -86,12 +101,14 @@ def get_episodes_from_notion() -> list:
             json={
                 "filter": {
                     "and": [
-                        {"property": "발행일", "date": {"on_or_after":  week_start}},
-                        {"property": "발행일", "date": {"on_or_before": week_end}},
+                        # 조건 1: 번호 > last_ep (이전 소설 이후)
+                        {"property": "번호", "number": {"greater_than": last_ep}},
+                        # 조건 2: 발행일 <= 오늘 (미래 에피소드 제외)
+                        {"property": "발행일", "date": {"on_or_before": today}},
                     ]
                 },
                 "sorts": [{"property": "번호", "direction": "ascending"}],
-                "page_size": 20,
+                "page_size": WEEKLY_NOVEL_EP_LIMIT,  # 주당 최대 5편 고정
             },
             timeout=15,
         )
@@ -130,8 +147,8 @@ def get_episodes_from_notion() -> list:
             })
 
         logger.info(
-            f"[ComicNovel] Notion DB: 이번 주({week_start}~{week_end}) "
-            f"{len(episodes)}개 에피소드"
+            f"[ComicNovel] Notion DB: EP.{last_ep:02d} 이후 ~ {today} "
+            f"→ {len(episodes)}개 에피소드"
         )
         return episodes
 
@@ -563,11 +580,10 @@ def publish_novel_episode() -> dict:
         logger.info(f"[ComicNovel] 캐시 HIT — {cached.get('episode_range', '?')} (Claude 호출 0)")
         novel_data = cached
     else:
-        # ── Step 1: 이번 주 에피소드 조회 (Notion DB 발행일 기준) ───────
-        week_start, week_end = _get_this_week_range()
-        logger.info(f"[ComicNovel] 이번 주 범위: {week_start} ~ {week_end}")
+        # ── Step 1: 이번 주기 에피소드 조회 (ep_no > last_ep + 발행일 ≤ 오늘) ──
+        logger.info("[ComicNovel] Notion DB 조회: 미커버 에피소드 (last_ep 이후)")
 
-        episodes = get_episodes_from_notion()  # 발행일 기반 이번 주 필터링
+        episodes = get_episodes_from_notion()
 
         if not episodes:
             logger.warning("[ComicNovel] 이번 주 발행 에피소드 없음 → 스킵")
