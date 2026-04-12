@@ -71,6 +71,8 @@ from config.settings import (
     MOVE_STRESSED,
     STAGFLATION_SPY_THR, STAGFLATION_TLT_THR,
     YIELD_SPREAD_DEEP_BP,
+    CPI_HOT,           # ← 추가
+    SOFR_STRESS_THR,   # ← 추가
 )
 
 
@@ -683,6 +685,56 @@ def _detect_yield_spread_deep(fred_data: dict) -> Optional[AlertSignal]:
         )
     return None
 
+def _detect_cpi_surprise(fred_data: dict) -> Optional[AlertSignal]:
+    """
+    [B-1] CPI 과열 Alert
+    CPI YoY > 3.5% → 연준 긴축 재점화 리스크 → L1
+    월간 데이터이므로 alert_history 쿨다운 7일 적용 필수
+    """
+    cpi_yoy = (fred_data or {}).get("cpi_yoy")
+    if cpi_yoy is None:
+        return None
+    if cpi_yoy > CPI_HOT:
+        core = (fred_data or {}).get("core_cpi_yoy")
+        core_str = f" (Core {core:.2f}%)" if core else ""
+        return AlertSignal(
+            alert_type="CPI_HOT",
+            level="L1",
+            reason=(
+                f"CPI {cpi_yoy:.2f}% YoY{core_str} — "
+                f"임계값 {CPI_HOT}% 초과. 연준 금리 인하 기대 약화 리스크"
+            ),
+            snapshot={},
+            etf_hints=["TLT", "XLU", "XLP"],
+            avoid_etfs=["QQQM", "XLRE"],
+        )
+    return None
+
+
+def _detect_sofr_stress(fred_data: dict) -> Optional[AlertSignal]:
+    """
+    [B-8] SOFR 단기자금 스트레스 Alert
+    SOFR - Fed Funds Rate 차이 > 0.5%p → L1
+    2008/2020 위기 선행 지표
+    """
+    sofr_spread = (fred_data or {}).get("sofr_spread")
+    sofr        = (fred_data or {}).get("sofr")
+    if sofr_spread is None:
+        return None
+    if sofr_spread >= SOFR_STRESS_THR:
+        return AlertSignal(
+            alert_type="SOFR_STRESS",
+            level="L1",
+            reason=(
+                f"SOFR 스트레스 — 단기자금 스프레드 {sofr_spread:.3f}%p "
+                f"(SOFR {sofr:.3f}%). 은행간 신용 경색 경고"
+            ),
+            snapshot={},
+            etf_hints=["TLT", "SPYM"],
+            avoid_etfs=["QQQM", "XLK"],
+        )
+    return None
+
 
 def _vix_countdown_alert(
     snapshot: dict,
@@ -841,6 +893,20 @@ def run_alert_engine(
         logger.info(f"[AlertEngine] Yield Spread Alert: {spread_sig.reason}")
 
     # ── v1.0.0: Crypto Basis 극단 백워데이션 Alert ──────────────
+
+  # ── B-1: CPI 과열 Alert ─────────────────────────────────
+    cpi_sig = _detect_cpi_surprise(_fred)
+    if cpi_sig:
+        alerts.append(cpi_sig)
+        logger.info(f"[AlertEngine] CPI Alert: {cpi_sig.reason}")
+
+    # ── B-8: SOFR 스트레스 Alert ─────────────────────────────
+    sofr_sig = _detect_sofr_stress(_fred)
+    if sofr_sig:
+        alerts.append(sofr_sig)
+        logger.info(f"[AlertEngine] SOFR Alert: {sofr_sig.reason}")
+
+  
 
     # ── v1.0.0: Crypto Basis 극단 백워데이션 Alert ──────────────
     if _signals:
