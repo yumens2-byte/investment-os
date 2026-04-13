@@ -730,13 +730,25 @@ def generate_ai_thread(data: dict) -> list:
 # ── x_formatter.py 하단에 추가 (기존 함수 무변경) ──────────
 from publishers.thread_builder import build_thread, build_single_tweet
 
+# x_formatter.py 하단의 format_thread_auto 함수를 아래로 교체
+
 def format_thread_auto(content: str, session: str, core_data: dict) -> list:
+    """
+    감성 트리거 스레드 생성.
+    v2: 항상 build_thread 사용 — 후킹 + 본문 + CTA = 최소 3트윗
+    (기존 800자 기준 단일/스레드 분기 제거)
+    """
     risk_level = (
         core_data.get("market_regime", {}).get("market_risk_level", "MEDIUM")
     ) or "MEDIUM"
     if risk_level not in ("HIGH", "MEDIUM", "LOW"):
         risk_level = "MEDIUM"
-    if len(content) <= 800:
-        return [build_single_tweet(content, session, risk_level)]
-    return build_thread(content=content, session=session, risk_level=risk_level,
-                        add_hook=True, add_cta=True, add_counter=True)
+    # 항상 build_thread → 짧은 AI 트윗도 후킹+본문+CTA 3트윗 스레드
+    return build_thread(
+        content=content,
+        session=session,
+        risk_level=risk_level,
+        add_hook=True,
+        add_cta=True,
+        add_counter=False,  # 3트윗 수준에서 카운터 불필요
+    )
