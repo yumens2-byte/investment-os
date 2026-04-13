@@ -725,3 +725,18 @@ def generate_ai_thread(data: dict) -> list:
         logger.warning(f"[XFormatter] AI 스레드 생성 실패 → fallback: {e}")
 
     return format_thread_posts(data)
+
+
+# ── x_formatter.py 하단에 추가 (기존 함수 무변경) ──────────
+from publishers.thread_builder import build_thread, build_single_tweet
+
+def format_thread_auto(content: str, session: str, core_data: dict) -> list:
+    risk_level = (
+        core_data.get("market_regime", {}).get("market_risk_level", "MEDIUM")
+    ) or "MEDIUM"
+    if risk_level not in ("HIGH", "MEDIUM", "LOW"):
+        risk_level = "MEDIUM"
+    if len(content) <= 800:
+        return [build_single_tweet(content, session, risk_level)]
+    return build_thread(content=content, session=session, risk_level=risk_level,
+                        add_hook=True, add_cta=True, add_counter=True)
