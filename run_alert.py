@@ -836,7 +836,30 @@ def run() -> dict:
             )
             if meme_path:
                 from publishers.x_publisher import publish_tweet_with_image
-                meme_tweet = f"{tweet[:200]}"
+                # 밈 전용 텍스트 구성 — 감정 트윗과 다른 텍스트 사용
+                # (X API: 동일 텍스트 재발행 시 duplicate content 403 거부 방지)
+                _em_map = {
+                    "VIX": "📊", "OIL": "⛽", "SPY": "📉", "CRISIS": "🚨",
+                    "FED_SHOCK": "🏦", "STAGFLATION": "🔥",
+                    "SMA200_BREAK": "📉", "PCR": "📊", "CRYPTO_BASIS": "₿",
+                }
+                _em   = _em_map.get(signal.alert_type, "⚡")
+                _hint = ""
+                if signal.alert_type == "OIL":
+                    _p = snapshot.get("oil")
+                    if _p: _hint = f" WTI ${float(_p):.0f}"
+                elif signal.alert_type == "VIX":
+                    _p = snapshot.get("vix")
+                    if _p: _hint = f" VIX {float(_p):.1f}"
+                elif "SPY" in signal.alert_type:
+                    _p = snapshot.get("sp500")
+                    if _p: _hint = f" SPY {float(_p):+.1f}%"
+                elif signal.alert_type == "CRISIS":
+                    _hint = " 복합위기"
+                meme_tweet = (
+                    f"{_em} {signal.alert_type} {signal.level}{_hint}\n"
+                    f"⚠️ 투자 참고 정보, 투자 권유 아님"
+                )
                 pub_r = publish_tweet_with_image(meme_tweet, meme_path)
                 if pub_r.get("success"):
                     logger.info(f"[run_alert] B-21A 밈 발행 완료: {signal.alert_type}")
