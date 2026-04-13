@@ -8,11 +8,20 @@ run_view.py
   core_data.json 로드 (run_market.py 결과)
   → validate_data + validate_output (Hard Gate)
   → 중복 검사 (history.json 비교)
-  → 트윗 포맷 생성
+  → 트윗 포맷 생성 + 감성 트리거 적용 (Item 6, v1.30.0)
   → X 발행 (DRY_RUN or 실제)
   → 발행 이력 기록
 
 run_market.py 없이 단독 실행 불가.
+
+v1.30.0 (2026-04-13):
+  - Step 3에 감성 트리거 연동 (Item 6)
+    - mode=thread: generate_ai_thread → format_thread_auto 감성화
+    - mode=tweet:  generate_ai_tweet  → format_thread_auto 감성화
+      (짧으면 CTA 1개, 길면 자동 스레드 분할)
+  - Step 6에 len(posts)>1 조건 추가 (tweet→스레드 자동 전환 대응)
+  - full 세션: 이미지 트윗 고정 — 감성 미적용 유지
+  - result에 posts_count 추가
 """
 import argparse
 import logging
@@ -67,59 +76,94 @@ def run(mode: str = "tweet", session: str = None) -> dict:
     logger.info("[Step 2] Validation 실행")
     from core.validator import validate_data, validate_output
 
-    data_result = validate_data(data)
+    data_result   = validate_data(data)
     output_result = validate_output(data)
 
     if data_result["status"] != "PASS":
         logger.error(f"[run_view] validate_data FAIL: {data_result['errors']}")
         return {
             "success": False,
-            "reason": "validate_data_fail",
-            "errors": data_result["errors"],
+            "reason":  "validate_data_fail",
+            "errors":  data_result["errors"],
         }
 
     if output_result["status"] != "PASS":
         logger.error(f"[run_view] validate_output FAIL: {output_result['errors']}")
         return {
             "success": False,
-            "reason": "validate_output_fail",
-            "errors": output_result["errors"],
+            "reason":  "validate_output_fail",
+            "errors":  output_result["errors"],
         }
 
     logger.info("[Step 2] Validation PASS")
 
-    # ── Step 3: 트윗 텍스트 생성 ───────────────────────────────
-    logger.info("[Step 3] 트윗 포맷 생성")
-    from publishers.x_formatter import format_market_snapshot_tweet, format_thread_posts, format_image_tweet, generate_ai_tweet, generate_ai_thread
+    # ── Step 3: 트윗 텍스트 생성 + 감성 트리거 적용 (v1.30.0) ──
+    logger.info("[Step 3] 트윗 포맷 생성 + 감성 트리거 적용")
+    from publishers.x_formatter import (
+        format_market_snapshot_tweet, format_thread_posts,
+        format_image_tweet, generate_ai_tweet, generate_ai_thread,
+        format_thread_auto,
+    )
 
-    # session 인자가 있으면 우선 사용 (full 세션 등 외부 강제 지정)
     _inner_session = data.get("output_helpers", {}).get("session_type", "postmarket")
-    session_type = session if session else _inner_session
+    session_type   = session if session else _inner_session
     session_labels = {
-        "morning":   "Morning Brief 🌅",
-        "intraday":  "Intraday Update 📡",
-        "close":     "Close Summary 🔔",
-        "postmarket":"Market Snapshot 📊",
-        "full":      "Full Brief 📊",          # v1.8.0 신규
+        "morning":    "Morning Brief 🌅",
+        "intraday":   "Intraday Update 📡",
+        "close":      "Close Summary 🔔",
+        "postmarket": "Market Snapshot 📊",
+        "full":       "Full Brief 📊",
     }
     session_label = session_labels.get(session_type, "Market Snapshot 📊")
 
-    # v1.8.0: session=full 은 mode 무시 — 이미지 트윗 고정
+    # full: 이미지 트윗 고정 — 감성 미적용 (이미지가 메인)
     if session_type == "full":
         primary_text     = format_image_tweet(data, "full")
         image_tweet_text = primary_text
         posts            = [primary_text]
-    elif mode == "thread":
-        posts = generate_ai_thread(data)  # C-12: AI 스레드
-        primary_text = posts[0] if posts else ""
-        image_tweet_text = None
-    else:
-        # C-1: AI 트윗 생성 (Gemini) — 실패 시 기존 하드코딩 fallback
-        primary_text = generate_ai_tweet(data, session_label)
-        image_tweet_text = format_image_tweet(data, session_type)
-        posts = [primary_text]
 
-    logger.info(f"[Step 3] 생성 완료 ({len(primary_text)}자)")
+    elif mode == "thread":
+        # C-12: AI 스레드 내용 생성 → 감성 트리거 적용 (v1.30.0)
+        raw_posts = generate_ai_thread(data)
+        try:
+            # AI 스레드 내용을 합쳐서 감성화 (후킹+CTA 포함)
+            joined = "\n\n".join(raw_posts) if raw_posts else ""
+            if joined:
+                posts = format_thread_auto(joined, session_type, data)
+                logger.info(
+                    f"[Step 3] 감성 트리거 적용 "
+                    f"(thread: {len(raw_posts)}→{len(posts)}트윗, "
+                    f"session={session_type})"
+                )
+            else:
+                posts = raw_posts
+        except Exception as e:
+            logger.warning(f"[Step 3] 감성 트리거 실패 — 기존 AI 스레드 사용: {e}")
+            posts = raw_posts
+        primary_text     = posts[0] if posts else ""
+        image_tweet_text = None
+
+    else:
+        # C-1: AI 트윗 생성 + 감성 트리거 적용 (v1.30.0)
+        primary_text = generate_ai_tweet(data, session_label)
+        try:
+            # format_thread_auto:
+            #   ≤800자 → build_single_tweet → CTA 추가 (1트윗 유지)
+            #    >800자 → build_thread      → 후킹+분할+CTA (복수 트윗)
+            posts = format_thread_auto(primary_text, session_type, data)
+            logger.info(
+                f"[Step 3] 감성 트리거 적용 "
+                f"(tweet→{len(posts)}트윗, session={session_type})"
+            )
+            # 감성화로 스레드가 됐으면 primary_text를 첫 트윗으로 갱신
+            if len(posts) > 1:
+                primary_text = posts[0]
+        except Exception as e:
+            logger.warning(f"[Step 3] 감성 트리거 실패 — 기존 트윗 사용: {e}")
+            posts = [primary_text]
+        image_tweet_text = format_image_tweet(data, session_type)
+
+    logger.info(f"[Step 3] 생성 완료 ({len(primary_text)}자, {len(posts)}트윗)")
 
     # ── Step 4: 중복 검사 ──────────────────────────────────────
     logger.info("[Step 4] 중복 검사")
@@ -128,8 +172,8 @@ def run(mode: str = "tweet", session: str = None) -> dict:
     if is_duplicate(primary_text, data):
         logger.warning("[run_view] 중복 감지 — 발행 차단")
         return {
-            "success": False,
-            "reason": "duplicate_detected",
+            "success":      False,
+            "reason":       "duplicate_detected",
             "text_preview": primary_text[:80],
         }
 
@@ -144,7 +188,6 @@ def run(mode: str = "tweet", session: str = None) -> dict:
     image_path = None
     try:
         from publishers.image_generator import generate_image
-        from datetime import datetime, timezone
         image_path = generate_image(data=data, session=session_type)
         if image_path:
             logger.info(f"[Step 5.5] 이미지 생성 완료: {image_path}")
@@ -154,10 +197,12 @@ def run(mode: str = "tweet", session: str = None) -> dict:
         logger.warning(f"[Step 5.5] 이미지 생성 예외 — 텍스트만 발행: {e}")
 
     # ── Step 6: X 발행 ─────────────────────────────────────────
-    logger.info(f"[Step 6] X 발행 (mode={mode})")
+    # v1.30.0: len(posts)>1 조건 추가
+    #   tweet 모드에서 감성화로 스레드가 됐을 때 publish_thread 호출
+    logger.info(f"[Step 6] X 발행 (mode={mode}, posts={len(posts)}트윗)")
     from publishers.x_publisher import publish_tweet, publish_tweet_with_image, publish_thread
 
-    if mode == "thread":
+    if mode == "thread" or len(posts) > 1:
         pub_result = publish_thread(posts)
     elif image_path and image_tweet_text:
         pub_result = publish_tweet_with_image(image_tweet_text, image_path)
@@ -169,7 +214,7 @@ def run(mode: str = "tweet", session: str = None) -> dict:
     # ── Step 6-YT: C-16 유튜버 요약 트윗 (morning만) ──────────
     if session_type == "morning":
         try:
-            streamer = data.get("streamer_consensus", {})
+            streamer       = data.get("streamer_consensus", {})
             streamer_tweet = streamer.get("tweet", "")
             if streamer_tweet:
                 from publishers.x_publisher import publish_tweet as _pub_yt
@@ -186,8 +231,6 @@ def run(mode: str = "tweet", session: str = None) -> dict:
         )
 
         if session_type == "weekly" or (session_type == "close" and mode == "thread"):
-            # weekly (또는 close+thread fallback):
-            # 주간 성적표 + AI 성적표 텔레그램 발송 + PDF 유료 채널 발송
             from core.weekly_tracker import get_weekly_summary, get_ai_scorecard
             from publishers.weekly_formatter import (
                 format_weekly_telegram,
@@ -198,7 +241,6 @@ def run(mode: str = "tweet", session: str = None) -> dict:
             tg_text   = format_weekly_telegram(summary)
             send_message(tg_text, channel="free")
 
-            # AI 성적표 — X 트윗 + 텔레그램 무료
             try:
                 from publishers.x_publisher import publish_tweet
                 scorecard = get_ai_scorecard(summary)
@@ -211,17 +253,16 @@ def run(mode: str = "tweet", session: str = None) -> dict:
             except Exception as e:
                 logger.warning(f"[Step 6-TG] AI 성적표 발행 실패 (영향 없음): {e}")
 
-            # 유료 채널 — 주간 PDF 리포트
             try:
                 from publishers.weekly_pdf_builder import build_weekly_pdf
-                pdf_path = build_weekly_pdf(summary)
+                pdf_path    = build_weekly_pdf(summary)
                 pdf_caption = f"📄 Investment OS Weekly Report\n{summary.get('week','')}"
                 send_document(pdf_path, caption=pdf_caption, channel="paid")
                 logger.info(f"[Step 6-TG] 주간 PDF 유료 채널 발송 완료: {pdf_path}")
             except Exception as e:
                 logger.warning(f"[Step 6-TG] 주간 PDF 생성/발송 실패 (영향 없음): {e}")
+
         elif session_type == "full":
-            # full: 무료 텍스트 + 유료 이미지 + 유료 상세 리포트
             free_text = format_free_signal(data, session=session_type)
             send_message(free_text, channel="free")
             if image_path:
@@ -229,12 +270,10 @@ def run(mode: str = "tweet", session: str = None) -> dict:
             else:
                 logger.warning("[Step 6-TG] 이미지 없음 — 유료 채널 텍스트만 발행")
                 send_message(free_text, channel="paid")
-            # 유료 채널 추가 — ETF 상세 전략 + 포지션 사이징 가이드
             from publishers.paid_report_formatter import format_paid_report, generate_ai_etf_rationale
             paid_text = format_paid_report(data)
             send_message(paid_text, channel="paid")
 
-            # C-3: AI ETF 배분 근거 자연어 발행 (유료 채널)
             try:
                 ai_rationale = generate_ai_etf_rationale(data)
                 if ai_rationale:
@@ -243,57 +282,47 @@ def run(mode: str = "tweet", session: str = None) -> dict:
             except Exception as e:
                 logger.warning(f"[Step 6-TG] C-3 AI ETF 근거 실패 (무시): {e}")
 
-            # C-13: Gemini Vision 차트 분석 (유료 채널)
+            # C-13: Gemini Vision 차트 분석 — 현재 비활성
             # if image_path:
             #     try:
             #         from engines.chart_analyzer import analyze_chart
             #         chart = analyze_chart(image_path, data)
             #         if chart.get("success"):
             #             send_message(chart["telegram"], channel="paid")
-            #             logger.info(
-            #                 f"[Step 6-TG] C-13 차트 분석 발행 완료 | "
-            #                 f"trend={chart['trend']}"
-            #             )
-            #         else:
-            #             logger.info(f"[Step 6-TG] C-13 차트 분석 스킵: {chart.get('reason', '?')}")
             #     except Exception as ve:
-            #         logger.warning(f"[Step 6-TG] C-13 차트 분석 실패 (영향 없음): {ve}")
+            #         logger.warning(f"[Step 6-TG] C-13 차트 분석 실패: {ve}")
 
-            # B-21B: 카드뉴스 3장 유료 채널 발행
+            # B-21B: 카드뉴스 3장 — 현재 비활성
             # try:
             #     from comic.card_news_generator import generate_cards
             #     card_paths = generate_cards(data)
             #     if card_paths:
-            #         from publishers.telegram_publisher import send_photo
             #         for cp in card_paths:
             #             send_photo(cp, caption="", channel="paid")
-            #         logger.info(f"[Step 6-TG] B-21B 카드뉴스 {len(card_paths)}장 발행")
             # except Exception as ce:
-            #     logger.warning(f"[Step 6-TG] B-21B 카드뉴스 실패 (영향 없음): {ce}")
-              
+            #     logger.warning(f"[Step 6-TG] B-21B 카드뉴스 실패: {ce}")
+
         elif session_type == "narrative":
-            # narrative: Gemini AI 시장 해설 → X + TG 무료/유료 (11:30 KST)
             try:
                 from engines.narrative_engine import (
                     generate_narrative, format_narrative_tweet, format_narrative_telegram,
                 )
-                narr = generate_narrative(data)
+                narr           = generate_narrative(data)
                 narrative_text = narr.get("narrative", "")
-                source = narr.get("source", "fallback")
+                source         = narr.get("source", "fallback")
 
                 if narrative_text:
                     from publishers.x_publisher import publish_tweet as _pub_narr
                     tweet = format_narrative_tweet(narrative_text)
                     _pub_narr(tweet)
 
-                    # B-21C: VS 배틀 카드 생성 + X 이미지 트윗
+                    # B-21C: VS 배틀 카드
                     try:
                         from comic.vs_card_generator import generate_vs_card
                         vs_path = generate_vs_card(data)
                         if vs_path:
                             from publishers.x_publisher import publish_tweet_with_image as _pub_vs
-                            vs_tweet = format_narrative_tweet(narrative_text)
-                            _pub_vs(vs_tweet, vs_path)
+                            _pub_vs(format_narrative_tweet(narrative_text), vs_path)
                             logger.info("[Step 6-TG] B-21C VS 카드 발행 완료")
                     except Exception as ve:
                         logger.warning(f"[Step 6-TG] B-21C VS 카드 생성 실패 (영향 없음): {ve}")
@@ -307,7 +336,7 @@ def run(mode: str = "tweet", session: str = None) -> dict:
             except Exception as e:
                 logger.warning(f"[Step 6-TG] AI 내러티브 발행 실패 (영향 없음): {e}")
 
-            # C-5: 오늘의 시장 역사 (narrative 세션 후 독립 발행)
+            # C-5: 오늘의 시장 역사 — 현재 비활성
             # try:
             #     from engines.history_engine import generate_history_today
             #     history = generate_history_today()
@@ -315,22 +344,16 @@ def run(mode: str = "tweet", session: str = None) -> dict:
             #         from publishers.x_publisher import publish_tweet as _pub_hist
             #         _pub_hist(history["tweet"])
             #         send_message(history["telegram"], channel="free")
-            #         logger.info(
-            #             f"[Step 6-TG] C-5 시장 역사 발행 완료 | "
-            #             f"{history['year']}년 | {history['event'][:20]}..."
-            #         )
-            #     else:
-            #         logger.info(f"[Step 6-TG] C-5 시장 역사 스킵: {history.get('reason', '?')}")
             # except Exception as he:
-            #     logger.warning(f"[Step 6-TG] C-5 시장 역사 실패 (영향 없음): {he}")
+            #     logger.warning(f"[Step 6-TG] C-5 시장 역사 실패: {he}")
+
         else:
-            # morning / intraday / close: 무료 채널 텍스트
+            # morning / intraday / close
             free_text = format_free_signal(data, session=session_type)
             send_message(free_text, channel="free")
 
-            # D-3: morning 세션에 오늘 실적 발표 기업 추가
             if session_type == "morning":
-                earnings = {}  # ← 이 줄 추가 (C-17)
+                earnings = {}
                 try:
                     from engines.earnings_checker import get_today_earnings
                     earnings = get_today_earnings()
@@ -340,7 +363,6 @@ def run(mode: str = "tweet", session: str = None) -> dict:
                 except Exception as ee:
                     logger.warning(f"[Step 6-TG] D-3 실적 캘린더 실패 (무시): {ee}")
 
-                # ── C-17: 빅테크 실적 감지 → 단일종목 실적 트윗 발행 ──
                 try:
                     big_tech = earnings.get("big_tech", [])
                     if big_tech:
@@ -359,7 +381,7 @@ def run(mode: str = "tweet", session: str = None) -> dict:
     except Exception as e:
         logger.warning(f"[Step 6-TG] 텔레그램 발행 예외 (X 발행 영향 없음): {e}")
 
-    # ── Step 6-ML: 다국어 발행 (C-11) — 같은 무료 채널에 영/일 번역 ──
+    # ── Step 6-ML: 다국어 발행 (C-11) ────────────────────────
     try:
         from publishers.translator import publish_multilingual, MULTILINGUAL_ENABLED
         if MULTILINGUAL_ENABLED and session_type not in ("narrative", "weekly"):
@@ -377,20 +399,23 @@ def run(mode: str = "tweet", session: str = None) -> dict:
         logger.info("[Step 7] 발행 이력 기록")
         record_published(primary_text, data, tweet_id=str(tweet_id))
 
-    # 결과
     result = {
-        "success": pub_result.get("success", False),
-        "mode": mode,
-        "tweet_id": tweet_id,
-        "dry_run": DRY_RUN,
-        "regime": data.get("market_regime", {}).get("market_regime", ""),
-        "risk_level": data.get("market_regime", {}).get("market_risk_level", ""),
+        "success":      pub_result.get("success", False),
+        "mode":         mode,
+        "tweet_id":     tweet_id,
+        "dry_run":      DRY_RUN,
+        "regime":       data.get("market_regime", {}).get("market_regime", ""),
+        "risk_level":   data.get("market_regime", {}).get("market_risk_level", ""),
         "text_preview": primary_text[:80],
-        "timestamp": datetime.now(timezone.utc).isoformat(),
+        "posts_count":  len(posts),
+        "timestamp":    datetime.now(timezone.utc).isoformat(),
     }
 
     logger.info(f"{'='*50}")
-    logger.info(f"[run_view] 완료 — success={result['success']} | id={tweet_id}")
+    logger.info(
+        f"[run_view] 완료 — success={result['success']} | "
+        f"id={tweet_id} | posts={len(posts)}"
+    )
     logger.info(f"{'='*50}")
 
     return result
@@ -398,13 +423,20 @@ def run(mode: str = "tweet", session: str = None) -> dict:
 
 def _log_publish_summary(data: dict, text: str) -> None:
     """발행 직전 핵심 데이터 로그 출력"""
-    snap = data.get("market_snapshot", {})
+    snap   = data.get("market_snapshot", {})
     regime = data.get("market_regime", {})
-    alloc = data.get("etf_allocation", {}).get("allocation", {})
+    alloc  = data.get("etf_allocation", {}).get("allocation", {})
 
     logger.info("─── 발행 직전 데이터 확인 ───")
-    logger.info(f"  SPY: {snap.get('sp500', 0):+.2f}% | VIX: {snap.get('vix', 0):.1f} | US10Y: {snap.get('us10y', 0):.2f}%")
-    logger.info(f"  Regime: {regime.get('market_regime')} | Risk: {regime.get('market_risk_level')}")
+    logger.info(
+        f"  SPY: {snap.get('sp500', 0):+.2f}% | "
+        f"VIX: {snap.get('vix', 0):.1f} | "
+        f"US10Y: {snap.get('us10y', 0):.2f}%"
+    )
+    logger.info(
+        f"  Regime: {regime.get('market_regime')} | "
+        f"Risk: {regime.get('market_risk_level')}"
+    )
     logger.info(f"  Allocation: {alloc}")
     logger.info(f"  Tweet({len(text)}자):\n{text}")
     logger.info("─────────────────────────────")
