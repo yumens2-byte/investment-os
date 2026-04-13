@@ -407,8 +407,8 @@ jobs:
     timeout-minutes: 10
     env:
       ALERT_TZ: America/New_York
-      ALERT_WINDOWS: "09:30,10:30,15:30"
-      ALERT_GRACE_MINUTES: "12"
+      ALERT_WINDOWS: "09:30,10:30,12:30,15:30"
+      ALERT_GRACE_MINUTES: "20"
       TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
       TELEGRAM_FREE_CHANNEL_ID: ${{ secrets.TELEGRAM_FREE_CHANNEL_ID }}
       FRED_API_KEY: ${{ secrets.FRED_API_KEY }}
