@@ -293,3 +293,23 @@ def publish_thread(posts: list, reply_to: str = None) -> dict:
         "tweet_ids": tweet_ids,
         "dry_run": False,
     }
+
+
+# ── x_publisher.py 하단에 추가 (기존 함수 무변경) ──────────
+def post_alert_tweet(alert_text: str, dry_run: bool = False) -> bool:
+    MAX_LEN = 500
+    if len(alert_text) > MAX_LEN:
+        alert_text = alert_text[:MAX_LEN - 3] + "..."
+        logger.warning(f"[XPublisher] Alert 트윗 트림 적용")
+    if dry_run:
+        logger.info(f"[XPublisher][DRY_RUN] Alert 발행 생략:\n{alert_text}")
+        return True
+    try:
+        client   = _get_client()
+        resp     = client.create_tweet(text=alert_text)
+        tweet_id = resp.data.get("id", "unknown")
+        logger.info(f"[XPublisher] Alert 트윗 완료 tweet_id={tweet_id}")
+        return True
+    except Exception as e:
+        logger.error(f"[XPublisher] Alert 트윗 실패: {e}")
+        return False
