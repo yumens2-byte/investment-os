@@ -80,18 +80,7 @@ jobs:
       
       - run: pip install -r requirements.txt
 
-      - name: Cache apt packages
-        uses: actions/cache@v4
-        with:
-          path: /var/cache/apt/archives/*.deb
-          key: apt-fonts-nanum-v1
-
-      - name: Install Korean fonts
-        run: |
-          sudo apt-get update -qq
-          sudo apt-get install -y --no-install-recommends fonts-nanum   
-          
-      - run: playwright install chromium --with-deps
+      # pilot_test는 외부 API 없이 픽스처로 동작 — Playwright/fonts 불필요
       - run: python main.py test --round all
         env:
           DRY_RUN: "true"
