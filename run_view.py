@@ -197,13 +197,35 @@ def run(mode: str = "tweet", session: str = None) -> dict:
         logger.warning(f"[Step 5.5] 이미지 생성 예외 — 텍스트만 발행: {e}")
 
     # ── Step 6: X 발행 ─────────────────────────────────────────
-    # v1.30.0: len(posts)>1 조건 추가
-    #   tweet 모드에서 감성화로 스레드가 됐을 때 publish_thread 호출
+    # v1.30.1: 이미지 + 스레드 조합 로직 추가
+    #   스레드(len>1) + 이미지 있음 → 첫 트윗 이미지 첨부 후 나머지 reply 스레드
+    #   스레드(len>1) + 이미지 없음 → 텍스트 스레드
+    #   단일 트윗 + 이미지 있음   → 이미지 트윗 (기존 동일)
+    #   단일 트윗 + 이미지 없음   → 텍스트 트윗
     logger.info(f"[Step 6] X 발행 (mode={mode}, posts={len(posts)}트윗)")
     from publishers.x_publisher import publish_tweet, publish_tweet_with_image, publish_thread
 
     if mode == "thread" or len(posts) > 1:
-        pub_result = publish_thread(posts)
+        if image_path:
+            # 이미지 + 스레드 조합:
+            # 첫 트윗(후킹)에 이미지 첨부 → 나머지(본문+CTA)를 reply 스레드로 연결
+            first_result = publish_tweet_with_image(posts[0], image_path)
+            first_id     = first_result.get("tweet_id")
+            if first_result.get("success") and len(posts) > 1 and first_id:
+                rest_result = publish_thread(posts[1:], reply_to=str(first_id))
+                pub_result  = {
+                    "success":   rest_result.get("success", False),
+                    "tweet_id":  first_id,
+                    "tweet_ids": [first_id] + rest_result.get("tweet_ids", []),
+                }
+                logger.info(
+                    f"[Step 6] 이미지+스레드 발행 완료: "
+                    f"첫트윗={first_id} | 전체={len(posts)}트윗"
+                )
+            else:
+                pub_result = first_result
+        else:
+            pub_result = publish_thread(posts)
     elif image_path and image_tweet_text:
         pub_result = publish_tweet_with_image(image_tweet_text, image_path)
     else:
