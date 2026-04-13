@@ -220,8 +220,10 @@ def _is_alert_window() -> tuple[bool, str]:
         target_total_min = hh * 60 + mm
         diff             = now_total_min - target_total_min
 
-        # target 시각 이후 ~ grace 분 이내만 허용
-        if 0 <= diff <= grace_minutes:
+        # target 시각 ±grace 분 이내 허용 (양방향)
+        # 수정 전: 0 <= diff (단방향, target 이후만) → target 시각 이전 진입 불가 버그
+        # 수정 후: -grace <= diff (양방향) → target ±grace 범위 전체 허용
+        if -grace_minutes <= diff <= grace_minutes:
             return True, (
                 f"inside_window_et:{now_et.isoformat()} "
                 f"target={hhmm} grace={grace_minutes}m diff={diff}m"
