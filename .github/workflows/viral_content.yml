@@ -55,10 +55,13 @@ jobs:
       - name: Run viral content
         run: python -c "from engines.viral_engine import run_viral; print(run_viral('viral_afternoon'))"
 
-  # ── C-20 극단적 선택 — 오전 08:00 KST ──────────────────────
-  c20_morning:
+  # ── C-20 극단적 선택 — 오전 08:00 KST 퇴근 18:00 KST ──────────────────────
+  c20:
     name: C-20 극단적 선택 (오전 08:00 KST)
-    if: github.event_name == 'workflow_dispatch' && github.event.inputs.session == 'viral_c20_morning' || github.event_name == 'schedule' && (github.event.schedule == '0 23 * * 0-4')
+    if: |
+        github.event_name == 'workflow_dispatch' && github.event.inputs.session == 'viral_c20' || 
+        github.event_name == 'schedule' && (github.event.schedule == '0 23 * * 0-4') || 
+        github.event_name == 'schedule' && (github.event.schedule == '0 9 * * 1-5')
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
@@ -71,30 +74,8 @@ jobs:
       - name: Anti-bot random delay (schedule only)
         if: github.event_name != 'workflow_dispatch'
         run: |
-          DELAY=$((RANDOM % 600 + 60))
+          DELAY=$((RANDOM % 100))
           echo "⏱️ Random delay: ${DELAY}s"
           sleep $DELAY
       - name: Run C-20 오전
-        run: python -c "from engines.viral_engine import run_viral_c20; print(run_viral_c20('viral_c20_morning'))"
-
-  # ── C-20 극단적 선택 — 퇴근 18:00 KST ──────────────────────
-  c20_evening:
-    name: C-20 극단적 선택 (퇴근 18:00 KST)
-    if: github.event_name == 'workflow_dispatch' && github.event.inputs.session == 'viral_c20_evening' || github.event_name == 'schedule' && (github.event.schedule == '0 9 * * 1-5')
-    runs-on: ubuntu-latest
-    timeout-minutes: 10
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
-        with:
-          python-version: "3.11"
-          cache: pip
-      - run: pip install -r requirements.txt
-      - name: Anti-bot random delay (schedule only)
-        if: github.event_name != 'workflow_dispatch'
-        run: |
-          DELAY=$((RANDOM % 600 + 60))
-          echo "⏱️ Random delay: ${DELAY}s"
-          sleep $DELAY
-      - name: Run C-20 퇴근
-        run: python -c "from engines.viral_engine import run_viral_c20; print(run_viral_c20('viral_c20_evening'))"
+        run: python -c "from engines.viral_engine import run_viral_c20; print(run_viral_c20('viral_c20'))"
