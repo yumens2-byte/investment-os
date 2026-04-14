@@ -11,9 +11,9 @@ on:
   workflow_dispatch:
     inputs:
       session:
-        description: "viral_afternoon | c20"
+        description: "viral_afternoon | C-20"
         required: false
-        default: c20
+        default: C-20
 
 env:
   X_API_KEY: ${{ secrets.X_API_KEY }}
@@ -33,33 +33,33 @@ env:
   SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
 
 jobs:
-  viral_afternoon:
-    name: Viral Afternoon (16~19 KST)
-    runs-on: ubuntu-latest
-    timeout-minutes: 240
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
-        with:
-          python-version: "3.11"
-          cache: pip
-      - run: pip install -r requirements.txt
-      - name: Install Korean fonts
-        run: sudo apt-get install -y fonts-noto-cjk
-      - name: Anti-bot random delay (schedule only)
-        if: github.event_name != 'workflow_dispatch'
-        run: |
-          DELAY=$((RANDOM % 200))
-          echo "⏱️ Random delay: ${DELAY}s ($((DELAY/60))m $((DELAY%60))s)"
-          sleep $DELAY
-      - name: Run viral content
-        run: python -c "from engines.viral_engine import run_viral; print(run_viral('viral_afternoon'))"
+  # viral_afternoon:
+  #   name: Viral Afternoon (16~19 KST)
+  #   runs-on: ubuntu-latest
+  #   timeout-minutes: 240
+  #   steps:
+  #     - uses: actions/checkout@v4
+  #     - uses: actions/setup-python@v5
+  #       with:
+  #         python-version: "3.11"
+  #         cache: pip
+  #     - run: pip install -r requirements.txt
+  #     - name: Install Korean fonts
+  #       run: sudo apt-get install -y fonts-noto-cjk
+  #     - name: Anti-bot random delay (schedule only)
+  #       if: github.event_name != 'workflow_dispatch'
+  #       run: |
+  #         DELAY=$((RANDOM % 200))
+  #         echo "⏱️ Random delay: ${DELAY}s ($((DELAY/60))m $((DELAY%60))s)"
+  #         sleep $DELAY
+  #     - name: Run viral content
+  #       run: python -c "from engines.viral_engine import run_viral; print(run_viral('viral_afternoon'))"
 
   # ── C-20 극단적 선택 — 오전 08:00 KST 퇴근 18:00 KST ──────────────────────
-  c20:
+  C-20:
     name: C-20 극단적 선택 (오전 08:00 KST)
     if: |
-        github.event_name == 'workflow_dispatch' && github.event.inputs.session == 'viral_c20' || 
+        github.event_name == 'workflow_dispatch' && github.event.inputs.session == 'C-20' || 
         github.event_name == 'schedule' && (github.event.schedule == '0 23 * * 0-4') || 
         github.event_name == 'schedule' && (github.event.schedule == '0 9 * * 1-5')
     runs-on: ubuntu-latest
