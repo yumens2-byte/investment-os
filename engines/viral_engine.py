@@ -78,7 +78,7 @@ def should_run(session: str) -> bool:
         return True
 
     # 오후 세션 + C-20 전용 세션 허용
-    if session in ("viral_afternoon", "viral_c20", "viral_c20_morning", "viral_c20_evening"):
+    if session in ("viral_c20", "viral_c20_morning", "viral_c20_evening"):
         return True
 
     logger.info(f"[Viral] 오후 세션만 지원 → 스킵 (session={session})")
@@ -505,7 +505,7 @@ def _generate_dilemma_image_only(opt_a_en: str, opt_b_en: str,
 
     Returns: 이미지 파일 경로 or None
     """
-    import os, base64
+    import os
     from datetime import datetime, timezone
 
     date_str = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M")
@@ -528,16 +528,13 @@ def _generate_dilemma_image_only(opt_a_en: str, opt_b_en: str,
 
     try:
         from core.gemini_gateway import generate_image
-        result = generate_image(prompt=prompt)
-        if result.get("success"):
-            img_data = result.get("image_data")
-            if img_data:
-                with open(out_path, "wb") as f:
-                    f.write(base64.b64decode(img_data))
-                logger.info(f"[Viral-C20] 이미지 생성 완료: {out_path} "
-                            f"(key={result.get('key', '?')})")
-                return out_path
-        logger.warning(f"[Viral-C20] Gemini 이미지 실패: {result.get('error', '?')}")
+        # output_path 전달 → gateway 내부에서 파일 저장까지 처리
+        result = generate_image(prompt=prompt, output_path=out_path)
+        if result.get("success") and result.get("image_path"):
+            logger.info(f"[Viral-C20] 이미지 생성 완료: {out_path} "
+                        f"(key={result.get('key_used', '?')} paid={result.get('paid')})")
+            return out_path
+        logger.warning(f"[Viral-C20] Gemini 이미지 실패: {result.get('error', 'unknown')}")
         return None
     except Exception as e:
         logger.warning(f"[Viral-C20] 이미지 생성 예외: {e}")
