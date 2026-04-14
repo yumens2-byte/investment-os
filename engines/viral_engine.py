@@ -3,21 +3,34 @@ engines/viral_engine.py (C-6 / C-18 / C-19 / C-20 통합)
 ===================================================
 바이럴 콘텐츠 통합 엔진.
 
-하루 1회, 4개 콘텐츠 중 1개를 랜덤 선택하여 발행.
+하루 1회, 콘텐츠 중 1개를 랜덤 선택하여 발행.
 시간대: 오후(16~19 KST) 고정.
 
 랜덤 딜레이: yml에서 처리 (소스 레벨 sleep 없음)
-퀴즈 reply: 30분 sleep 유지 (유일한 소스 레벨 sleep)
 수동 실행(workflow_dispatch): 딜레이 없이 즉시 수행
 
 콘텐츠:
-  C-6:  금융 퀴즈 (4지선다, 30분 후 정답 reply)
+  C-6:  금융 퀴즈 — ⛔ 중단 (함수 주석 보존, 선택 풀에서 제외)
   C-18: 물가/자산 비교 ($100의 시간 여행)
   C-19: 캐릭터 투표 (일요일만, C-7 소설 연동)
-  C-20: 극단적 선택 (A vs B, 투자/돈 관련)
+  C-20: 극단적 선택 (A vs B, 투자/돈 관련) + 이미지 선별 생성
 
-VERSION = "1.4.0"
-RPD: +1/일 (Gemini flash-lite) + 이미지 +1~2/회
+VERSION = "1.5.1"
+RPD: +1/일 (Gemini flash-lite) + 이미지 +1/회 (needs_image=True 시)
+
+v1.5.1 (2026-04-14):
+  - _generate_dilemma_viral() 프롬프트 전면 교체 (로직 변경 없음)
+    - 타겟: 20~30대 직장인/투자 입문자
+    - 카테고리 8개 → 12개 (외모vs돈, 연애vs재테크, 배우자선택, SNS/크리에이터 추가)
+    - 예시 5개 프롬프트에 직접 삽입 → Gemini 자극도/구어체 방향성 고정
+    - temperature 0.98 → 1.0
+
+v1.5.0 (2026-04-14):
+  - C-6 금융퀴즈 중단 (_generate_quiz 주석 보존, 선택 풀 제거)
+  - _select_content_type(): quiz 제거 → money/dilemma 평일, money/dilemma/vote 일요일
+  - _generate_dilemma_viral(): needs_image 선별 판단 + 카테고리별 해시태그 강화
+  - run_viral_c20(): needs_image=False 시 이미지 생성 스킵 → 텍스트 발행
+  - run_viral(): quiz 분기 주석 처리
 
 v1.4.0 (2026-04-14):
   C-20 이미지 고도화 + 퇴근/출근 전용 파이프라인
@@ -78,7 +91,7 @@ def should_run(session: str) -> bool:
         return True
 
     # 오후 세션 + C-20 전용 세션 허용
-    if session in ("viral_c20", "viral_c20_morning", "viral_c20_evening"):
+    if session in ("viral_afternoon", "viral_c20", "viral_c20_morning", "viral_c20_evening"):
         return True
 
     logger.info(f"[Viral] 오후 세션만 지원 → 스킵 (session={session})")
@@ -92,124 +105,123 @@ def should_run(session: str) -> bool:
 
 def _select_content_type() -> str:
     """
-    4개 콘텐츠 중 1개 랜덤 선택.
-    일요일: quiz / money / dilemma / vote (4개 중 1개)
-    평일: quiz / money / dilemma (3개 중 1개, 투표는 일요일만)
+    콘텐츠 랜덤 선택.
+    C-6 금융퀴즈 중단 (v1.5.0) — 선택 풀에서 제외.
+    일요일: money / dilemma / vote (3개 중 1개)
+    평일:   money / dilemma       (2개 중 1개)
     """
     h = _today_hash()
 
     if _is_sunday():
-        types = ["quiz", "money", "dilemma", "vote"]
+        types = ["money", "dilemma", "vote"]
     else:
-        types = ["quiz", "money", "dilemma"]
+        types = ["money", "dilemma"]
 
     return types[h % len(types)]
 
 
 # ──────────────────────────────────────────────────────────────
-# C-6: 금융 퀴즈
+# C-6: 금융 퀴즈 — ⛔ 중단 (v1.5.0)
+# 함수 코드 보존. _select_content_type()에서 제외됨.
+# 재활성화 시: _select_content_type() types 리스트에 "quiz" 추가
 # ──────────────────────────────────────────────────────────────
 
-def _generate_quiz() -> dict:
-    """
-    Gemini로 금융 퀴즈 1개 생성.
-    Returns: {success, tweet, reply, tg_text, category}
-    """
-    try:
-        from core.gemini_gateway import call, is_available
-        if not is_available():
-            return {"success": False, "error": "Gemini 미사용"}
-
-        prompt = (
-            "투자/금융 퀴즈 1개를 JSON으로 생성해줘.\n\n"
-            "조건:\n"
-            "- 4지선다 객관식 (A/B/C/D)\n"
-            "- 카테고리: 투자 역사, 금융 상식, ETF 지식, 경제 용어, 유명 투자자 중 랜덤\n"
-            "- 난이도: 초급~중급 (일반인도 참여 가능)\n"
-            "- 정답 해설 2~3문장\n"
-            "- 재미있는 사실(fun fact) 1개 포함\n\n"
-            "JSON 형식:\n"
-            "{\n"
-            '  "question": "질문",\n'
-            '  "options": {"A": "...", "B": "...", "C": "...", "D": "..."},\n'
-            '  "answer": "D",\n'
-            '  "explanation": "해설",\n'
-            '  "fun_fact": "재미있는 사실",\n'
-            '  "category": "카테고리"\n'
-            "}\n"
-        )
-
-        result = call(
-            prompt=prompt,
-            model="flash-lite",
-            max_tokens=500,
-            temperature=0.9,
-            response_json=True,
-        )
-
-        if not result.get("success") or not result.get("data"):
-            return {"success": False, "error": "Gemini 퀴즈 생성 실패"}
-
-        quiz = result["data"]
-        q = quiz.get("question", "")
-        opts = quiz.get("options", {})
-        answer = quiz.get("answer", "")
-        explanation = quiz.get("explanation", "")
-        fun_fact = quiz.get("fun_fact", "")
-        category = quiz.get("category", "금융상식")
-
-        # 퀴즈 번호 (날짜 기반)
-        quiz_no = int(datetime.now(KST).strftime("%j"))  # 1~366
-
-        # 퀴즈 트윗
-        tweet = (
-            f"🧠 금융 퀴즈 #{quiz_no}\n\n"
-            f"Q. {q}\n\n"
-            f"A) {opts.get('A', '')}\n"
-            f"B) {opts.get('B', '')}\n"
-            f"C) {opts.get('C', '')}\n"
-            f"D) {opts.get('D', '')}\n\n"
-            f"정답은 다음 트윗에서! 👇\n"
-            f"댓글로 예상 정답 남겨주세요 🔥\n\n"
-            f"#금융퀴즈 #투자상식 #ETF투자"
-        )
-
-        # 정답 reply
-        reply = (
-            f"✅ 정답: {answer}) {opts.get(answer, '')}\n\n"
-            f"{explanation}\n\n"
-            f"💡 {fun_fact}\n\n"
-            f"내일 퀴즈도 기대해주세요! 🧠"
-        )
-
-        # TG 포맷
-        tg_text = (
-            f"🧠 <b>금융 퀴즈 #{quiz_no}</b>\n\n"
-            f"Q. {q}\n\n"
-            f"A) {opts.get('A', '')}\n"
-            f"B) {opts.get('B', '')}\n"
-            f"C) {opts.get('C', '')}\n"
-            f"D) {opts.get('D', '')}\n\n"
-            f"✅ 정답: {answer}) {opts.get(answer, '')}\n"
-            f"{explanation}\n\n"
-            f"💡 {fun_fact}"
-        )
-
-        logger.info(f"[Viral] C-6 퀴즈 생성: {category} | 정답={answer}")
-
-        return {
-            "success": True,
-            "type": "quiz",
-            "tweet": tweet[:X_TWEET_MAX],
-            "reply": reply[:X_REPLY_MAX],
-            "tg_text": tg_text,
-            "category": category,
-            "has_reply": True,  # 30분 후 정답 reply 발행 필요
-        }
-
-    except Exception as e:
-        logger.warning(f"[Viral] C-6 퀴즈 생성 실패: {e}")
-        return {"success": False, "error": str(e)}
+# def _generate_quiz() -> dict:
+#     """
+#     Gemini로 금융 퀴즈 1개 생성.
+#     Returns: {success, tweet, reply, tg_text, category}
+#     """
+#     try:
+#         from core.gemini_gateway import call, is_available
+#         if not is_available():
+#             return {"success": False, "error": "Gemini 미사용"}
+#
+#         prompt = (
+#             "투자/금융 퀴즈 1개를 JSON으로 생성해줘.\n\n"
+#             "조건:\n"
+#             "- 4지선다 객관식 (A/B/C/D)\n"
+#             "- 카테고리: 투자 역사, 금융 상식, ETF 지식, 경제 용어, 유명 투자자 중 랜덤\n"
+#             "- 난이도: 초급~중급 (일반인도 참여 가능)\n"
+#             "- 정답 해설 2~3문장\n"
+#             "- 재미있는 사실(fun fact) 1개 포함\n\n"
+#             "JSON 형식:\n"
+#             "{\n"
+#             '  "question": "질문",\n'
+#             '  "options": {"A": "...", "B": "...", "C": "...", "D": "..."},\n'
+#             '  "answer": "D",\n'
+#             '  "explanation": "해설",\n'
+#             '  "fun_fact": "재미있는 사실",\n'
+#             '  "category": "카테고리"\n'
+#             "}\n"
+#         )
+#
+#         result = call(
+#             prompt=prompt,
+#             model="flash-lite",
+#             max_tokens=500,
+#             temperature=0.9,
+#             response_json=True,
+#         )
+#
+#         if not result.get("success") or not result.get("data"):
+#             return {"success": False, "error": "Gemini 퀴즈 생성 실패"}
+#
+#         quiz = result["data"]
+#         q = quiz.get("question", "")
+#         opts = quiz.get("options", {})
+#         answer = quiz.get("answer", "")
+#         explanation = quiz.get("explanation", "")
+#         fun_fact = quiz.get("fun_fact", "")
+#         category = quiz.get("category", "금융상식")
+#
+#         quiz_no = int(datetime.now(KST).strftime("%j"))
+#
+#         tweet = (
+#             f"🧠 금융 퀴즈 #{quiz_no}\n\n"
+#             f"Q. {q}\n\n"
+#             f"A) {opts.get('A', '')}\n"
+#             f"B) {opts.get('B', '')}\n"
+#             f"C) {opts.get('C', '')}\n"
+#             f"D) {opts.get('D', '')}\n\n"
+#             f"정답은 다음 트윗에서! 👇\n"
+#             f"댓글로 예상 정답 남겨주세요 🔥\n\n"
+#             f"#금융퀴즈 #투자상식 #ETF투자"
+#         )
+#
+#         reply = (
+#             f"✅ 정답: {answer}) {opts.get(answer, '')}\n\n"
+#             f"{explanation}\n\n"
+#             f"💡 {fun_fact}\n\n"
+#             f"내일 퀴즈도 기대해주세요! 🧠"
+#         )
+#
+#         tg_text = (
+#             f"🧠 <b>금융 퀴즈 #{quiz_no}</b>\n\n"
+#             f"Q. {q}\n\n"
+#             f"A) {opts.get('A', '')}\n"
+#             f"B) {opts.get('B', '')}\n"
+#             f"C) {opts.get('C', '')}\n"
+#             f"D) {opts.get('D', '')}\n\n"
+#             f"✅ 정답: {answer}) {opts.get(answer, '')}\n"
+#             f"{explanation}\n\n"
+#             f"💡 {fun_fact}"
+#         )
+#
+#         logger.info(f"[Viral] C-6 퀴즈 생성: {category} | 정답={answer}")
+#
+#         return {
+#             "success": True,
+#             "type": "quiz",
+#             "tweet": tweet[:X_TWEET_MAX],
+#             "reply": reply[:X_REPLY_MAX],
+#             "tg_text": tg_text,
+#             "category": category,
+#             "has_reply": True,
+#         }
+#
+#     except Exception as e:
+#         logger.warning(f"[Viral] C-6 퀴즈 생성 실패: {e}")
+#         return {"success": False, "error": str(e)}
 
 
 # ──────────────────────────────────────────────────────────────
@@ -397,44 +409,73 @@ def _generate_dilemma_viral() -> dict:
         if not is_available():
             return {"success": False, "error": "Gemini 미사용"}
 
-        # 카테고리 로테이션 (날짜 해시 기반)
+        # 카테고리 로테이션 (날짜 해시 기반) — v1.5.1: 12개로 확장
         h = _today_hash()
         categories = [
-            "극단적 수익 vs 안정 (연복리/배당/일시불 등)",
-            "시간 vs 돈 (인생 시간을 사는 상황)",
-            "직업/연봉 vs 투자 자유",
-            "자산 선택 (부동산/주식/코인/금)",
-            "복리 vs 일시불 극단적 비교",
-            "인생 한 방 vs 평생 안정 수입",
+            # 기존 — 투자/자산
+            "극단적 수익 vs 안정 (연복리/배당/일시불, 숫자 크게)",
+            "인생 한 방 vs 평생 안정 수입 (극단적 금액)",
+            "자산 선택 (부동산/주식/코인/금 극단 비교)",
+            "복리 vs 일시불 (시간 가치 논쟁)",
+            # 직장/커리어
+            "직장 현실 (연봉 vs 자유, 꼰대 vs 리모트 등 2030 공감)",
+            "SNS/크리에이터 vs 안정 직장 (팔로워/구독자 vs 월급)",
+            "N잡러/FIRE 족 vs 대기업 정규직",
+            # 외모/이성/연애 — 돈과 엮기
+            "외모/매력 vs 돈 (이성 현실, 구체적 극단 상황)",
+            "연애 vs 재테크 (2030 현실 고민)",
+            "배우자/파트너 선택 — 외모 극단 vs 자산 극단",
+            # 소비/라이프스타일
+            "플렉스 소비 극단 (람보르기니/명품 vs 절약 부자)",
+            "소비 스타일 (럭셔리 거지 vs 검소 부자 라이프)",
         ]
         category_hint = categories[h % len(categories)]
 
         prompt = (
-            "투자/돈/자산 관련 '극단적 선택' 콘텐츠를 JSON으로 생성해줘.\n\n"
+            "20~30대 직장인/투자 입문자 타겟 '극단적 선택' SNS 콘텐츠를 JSON으로 생성해줘.\n\n"
             f"오늘 카테고리: {category_hint}\n\n"
-            "핵심 조건:\n"
-            "- 두 선택지 모두 극단적으로 매력적 (정답 없음)\n"
-            "- 구체적이고 큰 숫자 포함 (1억, 10억, 50억, 평생 등)\n"
-            "- 누군가는 격렬히 A, 누군가는 격렬히 B 선택 → 댓글 전쟁 유발\n"
-            "- '나라면 무조건 B지'가 아닌 진짜 고민되는 상황\n"
-            "- 재미있고 논쟁적, 투자 권유 절대 아님\n\n"
+            "핵심 조건 (이것이 가장 중요):\n"
+            "- 읽자마자 '헐', '와 이거 진짜 고민되는데' 반응 나와야 함\n"
+            "- A 선택하면 B가 아깝고, B 선택하면 A가 아쉬운 진짜 딜레마\n"
+            "- 누군가는 죽어도 A, 누군가는 죽어도 B → 댓글 전쟁 폭발\n"
+            "- 구체적 숫자 필수 (애매한 '많다/적다' 금지, '월 300만원', '자산 50억' 등)\n"
+            "- 2030 현실에 맞는 구어체, 친근한 어투\n"
+            "- 투자 권유 절대 아님 — 재미/토론 콘텐츠\n\n"
+            "예시 (이 수준의 자극도와 구체성):\n"
+            "- '쭉쭉빵빵인데 평생 월급 200만원 vs 외모 평범한데 현금 자산 50억'\n"
+            "- '유튜브 구독자 100만인데 수익 0원 vs 무명인데 월 순수익 500만원'\n"
+            "- '연봉 1억인데 꼰대 상사+매일 야근 vs 연봉 3천인데 풀리모트+자유'\n"
+            "- '결혼 상대: 얼굴 10점인데 빚 2억 vs 외모 5점인데 현금 10억'\n"
+            "- '지금 비트코인 10개 vs 삼성전자 1000주 — 10년 묵히기'\n\n"
+            "needs_image 판단:\n"
+            "- true: 그림으로 표현 가능한 극단적 외형/환경 대비\n"
+            "  (외모, 차, 집, 라이프스타일, 직장 환경 등)\n"
+            "- false: 숫자/금액/기간이 핵심인 추상 비교\n\n"
             "JSON 형식:\n"
             "{\n"
-            '  "option_a": "선택지 A (한국어, 구체적 숫자 포함)",\n'
-            '  "option_b": "선택지 B (한국어, 구체적 숫자 포함)",\n'
-            '  "option_a_en": "Option A (English, for image)",\n'
-            '  "option_b_en": "Option B (English, for image)",\n'
-            '  "condition": "조건 한 줄 (예: 딱 하나만 선택 가능, 평생 바꿀 수 없음)",\n'
+            '  "option_a": "선택지 A (한국어, 구어체, 구체적 숫자)",\n'
+            '  "option_b": "선택지 B (한국어, 구어체, 구체적 숫자)",\n'
+            '  "option_a_en": "Option A (English, concise for image)",\n'
+            '  "option_b_en": "Option B (English, concise for image)",\n'
+            '  "condition": "조건 한 줄 (선택 불가 환경, 예: 딱 하나만, 평생 못 바꿈)",\n'
             '  "condition_en": "Condition in English",\n'
-            '  "category": "카테고리명"\n'
-            "}\n"
+            '  "category": "카테고리명",\n'
+            '  "needs_image": true,\n'
+            '  "hashtags": "#극단적선택 #태그2 #태그3 #태그4 #태그5"\n'
+            "}\n\n"
+            "hashtags 카테고리별 기준:\n"
+            "- 투자/자산: #재테크 #주식 #ETF #경제 #돈버는법\n"
+            "- 직장/커리어: #직장인 #N잡러 #FIRE족 #경제적자유 #퇴사\n"
+            "- 외모/연애: #연애현실 #돈이최고 #결혼 #현실연애 #부자\n"
+            "- 소비/라이프: #플렉스 #부자되기 #인생선택 #돈관리 #재테크\n"
+            "반드시 #극단적선택 포함. 총 5~6개.\n"
         )
 
         result = call(
             prompt=prompt,
             model="flash-lite",
-            max_tokens=400,
-            temperature=0.98,
+            max_tokens=500,
+            temperature=1.0,
             response_json=True,
         )
 
@@ -449,6 +490,8 @@ def _generate_dilemma_viral() -> dict:
         condition    = d.get("condition", "")
         condition_en = d.get("condition_en", condition)
         category     = d.get("category", "투자")
+        needs_image  = bool(d.get("needs_image", False))
+        hashtags     = d.get("hashtags", "#극단적선택 #재테크 #돈 #주식 #경제")
 
         if not opt_a or not opt_b:
             return {"success": False, "error": "선택지 누락"}
@@ -460,7 +503,7 @@ def _generate_dilemma_viral() -> dict:
         if condition:
             tweet_lines.append(f"\n⚠️ {condition}")
         tweet_lines.append("\n어느 쪽? 댓글로! A 또는 B 👇")
-        tweet_lines.append("\n#극단적선택 #투자 #돈")
+        tweet_lines.append(f"\n{hashtags}")
 
         tweet = "\n".join(tweet_lines)
         if len(tweet) > 4000:
@@ -475,7 +518,7 @@ def _generate_dilemma_viral() -> dict:
             tg_text += f"\n⚠️ {condition}\n"
         tg_text += "\n어느 쪽? 댓글로! 👇"
 
-        logger.info(f"[Viral-C20] 자극적 선택 생성: {category}")
+        logger.info(f"[Viral-C20] 자극적 선택 생성: {category} | needs_image={needs_image}")
         return {
             "success":      True,
             "type":         "dilemma",
@@ -489,6 +532,8 @@ def _generate_dilemma_viral() -> dict:
             "condition":    condition,
             "condition_en": condition_en,
             "category":     category,
+            "needs_image":  needs_image,
+            "hashtags":     hashtags,
         }
 
     except Exception as e:
@@ -584,22 +629,27 @@ def run_viral_c20(session: str = "viral_c20") -> dict:
     hook_tweet   = content["tweet"]
     tg_text      = content["tg_text"]
     category     = content.get("category", "투자")
+    needs_image  = content.get("needs_image", False)
+    hashtags     = content.get("hashtags", "#극단적선택 #재테크 #돈 #주식 #경제")
 
-    # ── Step 2: 이미지 생성 (Gemini 4키 순차) ────────────────
-    image_path = _generate_dilemma_image_only(opt_a_en, opt_b_en, condition_en)
-
-    if not image_path:
-        # 이미지 실패 → TG 안내 + 발행 중단
-        logger.warning(f"[Viral-C20] 이미지 생성 전부 실패 → 발행 중단")
-        _tg_notify(
-            f"⚠️ [C-20 {slot}] 이미지 생성 실패 — 발행 중단\n"
-            f"Gemini API 일시 장애로 오늘 {slot} 극단적 선택 콘텐츠를 발행하지 못했습니다.\n"
-            f"다음 발행 시간에 다시 시도합니다."
-        )
-        return {"success": False, "reason": "image_failed"}
+    # ── Step 2: 이미지 생성 (needs_image=True 시만) ───────────
+    image_path = None
+    if needs_image:
+        image_path = _generate_dilemma_image_only(opt_a_en, opt_b_en, condition_en)
+        if not image_path:
+            # 이미지 실패 → TG 안내 + 발행 중단
+            logger.warning(f"[Viral-C20] 이미지 생성 전부 실패 → 발행 중단")
+            _tg_notify(
+                f"⚠️ [C-20 {slot}] 이미지 생성 실패 — 발행 중단\n"
+                f"Gemini API 일시 장애로 오늘 {slot} 극단적 선택 콘텐츠를 발행하지 못했습니다.\n"
+                f"다음 발행 시간에 다시 시도합니다."
+            )
+            return {"success": False, "reason": "image_failed"}
+    else:
+        logger.info(f"[Viral-C20] needs_image=False → 이미지 생성 스킵 (텍스트 발행)")
 
     # ── Step 3: X 발행 ───────────────────────────────────────
-    # 트윗1: 이미지 + 후킹 / 트윗2: 상세 / 트윗3: CTA
+    # 트윗1: (이미지 or 텍스트) + 후킹 / 트윗2: 상세 / 트윗3: CTA
     opt_a = content["opt_a"]
     opt_b = content["opt_b"]
     condition = content["condition"]
@@ -607,7 +657,7 @@ def run_viral_c20(session: str = "viral_c20") -> dict:
     body_tweet = f"A) {opt_a}\n\nB) {opt_b}"
     if condition:
         body_tweet += f"\n\n⚠️ {condition}"
-    body_tweet += "\n\n#극단적선택 #투자 #돈"
+    body_tweet += f"\n\n{hashtags}"
 
     cta_tweet = (
         "댓글로 A 또는 B 알려주세요 👇\n\n"
@@ -619,41 +669,59 @@ def run_viral_c20(session: str = "viral_c20") -> dict:
     tweet_id = "FAIL"
     x_success = False
     try:
-        from publishers.x_publisher import publish_tweet_with_image, publish_thread
+        from publishers.x_publisher import publish_tweet_with_image, publish_thread, publish_tweet
 
-        first_result = publish_tweet_with_image(hook_tweet, image_path)
-        first_id     = first_result.get("tweet_id")
-
-        if first_result.get("success") and first_id:
-            tweet_id  = first_id
-            x_success = True
-            publish_thread([body_tweet, cta_tweet], reply_to=str(first_id))
-            logger.info(
-                f"[Viral-C20] X 이미지+스레드 발행 완료: "
-                f"첫트윗={first_id} | category={category}"
-            )
+        if image_path:
+            # 이미지 첨부 트윗 + 스레드
+            first_result = publish_tweet_with_image(hook_tweet, image_path)
+            first_id     = first_result.get("tweet_id")
+            if first_result.get("success") and first_id:
+                tweet_id  = first_id
+                x_success = True
+                publish_thread([body_tweet, cta_tweet], reply_to=str(first_id))
+                logger.info(
+                    f"[Viral-C20] X 이미지+스레드 발행 완료: "
+                    f"첫트윗={first_id} | category={category}"
+                )
+            else:
+                raise RuntimeError("이미지 트윗 실패")
         else:
-            raise RuntimeError("이미지 트윗 실패")
+            # 텍스트 스레드 (이미지 없음)
+            posts = [hook_tweet, body_tweet, cta_tweet]
+            pt_result = publish_thread(posts)
+            ids = pt_result.get("tweet_ids", [])
+            if ids:
+                tweet_id  = ids[0]
+                x_success = True
+                logger.info(
+                    f"[Viral-C20] X 텍스트 스레드 발행 완료: "
+                    f"첫트윗={tweet_id} | category={category}"
+                )
+            else:
+                raise RuntimeError("텍스트 스레드 실패")
 
     except Exception as e:
         logger.warning(f"[Viral-C20] X 발행 실패: {e}")
         _tg_notify(
             f"⚠️ [C-20 {slot}] X 발행 실패\n"
-            f"이미지는 생성됐으나 X API 오류로 발행에 실패했습니다.\n"
+            f"{'이미지는 생성됐으나 ' if image_path else ''}X API 오류로 발행에 실패했습니다.\n"
             f"(오류: {str(e)[:100]})"
         )
 
     # ── Step 4: TG 발행 (X 성공 여부 무관) ──────────────────
     try:
         from publishers.telegram_publisher import send_photo, send_message
-        send_photo(image_path, caption=tg_text, channel="free")
-        logger.info("[Viral-C20] TG 무료 채널 이미지 발행 완료")
+        if image_path:
+            send_photo(image_path, caption=tg_text, channel="free")
+        else:
+            send_message(tg_text, channel="free")
+        logger.info("[Viral-C20] TG 무료 채널 발행 완료")
     except Exception as e:
         logger.warning(f"[Viral-C20] TG 발행 실패: {e}")
 
     logger.info(
         f"[Viral-C20] 완료 | x_success={x_success} | "
-        f"tweet_id={tweet_id} | category={category}"
+        f"has_image={bool(image_path)} | tweet_id={tweet_id} | category={category}"
     )
 
     return {
@@ -662,7 +730,7 @@ def run_viral_c20(session: str = "viral_c20") -> dict:
         "tweet_id":  tweet_id,
         "session":   session,
         "category":  category,
-        "has_image": True,
+        "has_image": bool(image_path),
     }
 
 
@@ -782,9 +850,10 @@ def run_viral(session: str = "viral_afternoon") -> dict:
     logger.info(f"[Viral] 콘텐츠 선택: {content_type}")
 
     # ── Step 4: 콘텐츠 생성 ──
-    if content_type == "quiz":
-        content = _generate_quiz()
-    elif content_type == "money":
+    # C-6 금융퀴즈 중단 (v1.5.0) — quiz 분기 주석 처리
+    # if content_type == "quiz":
+    #     content = _generate_quiz()
+    if content_type == "money":
         content = _generate_money_compare()
     elif content_type == "dilemma":
         content = _generate_dilemma()
