@@ -14,11 +14,15 @@ logger = logging.getLogger(__name__)
 
 def _compute_composite_risk_score(market_score: dict, signals: dict) -> int:
     """
-    Market Score 6개 축 + 원시 신호(VIX/Oil) 직접 반영 → 0~100 Risk Score.
+    Market Score 6개 축 + 원시 신호(VIX/Oil/F&G) 직접 반영 → 0~100 Risk Score.
 
-    버그 수정 (v1.5.3):
-      - 기존 정규화 공식이 너무 낮은 점수를 반환해 VIX=31도 LOW로 판정
-      - VIX/Oil 임계치 직접 체크로 하한 보정 추가
+    수정 이력:
+      v1.16.0: VIX/Oil 임계치 직접 체크로 하한 보정 추가
+      v1.17.0 (2026-04-14):
+        - F&G Fear(score=2) 하한 보정 추가 (기존: Extreme Fear만)
+        - Oil High floor 35 → 42 (기존 35는 LOW 경계라 사실상 무효)
+        - VIX 현물/선물 괴리 보정 추가 (vix3m > vix+3 시 구조적 불안 반영)
+        - _map_risk_level LOW 구간 < 40 → < 35 (LOW 너무 넓었음)
     """
     ms = market_score
 
@@ -44,32 +48,51 @@ def _compute_composite_risk_score(market_score: dict, signals: dict) -> int:
     }
     normalized = max(normalized, vix_floor.get(vix_state, 0))
 
+    # 2-B. VIX 현물/선물 괴리 보정 (v1.17.0 추가)
+    #   VIX 선물(vix3m)이 현물보다 3pt+ 높으면 구조적 불안 존재
+    #   → 현물이 Normal이어도 실질 위험 과소평가 방지
+    vix_spot  = signals.get("vix", 0)
+    vix3m     = signals.get("vix3m", 0)
+    if vix3m and vix_spot and (vix3m - vix_spot) >= 3:
+        normalized = max(normalized, 38)   # 괴리 3pt+ → MEDIUM 근접
+
     # 3. Oil Shock 직접 하한 보정
     if signals.get("oil_shock_signal", False):
         normalized = max(normalized, 50)   # Oil Shock → 최소 MEDIUM
 
-    # 3-B. Oil High ($90+) 하한 보정 (v1.16.0 추가)
+    # 3-B. Oil High ($90+) 하한 보정 (v1.17.0: 35 → 42)
+    #   기존 35는 LOW/MEDIUM 경계값 → 보정 효과 없음
+    #   42로 상향해 Oil High 시 MEDIUM 진입 보장
     oil_state = signals.get("oil_state", "Moderate")
     if oil_state == "High":
-        normalized = max(normalized, 35)   # Oil $90~100 → MEDIUM 근접
+        normalized = max(normalized, 42)   # Oil $90~100 → 최소 MEDIUM(42)
 
     # 4. 수익률 곡선 역전 보정
     if signals.get("yield_curve_inverted", False):
         normalized = max(normalized, 40)   # 역전 → 최소 MEDIUM 진입
 
-    # 5. F&G Extreme Fear 하한 보정 (v1.16.0 추가)
-    #    F&G ≤ 1 (Extreme Fear) → 최소 MEDIUM (40)
-    #    시장 전체가 극단적 공포인데 Risk=LOW는 비상식적
+    # 5. F&G 하한 보정 (v1.17.0: Fear 구간도 추가)
     fear_greed = signals.get("fear_greed_score", 3)
     if fear_greed <= 1:
         normalized = max(normalized, 45)   # Extreme Fear → 최소 MEDIUM 중반
+    elif fear_greed == 2:
+        normalized = max(normalized, 40)   # Fear → 최소 MEDIUM 진입
+        # fear_greed_score=2 는 F&G 25 이하 Fear 구간
+        # VIX Normal이어도 심리 지표가 Fear면 MEDIUM은 당연
 
     return max(0, min(100, normalized))
 
 
 def _map_risk_level(score: int) -> str:
-    """03_market_regime_engine.md 8. Risk Level Mapping"""
-    if score < 40:
+    """
+    0~100 점수 → LOW/MEDIUM/HIGH 매핑.
+
+    v1.17.0 (2026-04-14):
+      LOW 구간 < 40 → < 35 로 축소.
+      기존 < 40은 범위가 과대해 현실 리스크를 과소평가.
+      현재 시장(VIX 19 + Oil High + F&G Fear) = Score 40~45 → MEDIUM이 맞음.
+    """
+    if score < 35:
         return "LOW"
     elif score < 70:
         return "MEDIUM"
