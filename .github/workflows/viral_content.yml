@@ -11,9 +11,9 @@ on:
   workflow_dispatch:
     inputs:
       session:
-        description: "viral_afternoon | viral_c20_morning | viral_c20_evening"
+        description: "viral_afternoon | c20"
         required: false
-        default: viral_c20_morning
+        default: c20
 
 env:
   X_API_KEY: ${{ secrets.X_API_KEY }}
