@@ -16,8 +16,14 @@ engines/viral_engine.py (C-6 / C-18 / C-19 / C-20 통합)
   C-19: 캐릭터 투표 (일요일만, C-7 소설 연동)
   C-20: 극단적 선택 (A vs B, 투자/돈 관련)
 
-VERSION = "1.3.0"
-RPD: +1/일 (Gemini flash-lite)
+VERSION = "1.4.0"
+RPD: +1/일 (Gemini flash-lite) + 이미지 +1~2/회
+
+v1.4.0 (2026-04-14):
+  C-20 이미지 고도화 + 퇴근/출근 전용 파이프라인
+  - _generate_dilemma_viral(): 자극적 프롬프트 강화
+  - _generate_dilemma_image_only(): Gemini 4키 순차, 실패 시 None
+  - run_viral_c20(): 이미지 실패→TG안내+중단, X실패→TG안내
 """
 import hashlib
 import logging
@@ -71,8 +77,8 @@ def should_run(session: str) -> bool:
         logger.info(f"[Viral] FORCE_RUN=true → 강제 실행")
         return True
 
-    # 오후 세션만 실행
-    if session == "viral_afternoon":
+    # 오후 세션 + C-20 전용 세션 허용
+    if session in ("viral_afternoon", "viral_c20", "viral_c20_morning", "viral_c20_evening"):
         return True
 
     logger.info(f"[Viral] 오후 세션만 지원 → 스킵 (session={session})")
@@ -370,6 +376,297 @@ def _generate_dilemma() -> dict:
     except Exception as e:
         logger.warning(f"[Viral] C-20 극단적 선택 생성 실패: {e}")
         return {"success": False, "error": str(e)}
+
+
+# ──────────────────────────────────────────────────────────────
+# C-20 v1.4.0: 자극적 버전 + 이미지 전용
+# ──────────────────────────────────────────────────────────────
+
+def _generate_dilemma_viral() -> dict:
+    """
+    C-20 극단적 선택 — 자극적/논쟁적 강화 버전 (v1.4.0).
+    더 극단적인 숫자, 더 고민되는 상황, 댓글 폭발 유도.
+    카테고리 로테이션으로 반복 방지.
+    영문 텍스트도 함께 생성 (이미지 프롬프트용).
+
+    Returns: {success, tweet, tg_text, opt_a, opt_b, opt_a_en, opt_b_en,
+              condition, condition_en, category}
+    """
+    try:
+        from core.gemini_gateway import call, is_available
+        if not is_available():
+            return {"success": False, "error": "Gemini 미사용"}
+
+        # 카테고리 로테이션 (날짜 해시 기반)
+        h = _today_hash()
+        categories = [
+            "극단적 수익 vs 안정 (연복리/배당/일시불 등)",
+            "시간 vs 돈 (인생 시간을 사는 상황)",
+            "직업/연봉 vs 투자 자유",
+            "자산 선택 (부동산/주식/코인/금)",
+            "복리 vs 일시불 극단적 비교",
+            "인생 한 방 vs 평생 안정 수입",
+        ]
+        category_hint = categories[h % len(categories)]
+
+        prompt = (
+            "투자/돈/자산 관련 '극단적 선택' 콘텐츠를 JSON으로 생성해줘.\n\n"
+            f"오늘 카테고리: {category_hint}\n\n"
+            "핵심 조건:\n"
+            "- 두 선택지 모두 극단적으로 매력적 (정답 없음)\n"
+            "- 구체적이고 큰 숫자 포함 (1억, 10억, 50억, 평생 등)\n"
+            "- 누군가는 격렬히 A, 누군가는 격렬히 B 선택 → 댓글 전쟁 유발\n"
+            "- '나라면 무조건 B지'가 아닌 진짜 고민되는 상황\n"
+            "- 재미있고 논쟁적, 투자 권유 절대 아님\n\n"
+            "JSON 형식:\n"
+            "{\n"
+            '  "option_a": "선택지 A (한국어, 구체적 숫자 포함)",\n'
+            '  "option_b": "선택지 B (한국어, 구체적 숫자 포함)",\n'
+            '  "option_a_en": "Option A (English, for image)",\n'
+            '  "option_b_en": "Option B (English, for image)",\n'
+            '  "condition": "조건 한 줄 (예: 딱 하나만 선택 가능, 평생 바꿀 수 없음)",\n'
+            '  "condition_en": "Condition in English",\n'
+            '  "category": "카테고리명"\n'
+            "}\n"
+        )
+
+        result = call(
+            prompt=prompt,
+            model="flash-lite",
+            max_tokens=400,
+            temperature=0.98,
+            response_json=True,
+        )
+
+        if not result.get("success") or not result.get("data"):
+            return {"success": False, "error": "Gemini 극단적 선택 생성 실패"}
+
+        d        = result["data"]
+        opt_a    = d.get("option_a", "")
+        opt_b    = d.get("option_b", "")
+        opt_a_en = d.get("option_a_en", opt_a)
+        opt_b_en = d.get("option_b_en", opt_b)
+        condition    = d.get("condition", "")
+        condition_en = d.get("condition_en", condition)
+        category     = d.get("category", "투자")
+
+        if not opt_a or not opt_b:
+            return {"success": False, "error": "선택지 누락"}
+
+        # 트윗 (후킹용 — 짧고 강렬하게)
+        tweet_lines = ["🔥 극단적 선택\n",
+                       f"A) {opt_a}",
+                       f"B) {opt_b}"]
+        if condition:
+            tweet_lines.append(f"\n⚠️ {condition}")
+        tweet_lines.append("\n어느 쪽? 댓글로! A 또는 B 👇")
+        tweet_lines.append("\n#극단적선택 #투자 #돈")
+
+        tweet = "\n".join(tweet_lines)
+        if len(tweet) > 4000:
+            tweet = tweet[:3997] + "..."
+
+        tg_text = (
+            f"🔥 <b>극단적 선택</b>\n\n"
+            f"A) {opt_a}\n"
+            f"B) {opt_b}\n"
+        )
+        if condition:
+            tg_text += f"\n⚠️ {condition}\n"
+        tg_text += "\n어느 쪽? 댓글로! 👇"
+
+        logger.info(f"[Viral-C20] 자극적 선택 생성: {category}")
+        return {
+            "success":      True,
+            "type":         "dilemma",
+            "tweet":        tweet,
+            "tg_text":      tg_text,
+            "has_reply":    False,
+            "opt_a":        opt_a,
+            "opt_b":        opt_b,
+            "opt_a_en":     opt_a_en,
+            "opt_b_en":     opt_b_en,
+            "condition":    condition,
+            "condition_en": condition_en,
+            "category":     category,
+        }
+
+    except Exception as e:
+        logger.warning(f"[Viral-C20] 자극적 선택 생성 실패: {e}")
+        return {"success": False, "error": str(e)}
+
+
+def _generate_dilemma_image_only(opt_a_en: str, opt_b_en: str,
+                                  condition_en: str = "") -> str | None:
+    """
+    C-20 이미지 생성 — Gemini 4키 순차 시도.
+    main → sub → sub2 → pay 순서.
+    전부 실패 시 None 반환 (HTML fallback 없음).
+
+    Returns: 이미지 파일 경로 or None
+    """
+    import os, base64
+    from datetime import datetime, timezone
+
+    date_str = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M")
+    os.makedirs("data/images", exist_ok=True)
+    out_path = f"data/images/c20_{date_str}.png"
+
+    prompt = (
+        f"Dark cinematic split-screen battle card, 1080x1080 square. "
+        f"LEFT half: deep blue gradient background, huge bold letter 'A' at top, "
+        f"centered white bold text: '{opt_a_en[:80]}'. "
+        f"RIGHT half: deep orange gradient background, huge bold letter 'B' at top, "
+        f"centered white bold text: '{opt_b_en[:80]}'. "
+        f"Center divider: glowing white 'VS' in a circle with dramatic light effect. "
+        f"Top banner: fire emoji + 'EXTREME CHOICE — WHICH ONE?' in bold caps. "
+        + (f"Bottom center: '⚠️ {condition_en[:60]}' in yellow. " if condition_en else "")
+        + f"Bottom right: 'EDT Investment 🐂' small text. "
+        f"Style: high contrast, dramatic, cinematic financial poster. "
+        f"CRITICAL: ALL text MUST be in English. No Korean characters."
+    )
+
+    try:
+        from core.gemini_gateway import generate_image
+        result = generate_image(prompt=prompt)
+        if result.get("success"):
+            img_data = result.get("image_data")
+            if img_data:
+                with open(out_path, "wb") as f:
+                    f.write(base64.b64decode(img_data))
+                logger.info(f"[Viral-C20] 이미지 생성 완료: {out_path} "
+                            f"(key={result.get('key', '?')})")
+                return out_path
+        logger.warning(f"[Viral-C20] Gemini 이미지 실패: {result.get('error', '?')}")
+        return None
+    except Exception as e:
+        logger.warning(f"[Viral-C20] 이미지 생성 예외: {e}")
+        return None
+
+
+def run_viral_c20(session: str = "viral_c20") -> dict:
+    """
+    C-20 극단적 선택 전용 파이프라인 (v1.4.0).
+    KST 08:00 / 18:00 평일 하루 2회.
+
+    흐름:
+      텍스트 생성 → 이미지 생성 (Gemini 4키 순차)
+        이미지 실패 → TG 무료 안내 + 발행 중단
+        이미지 성공 → X 발행 (이미지 트윗 + 스레드)
+          X 실패 → TG 무료 안내 (실패 사실 고지)
+          X 성공 → TG 무료 이미지 발행
+    """
+    logger.info(f"[Viral-C20] v1.4.0 파이프라인 시작 (session={session})")
+
+    if not should_run(session):
+        return {"success": False, "reason": "not_my_slot"}
+
+    slot = "오전" if "morning" in session else "퇴근"
+
+    # TG 안내 헬퍼
+    def _tg_notify(msg: str):
+        try:
+            from publishers.telegram_publisher import send_message
+            send_message(msg, channel="free")
+        except Exception as e:
+            logger.warning(f"[Viral-C20] TG 안내 실패: {e}")
+
+    # ── Step 1: 텍스트 생성 ──────────────────────────────────
+    content = _generate_dilemma_viral()
+    if not content.get("success"):
+        logger.warning(f"[Viral-C20] 텍스트 생성 실패: {content.get('error')}")
+        _tg_notify(
+            f"⚠️ [C-20 {slot}] 콘텐츠 생성 실패\n"
+            f"Gemini 텍스트 생성 오류로 발행을 건너뜁니다."
+        )
+        return content
+
+    opt_a_en     = content["opt_a_en"]
+    opt_b_en     = content["opt_b_en"]
+    condition_en = content["condition_en"]
+    hook_tweet   = content["tweet"]
+    tg_text      = content["tg_text"]
+    category     = content.get("category", "투자")
+
+    # ── Step 2: 이미지 생성 (Gemini 4키 순차) ────────────────
+    image_path = _generate_dilemma_image_only(opt_a_en, opt_b_en, condition_en)
+
+    if not image_path:
+        # 이미지 실패 → TG 안내 + 발행 중단
+        logger.warning(f"[Viral-C20] 이미지 생성 전부 실패 → 발행 중단")
+        _tg_notify(
+            f"⚠️ [C-20 {slot}] 이미지 생성 실패 — 발행 중단\n"
+            f"Gemini API 일시 장애로 오늘 {slot} 극단적 선택 콘텐츠를 발행하지 못했습니다.\n"
+            f"다음 발행 시간에 다시 시도합니다."
+        )
+        return {"success": False, "reason": "image_failed"}
+
+    # ── Step 3: X 발행 ───────────────────────────────────────
+    # 트윗1: 이미지 + 후킹 / 트윗2: 상세 / 트윗3: CTA
+    opt_a = content["opt_a"]
+    opt_b = content["opt_b"]
+    condition = content["condition"]
+
+    body_tweet = f"A) {opt_a}\n\nB) {opt_b}"
+    if condition:
+        body_tweet += f"\n\n⚠️ {condition}"
+    body_tweet += "\n\n#극단적선택 #투자 #돈"
+
+    cta_tweet = (
+        "댓글로 A 또는 B 알려주세요 👇\n\n"
+        "정답은 없습니다 — 여러분의 선택이 답!\n\n"
+        "💡 매일 출근/퇴근 시간 투자 콘텐츠\n"
+        "⚠️ 투자 참고 정보, 투자 권유 아님"
+    )
+
+    tweet_id = "FAIL"
+    x_success = False
+    try:
+        from publishers.x_publisher import publish_tweet_with_image, publish_thread
+
+        first_result = publish_tweet_with_image(hook_tweet, image_path)
+        first_id     = first_result.get("tweet_id")
+
+        if first_result.get("success") and first_id:
+            tweet_id  = first_id
+            x_success = True
+            publish_thread([body_tweet, cta_tweet], reply_to=str(first_id))
+            logger.info(
+                f"[Viral-C20] X 이미지+스레드 발행 완료: "
+                f"첫트윗={first_id} | category={category}"
+            )
+        else:
+            raise RuntimeError("이미지 트윗 실패")
+
+    except Exception as e:
+        logger.warning(f"[Viral-C20] X 발행 실패: {e}")
+        _tg_notify(
+            f"⚠️ [C-20 {slot}] X 발행 실패\n"
+            f"이미지는 생성됐으나 X API 오류로 발행에 실패했습니다.\n"
+            f"(오류: {str(e)[:100]})"
+        )
+
+    # ── Step 4: TG 발행 (X 성공 여부 무관) ──────────────────
+    try:
+        from publishers.telegram_publisher import send_photo, send_message
+        send_photo(image_path, caption=tg_text, channel="free")
+        logger.info("[Viral-C20] TG 무료 채널 이미지 발행 완료")
+    except Exception as e:
+        logger.warning(f"[Viral-C20] TG 발행 실패: {e}")
+
+    logger.info(
+        f"[Viral-C20] 완료 | x_success={x_success} | "
+        f"tweet_id={tweet_id} | category={category}"
+    )
+
+    return {
+        "success":   x_success,
+        "type":      "dilemma",
+        "tweet_id":  tweet_id,
+        "session":   session,
+        "category":  category,
+        "has_image": True,
+    }
 
 
 # ──────────────────────────────────────────────────────────────
