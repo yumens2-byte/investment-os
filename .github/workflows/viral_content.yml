@@ -2,14 +2,18 @@ name: Viral Content
 
 on:
   schedule:
-    # 오후 16:00 KST (UTC 07:00) — 평일만
+    # 기존: 오후 16:00 KST (UTC 07:00) — 평일 C-6/C-18/C-19/C-20 랜덤
     - cron: "0 7 * * 1-5"
+    # C-20 오전: KST 08:00 (UTC 23:00 전날) — 일~목 UTC = 월~금 KST
+    - cron: "0 23 * * 0-4"
+    # C-20 퇴근: KST 18:00 (UTC 09:00) — 평일
+    - cron: "0 9 * * 1-5"
   workflow_dispatch:
     inputs:
       session:
-        description: "viral_afternoon"
+        description: "viral_afternoon | viral_c20_morning | viral_c20_evening"
         required: false
-        default: viral_afternoon
+        default: viral_c20_morning
 
 env:
   X_API_KEY: ${{ secrets.X_API_KEY }}
@@ -50,3 +54,47 @@ jobs:
           sleep $DELAY
       - name: Run viral content
         run: python -c "from engines.viral_engine import run_viral; print(run_viral('viral_afternoon'))"
+
+  # ── C-20 극단적 선택 — 오전 08:00 KST ──────────────────────
+  c20_morning:
+    name: C-20 극단적 선택 (오전 08:00 KST)
+    if: github.event_name == 'workflow_dispatch' && github.event.inputs.session == 'viral_c20_morning' || github.event_name == 'schedule' && (github.event.schedule == '0 23 * * 0-4')
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+      - run: pip install -r requirements.txt
+      - name: Anti-bot random delay (schedule only)
+        if: github.event_name != 'workflow_dispatch'
+        run: |
+          DELAY=$((RANDOM % 600 + 60))
+          echo "⏱️ Random delay: ${DELAY}s"
+          sleep $DELAY
+      - name: Run C-20 오전
+        run: python -c "from engines.viral_engine import run_viral_c20; print(run_viral_c20('viral_c20_morning'))"
+
+  # ── C-20 극단적 선택 — 퇴근 18:00 KST ──────────────────────
+  c20_evening:
+    name: C-20 극단적 선택 (퇴근 18:00 KST)
+    if: github.event_name == 'workflow_dispatch' && github.event.inputs.session == 'viral_c20_evening' || github.event_name == 'schedule' && (github.event.schedule == '0 9 * * 1-5')
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+      - run: pip install -r requirements.txt
+      - name: Anti-bot random delay (schedule only)
+        if: github.event_name != 'workflow_dispatch'
+        run: |
+          DELAY=$((RANDOM % 600 + 60))
+          echo "⏱️ Random delay: ${DELAY}s"
+          sleep $DELAY
+      - name: Run C-20 퇴근
+        run: python -c "from engines.viral_engine import run_viral_c20; print(run_viral_c20('viral_c20_evening'))"
