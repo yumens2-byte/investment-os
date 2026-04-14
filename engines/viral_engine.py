@@ -749,6 +749,11 @@ def run_viral_c20(session: str = "viral_c20") -> dict:
             f"(오류: {str(e)[:100]})"
         )
 
+  logger.info(f"[Viral-C20] v1.4.0 파이프라인 시작 (dilemma={dilemma})")
+  logger.info(f"[Viral-C20] v1.4.0 파이프라인 시작 (category={category})")
+  logger.info(f"[Viral-C20] v1.4.0 파이프라인 시작 (image_path={image_path})")
+  logger.info(f"[Viral-C20] v1.4.0 파이프라인 시작 (tg_text={tg_text})")
+
     # ── Step 4: TG 발행 (X 성공 여부 무관) ──────────────────
     try:
         from publishers.telegram_publisher import send_photo, send_message
