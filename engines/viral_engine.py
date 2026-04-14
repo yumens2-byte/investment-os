@@ -15,8 +15,16 @@ engines/viral_engine.py (C-6 / C-18 / C-19 / C-20 통합)
   C-19: 캐릭터 투표 (일요일만, C-7 소설 연동)
   C-20: 극단적 선택 (A vs B, 투자/돈 관련) + 이미지 선별 생성
 
-VERSION = "1.5.1"
+VERSION = "1.5.2"
 RPD: +1/일 (Gemini flash-lite) + 이미지 +1/회 (needs_image=True 시)
+
+v1.5.2 (2026-04-14):
+  - _generate_dilemma_viral() 한/영 혼입 버그 수정
+    - 원인: JSON 한/영 필드 교차 배치 + flash-lite temperature=1.0 → option_b에 영어 혼입
+    - 수정1: JSON 스키마 재배치 — 한국어 필드 먼저(option_a/b/condition), 영어 필드 나중
+    - 수정2: 프롬프트에 "한국어 절대 금지/영어 절대 금지" 명시
+    - 수정3: 파싱 후 방어 로직 — 한글 유니코드 감지, 영어 혼입 시 한/영 필드 자동 교정
+    - max_tokens 500 → 600
 
 v1.5.1 (2026-04-14):
   - _generate_dilemma_viral() 프롬프트 전면 교체 (로직 변경 없음)
@@ -451,17 +459,20 @@ def _generate_dilemma_viral() -> dict:
             "- true: 그림으로 표현 가능한 극단적 외형/환경 대비\n"
             "  (외모, 차, 집, 라이프스타일, 직장 환경 등)\n"
             "- false: 숫자/금액/기간이 핵심인 추상 비교\n\n"
-            "JSON 형식:\n"
+            "⚠️ JSON 필드 규칙 (반드시 준수):\n"
+            "- option_a, option_b, condition: 반드시 한국어만. 영어 절대 금지.\n"
+            "- option_a_en, option_b_en, condition_en: 반드시 영어만. 한국어 절대 금지.\n\n"
+            "JSON 형식 (한국어 필드 먼저, 영어 필드 나중):\n"
             "{\n"
-            '  "option_a": "선택지 A (한국어, 구어체, 구체적 숫자)",\n'
-            '  "option_b": "선택지 B (한국어, 구어체, 구체적 숫자)",\n'
-            '  "option_a_en": "Option A (English, concise for image)",\n'
-            '  "option_b_en": "Option B (English, concise for image)",\n'
-            '  "condition": "조건 한 줄 (선택 불가 환경, 예: 딱 하나만, 평생 못 바꿈)",\n'
-            '  "condition_en": "Condition in English",\n'
+            '  "option_a": "선택지 A — 한국어 구어체로만 작성",\n'
+            '  "option_b": "선택지 B — 한국어 구어체로만 작성",\n'
+            '  "condition": "조건 — 한국어로만 (예: 딱 하나만, 평생 못 바꿈)",\n'
             '  "category": "카테고리명",\n'
             '  "needs_image": true,\n'
-            '  "hashtags": "#극단적선택 #태그2 #태그3 #태그4 #태그5"\n'
+            '  "hashtags": "#극단적선택 #태그2 #태그3 #태그4 #태그5",\n'
+            '  "option_a_en": "Option A in English only",\n'
+            '  "option_b_en": "Option B in English only",\n'
+            '  "condition_en": "Condition in English only"\n'
             "}\n\n"
             "hashtags 카테고리별 기준:\n"
             "- 투자/자산: #재테크 #주식 #ETF #경제 #돈버는법\n"
@@ -474,7 +485,7 @@ def _generate_dilemma_viral() -> dict:
         result = call(
             prompt=prompt,
             model="flash-lite",
-            max_tokens=500,
+            max_tokens=600,
             temperature=1.0,
             response_json=True,
         )
@@ -485,8 +496,8 @@ def _generate_dilemma_viral() -> dict:
         d        = result["data"]
         opt_a    = d.get("option_a", "")
         opt_b    = d.get("option_b", "")
-        opt_a_en = d.get("option_a_en", opt_a)
-        opt_b_en = d.get("option_b_en", opt_b)
+        opt_a_en = d.get("option_a_en", "")
+        opt_b_en = d.get("option_b_en", "")
         condition    = d.get("condition", "")
         condition_en = d.get("condition_en", condition)
         category     = d.get("category", "투자")
@@ -495,6 +506,36 @@ def _generate_dilemma_viral() -> dict:
 
         if not opt_a or not opt_b:
             return {"success": False, "error": "선택지 누락"}
+
+        # ── 방어 로직: 영어 혼입 감지 후 교정 ──────────────────
+        # Gemini flash-lite가 option_b에 영어를 넣는 오염 현상 대응
+        # 한글 포함 여부로 판단 (유니코드 한글 범위: AC00-D7A3)
+        def _is_korean(text: str) -> bool:
+            return any("\uAC00" <= c <= "\uD7A3" for c in text)
+
+        if opt_a and not _is_korean(opt_a):
+            logger.warning(f"[Viral-C20] option_a 영어 감지 — opt_a_en으로 교정")
+            # 한/영 필드가 뒤집힌 경우: en 값이 실제 내용
+            opt_a, opt_a_en = opt_a_en, opt_a
+
+        if opt_b and not _is_korean(opt_b):
+            logger.warning(f"[Viral-C20] option_b 영어 감지 — opt_b_en으로 교정")
+            opt_b, opt_b_en = opt_b_en, opt_b
+
+        if condition and not _is_korean(condition):
+            logger.warning(f"[Viral-C20] condition 영어 감지 — condition_en으로 교정")
+            condition, condition_en = condition_en, condition
+
+        # 교정 후에도 한국어 없으면 실패 처리
+        if not _is_korean(opt_a) or not _is_korean(opt_b):
+            logger.warning(f"[Viral-C20] 한국어 교정 실패: opt_a={opt_a[:30]} opt_b={opt_b[:30]}")
+            return {"success": False, "error": "선택지 한국어 생성 실패"}
+
+        # opt_a_en fallback (영어 생성 안 된 경우)
+        if not opt_a_en:
+            opt_a_en = opt_a
+        if not opt_b_en:
+            opt_b_en = opt_b
 
         # 트윗 (후킹용 — 짧고 강렬하게)
         tweet_lines = ["🔥 극단적 선택\n",
@@ -846,21 +887,23 @@ def run_viral(session: str = "viral_afternoon") -> dict:
     # ── Step 2: 랜덤 딜레이는 yml에서 처리 (소스 sleep 제거) ──
 
     # ── Step 3: 콘텐츠 타입 선택 ──
-    content_type = _select_content_type()
-    logger.info(f"[Viral] 콘텐츠 선택: {content_type}")
+    # content_type = _select_content_type()
+    # logger.info(f"[Viral] 콘텐츠 선택: {content_type}")
 
     # ── Step 4: 콘텐츠 생성 ──
     # C-6 금융퀴즈 중단 (v1.5.0) — quiz 분기 주석 처리
     # if content_type == "quiz":
     #     content = _generate_quiz()
-    if content_type == "money":
-        content = _generate_money_compare()
-    elif content_type == "dilemma":
-        content = _generate_dilemma()
-    elif content_type == "vote":
-        content = _generate_character_vote()
-    else:
-        return {"success": False, "error": f"알 수 없는 타입: {content_type}"}
+    # if content_type == "money":
+    #     content = _generate_money_compare()
+    # elif content_type == "dilemma":
+    #     content = _generate_dilemma()
+    # elif content_type == "vote":
+    #     content = _generate_character_vote()
+    # else:
+    #     return {"success": False, "error": f"알 수 없는 타입: {content_type}"}
+
+    _generate_dilemma()
 
     if not content.get("success"):
         logger.warning(f"[Viral] 콘텐츠 생성 실패: {content.get('error')}")
