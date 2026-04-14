@@ -293,15 +293,18 @@ def collect_etf_sma() -> dict:
 
 def collect_put_call_ratio() -> dict:
     """
-    D-2: CBOE Equity Put/Call Ratio 수집 (v2.0)
+    D-2: CBOE Equity Put/Call Ratio 수집 (v2.2)
 
     데이터 소스 우선순위:
       1순위: CBOE JSON API
       2순위: CBOE HTML 페이지 정규식 파싱
       3순위: Stooq.com CSV
-      4순위: Unknown fallback
+      4순위: yfinance SPY 옵션 체인 계산 (v2.2 추가)
+             → SPY put/call volume 합산으로 PCR 직접 계산
+             → 1~3순위 전부 차단 시 fallback
+      5순위: Unknown graceful
     """
-    logger.info("[YF_PCR] Put/Call Ratio 수집 시작 (v2.1 graceful)")
+    logger.info("[YF_PCR] Put/Call Ratio 수집 시작 (v2.2 graceful)")
 
     pcr = _fetch_pcr_cboe_json()
     if pcr is not None:
@@ -321,7 +324,14 @@ def collect_put_call_ratio() -> dict:
         logger.info(f"[YF_PCR] PCR={pcr} → {result['pcr_state']} (source=stooq)")
         return result
 
-    logger.info("[YF_PCR] Unknown (graceful — 모든 무료 소스 사용 불가, 파이프라인 무영향)")
+    # ── 4순위: yfinance SPY 옵션 체인 계산 (v2.2 추가) ──
+    pcr = _fetch_pcr_yfinance()
+    if pcr is not None:
+        result = _build_pcr_result(pcr, source="yfinance_spy")
+        logger.info(f"[YF_PCR] PCR={pcr} → {result['pcr_state']} (source=yfinance_spy)")
+        return result
+
+    logger.info("[YF_PCR] Unknown (graceful — 모든 소스 사용 불가, 파이프라인 무영향)")
     return {
         "pcr": 0.0,
         "pcr_state": "Unknown",
@@ -471,6 +481,66 @@ def _fetch_pcr_stooq() -> Optional[float]:
 
     except Exception as e:
         logger.debug(f"[YF_PCR] Stooq 실패: {e}")
+        return None
+
+
+def _fetch_pcr_yfinance() -> Optional[float]:
+    """
+    yfinance SPY 옵션 체인으로 Put/Call Ratio 직접 계산 (v2.2 신규).
+
+    방법:
+      - SPY 가장 가까운 만기 3개의 put/call volume 합산
+      - PCR = total_put_volume / total_call_volume
+      - 복수 만기 합산으로 단일 만기 볼륨 부족 문제 방지
+
+    주의:
+      - CBOE 공식 Equity PCR과 방향성 동일, 절댓값은 약간 다를 수 있음
+      - SPY = S&P500 대표 → 시장 전반 Put/Call 심리 반영 충분
+    """
+    try:
+        import yfinance as yf
+
+        ticker = yf.Ticker("SPY")
+        expirations = ticker.options
+        if not expirations:
+            logger.debug("[YF_PCR] yfinance SPY 만기일 없음")
+            return None
+
+        # 가장 가까운 만기 최대 3개 합산 (볼륨 충분성 확보)
+        total_put  = 0.0
+        total_call = 0.0
+        used = 0
+
+        for exp in expirations[:3]:
+            try:
+                chain      = ticker.option_chain(exp)
+                put_vol    = float(chain.puts["volume"].fillna(0).sum())
+                call_vol   = float(chain.calls["volume"].fillna(0).sum())
+                total_put  += put_vol
+                total_call += call_vol
+                used += 1
+            except Exception:
+                continue
+
+        if used == 0 or total_call <= 0:
+            logger.debug("[YF_PCR] yfinance SPY 옵션 볼륨 없음")
+            return None
+
+        pcr = round(total_put / total_call, 3)
+
+        # 유효 범위 검증 (0.3 ~ 3.0 사이만 허용)
+        if not (0.3 < pcr < 3.0):
+            logger.debug(f"[YF_PCR] yfinance PCR 범위 이상: {pcr}")
+            return None
+
+        logger.debug(
+            f"[YF_PCR] yfinance 계산 완료: "
+            f"put={total_put:.0f} call={total_call:.0f} PCR={pcr} (만기{used}개)"
+        )
+        return pcr
+
+    except Exception as e:
+        logger.debug(f"[YF_PCR] yfinance 실패: {e}")
         return None
 
 
