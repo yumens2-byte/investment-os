@@ -3,7 +3,18 @@ engines/viral_engine.py (C-6 / C-18 / C-19 / C-20 통합)
 ===================================================
 바이럴 콘텐츠 통합 엔진.
 
-VERSION = "1.5.5"
+VERSION = "1.5.6"
+
+v1.5.6 (2026-04-16):
+  - needs_image 항상 True 반환 버그 수정
+    - 원인: JSON 예시에 "needs_image": true 하드코딩 → Gemini가 복사
+    - 수정1: JSON 예시값 true → false (기본값 보수적으로)
+    - 수정2: needs_image 판단 기준 프롬프트 강화 + 명시적 예시 추가
+    - 수정3: _C20_CATEGORIES 모듈 레벨 상수로 분리
+    - 수정4: _should_generate_image() 추가
+        1차: 카테고리 키워드 기반 Python 결정 (확실한 경우)
+        2차: Gemini 응답 fallback (1차 키워드 미매칭 시)
+        결과: 12개 카테고리 중 4개만 True (외모/람보르기니/럭셔리/배우자외모)
 
 v1.5.5 (2026-04-16):
   - _is_korean(): 루프 내부 중복 정의 → 모듈 레벨 함수로 이동
@@ -415,22 +426,8 @@ def _generate_dilemma_viral() -> dict:
     if not is_available():
         return {"success": False, "error": "Gemini 미사용"}
 
-    h = _today_hash()
-    categories = [
-        "극단적 수익 vs 안정 (연복리/배당/일시불, 숫자 크게)",
-        "인생 한 방 vs 평생 안정 수입 (극단적 금액)",
-        "자산 선택 (부동산/주식/코인/금 극단 비교)",
-        "복리 vs 일시불 (시간 가치 논쟁)",
-        "직장 현실 (연봉 vs 자유, 꼰대 vs 리모트 등 2030 공감)",
-        "SNS/크리에이터 vs 안정 직장 (팔로워/구독자 vs 월급)",
-        "N잡러/FIRE 족 vs 대기업 정규직",
-        "외모/매력 vs 돈 (이성 현실, 구체적 극단 상황)",
-        "연애 vs 재테크 (2030 현실 고민)",
-        "배우자/파트너 선택 — 외모 극단 vs 자산 극단",
-        "플렉스 소비 극단 (람보르기니/명품 vs 절약 부자)",
-        "소비 스타일 (럭셔리 거지 vs 검소 부자 라이프)",
-    ]
-    category_hint = categories[h % len(categories)]
+    h             = _today_hash()
+    category_hint = _C20_CATEGORIES[h % len(_C20_CATEGORIES)]
 
     prompt_template = (
         "20~30대 직장인/투자 입문자 타겟 '극단적 선택' SNS 콘텐츠를 JSON으로 생성해줘.\n\n"
@@ -444,9 +441,12 @@ def _generate_dilemma_viral() -> dict:
         "예시:\n"
         "- '쭉쭉빵빵인데 평생 월급 200만원 vs 외모 평범한데 현금 자산 50억'\n"
         "- '연봉 1억인데 꼰대 상사+매일 야근 vs 연봉 3천인데 풀리모트+자유'\n\n"
-        "needs_image:\n"
-        "- true: 외모/차/집/라이프스타일 등 그림으로 표현 가능\n"
-        "- false: 숫자/금액이 핵심인 추상 비교\n\n"
+        "needs_image 판단 기준 (중요 — 반드시 직접 판단):\n"
+        "- true: 시각적으로 표현 가능한 대비 (외모/차/집/명품/라이프스타일 등)\n"
+        "  예시 true: '쭉쭉빵빵 vs 외모 평범', '람보르기니 vs 국민차', '펜트하우스 vs 반지하'\n"
+        "- false: 숫자/금액/기간이 핵심인 추상 비교 (연봉, 복리, 자산 수치 등)\n"
+        "  예시 false: '연봉 1억 vs 배당 월 300', '복리 20년 vs 일시불 10억', '코인 vs 주식'\n"
+        "⚠️ 기본값은 false. 명확히 시각적인 경우에만 true.\n\n"
         "⚠️ JSON 문법 규칙 (반드시 준수):\n"
         "- 문자열 값 안에 큰따옴표(\") 사용 금지 → 작은따옴표(') 사용\n"
         "- 각 필드 끝 쉼표 누락 금지, 마지막 필드 뒤 쉼표 금지\n"
@@ -458,7 +458,7 @@ def _generate_dilemma_viral() -> dict:
         '  "option_b": "한국어 선택지 B",\n'
         '  "condition": "한국어 조건",\n'
         '  "category": "카테고리명",\n'
-        '  "needs_image": true,\n'
+        '  "needs_image": false,\n'
         '  "hashtags": "#극단적선택 #태그2 #태그3 #태그4 #태그5",\n'
         '  "option_a_en": "English Option A",\n'
         '  "option_b_en": "English Option B",\n'
@@ -598,8 +598,65 @@ def _generate_dilemma_viral() -> dict:
 
 
 # ──────────────────────────────────────────────────────────────
-# C-20 이미지 생성
+# C-20 카테고리 상수 (모듈 레벨)
+# _generate_dilemma_viral() + _should_generate_image() 공유 사용
 # ──────────────────────────────────────────────────────────────
+
+_C20_CATEGORIES = [
+    "극단적 수익 vs 안정 (연복리/배당/일시불, 숫자 크게)",      # 0  abstract → False
+    "인생 한 방 vs 평생 안정 수입 (극단적 금액)",              # 1  abstract → False
+    "자산 선택 (부동산/주식/코인/금 극단 비교)",               # 2  abstract → False
+    "복리 vs 일시불 (시간 가치 논쟁)",                       # 3  abstract → False
+    "직장 현실 (연봉 vs 자유, 꼰대 vs 리모트 등 2030 공감)",  # 4  abstract → False
+    "SNS/크리에이터 vs 안정 직장 (팔로워/구독자 vs 월급)",     # 5  abstract → False
+    "N잡러/FIRE 족 vs 대기업 정규직",                       # 6  abstract → False
+    "외모/매력 vs 돈 (이성 현실, 구체적 극단 상황)",           # 7  visual  → True
+    "연애 vs 재테크 (2030 현실 고민)",                       # 8  abstract → False
+    "배우자/파트너 선택 — 외모 극단 vs 자산 극단",            # 9  visual  → True
+    "플렉스 소비 극단 (람보르기니/명품 vs 절약 부자)",         # 10 visual  → True
+    "소비 스타일 (럭셔리 거지 vs 검소 부자 라이프)",          # 11 visual  → True
+]
+
+
+def _should_generate_image(category_hint: str, gemini_flag: bool) -> bool:
+    """
+    이미지 생성 여부 최종 결정.
+
+    전략 (2단계):
+      1차: category_hint 키워드 기반 Python 결정 (확실한 경우)
+      2차: Gemini 응답(gemini_flag) 사용 (1차에서 결정 불가 시)
+
+    이미지 생성 기준 — 시각적으로 표현 가능한 대비:
+      True:  외모, 차/자동차, 집/부동산 외형, 명품, 라이프스타일 비교
+      False: 숫자/연봉/복리/자산 수치, 직장환경(추상), 연애감정(추상)
+
+    Args:
+        category_hint: 오늘의 카테고리 문자열 (프롬프트에 주입된 값)
+        gemini_flag:   Gemini가 반환한 needs_image 값
+
+    Returns:
+        bool — 이미지 생성 여부
+    """
+    # 확실히 이미지 필요한 키워드
+    visual_keywords = ["외모", "배우자", "람보르기니", "명품", "럭셔리", "소비 스타일"]
+    # 확실히 이미지 불필요한 키워드
+    abstract_keywords = ["복리", "일시불", "연복리", "배당", "코인", "주식", "자산 선택",
+                         "연봉", "FIRE", "N잡", "재테크", "직장 현실", "SNS"]
+
+    for kw in visual_keywords:
+        if kw in category_hint:
+            logger.info(f"[Viral-C20] needs_image=True (키워드 매칭: '{kw}')")
+            return True
+
+    for kw in abstract_keywords:
+        if kw in category_hint:
+            logger.info(f"[Viral-C20] needs_image=False (키워드 매칭: '{kw}')")
+            return False
+
+    # 키워드 미매칭 → Gemini 응답 사용
+    logger.info(f"[Viral-C20] needs_image={gemini_flag} (Gemini 응답 사용, 키워드 미매칭)")
+    return gemini_flag
+
 
 def _generate_dilemma_image_only(opt_a_en: str, opt_b_en: str,
                                   condition_en: str = "") -> str | None:
@@ -677,10 +734,21 @@ def run_viral_c20(session: str = "viral_c20") -> dict:
     hook_tweet   = content["tweet"]
     tg_text      = content["tg_text"]
     category     = content.get("category", "투자")
-    needs_image  = content.get("needs_image", False)
     hashtags     = content.get("hashtags", "#극단적선택 #재테크 #돈 #주식 #경제")
 
-    # ── Step 2: 이미지 생성 (needs_image=True 시만) ──────────
+    # ── Step 2: 이미지 생성 여부 최종 결정 ───────────────────
+    # Gemini 응답(needs_image)만 믿지 않고 카테고리 기반으로 재확인
+    # _should_generate_image(): 1차 키워드 판단 → 2차 Gemini 응답 fallback
+    gemini_needs_image = content.get("needs_image", False)
+    needs_image = _should_generate_image(
+        category_hint=_C20_CATEGORIES[_today_hash() % len(_C20_CATEGORIES)],
+        gemini_flag=gemini_needs_image,
+    )
+    logger.info(
+        f"[Viral-C20] 이미지 생성 결정: needs_image={needs_image} "
+        f"(gemini={gemini_needs_image}, category={category})"
+    )
+
     image_path = None
     if needs_image:
         image_path = _generate_dilemma_image_only(opt_a_en, opt_b_en, condition_en)
