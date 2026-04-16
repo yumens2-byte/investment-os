@@ -15,8 +15,14 @@ engines/viral_engine.py (C-6 / C-18 / C-19 / C-20 통합)
   C-19: 캐릭터 투표 (일요일만, C-7 소설 연동)
   C-20: 극단적 선택 (A vs B, 투자/돈 관련) + 이미지 선별 생성
 
-VERSION = "1.5.2"
+VERSION = "1.5.3"
 RPD: +1/일 (Gemini flash-lite) + 이미지 +1/회 (needs_image=True 시)
+
+v1.5.3 (2026-04-16):
+  - run_viral_c20(): except 블록 후 잘못된 들여쓰기 4줄 삭제 (IndentationError 수정)
+    - 삭제 대상: dilemma/category/image_path/tg_text 변수 참조 오염 로그
+  - run_viral(): _generate_dilemma() → content = _generate_dilemma() 할당 누락 수정
+  - run_viral(): content_type 미정의 NameError 수정 → 리터럴 "dilemma" 고정
 
 v1.5.2 (2026-04-14):
   - _generate_dilemma_viral() 한/영 혼입 버그 수정
@@ -104,7 +110,6 @@ def should_run(session: str) -> bool:
 
     logger.info(f"[Viral] 오후 세션만 지원 → 스킵 (session={session})")
     return False
-
 
 
 # ──────────────────────────────────────────────────────────────
@@ -300,11 +305,6 @@ def _generate_money_compare() -> dict:
         return {"success": False, "error": str(e)}
 
 
-# ──────────────────────────────────────────────────────────────
-# C-19: 캐릭터 투표 (일요일만)
-# ──────────────────────────────────────────────────────────────
-
-# EDT Universe 캐릭터 목록
 # ──────────────────────────────────────────────────────────────
 # C-20: 극단적 선택 (Would You Rather — 투자/돈 버전)
 # ──────────────────────────────────────────────────────────────
@@ -515,7 +515,6 @@ def _generate_dilemma_viral() -> dict:
 
         if opt_a and not _is_korean(opt_a):
             logger.warning(f"[Viral-C20] option_a 영어 감지 — opt_a_en으로 교정")
-            # 한/영 필드가 뒤집힌 경우: en 값이 실제 내용
             opt_a, opt_a_en = opt_a_en, opt_a
 
         if opt_b and not _is_korean(opt_b):
@@ -614,7 +613,6 @@ def _generate_dilemma_image_only(opt_a_en: str, opt_b_en: str,
 
     try:
         from core.gemini_gateway import generate_image
-        # output_path 전달 → gateway 내부에서 파일 저장까지 처리
         result = generate_image(prompt=prompt, output_path=out_path)
         if result.get("success") and result.get("image_path"):
             logger.info(f"[Viral-C20] 이미지 생성 완료: {out_path} "
@@ -639,7 +637,7 @@ def run_viral_c20(session: str = "viral_c20") -> dict:
           X 실패 → TG 무료 안내 (실패 사실 고지)
           X 성공 → TG 무료 이미지 발행
     """
-    logger.info(f"[Viral-C20] v1.4.0 파이프라인 시작 (session={session})")
+    logger.info(f"[Viral-C20] v1.5.3 파이프라인 시작 (session={session})")
 
     if not should_run(session):
         return {"success": False, "reason": "not_my_slot"}
@@ -678,7 +676,6 @@ def run_viral_c20(session: str = "viral_c20") -> dict:
     if needs_image:
         image_path = _generate_dilemma_image_only(opt_a_en, opt_b_en, condition_en)
         if not image_path:
-            # 이미지 실패 → TG 안내 + 발행 중단
             logger.warning(f"[Viral-C20] 이미지 생성 전부 실패 → 발행 중단")
             _tg_notify(
                 f"⚠️ [C-20 {slot}] 이미지 생성 실패 — 발행 중단\n"
@@ -690,9 +687,8 @@ def run_viral_c20(session: str = "viral_c20") -> dict:
         logger.info(f"[Viral-C20] needs_image=False → 이미지 생성 스킵 (텍스트 발행)")
 
     # ── Step 3: X 발행 ───────────────────────────────────────
-    # 트윗1: (이미지 or 텍스트) + 후킹 / 트윗2: 상세 / 트윗3: CTA
-    opt_a = content["opt_a"]
-    opt_b = content["opt_b"]
+    opt_a     = content["opt_a"]
+    opt_b     = content["opt_b"]
     condition = content["condition"]
 
     body_tweet = f"A) {opt_a}\n\nB) {opt_b}"
@@ -707,7 +703,7 @@ def run_viral_c20(session: str = "viral_c20") -> dict:
         "⚠️ 투자 참고 정보, 투자 권유 아님"
     )
 
-    tweet_id = "FAIL"
+    tweet_id  = "FAIL"
     x_success = False
     try:
         from publishers.x_publisher import publish_tweet_with_image, publish_thread, publish_tweet
@@ -728,9 +724,9 @@ def run_viral_c20(session: str = "viral_c20") -> dict:
                 raise RuntimeError("이미지 트윗 실패")
         else:
             # 텍스트 스레드 (이미지 없음)
-            posts = [hook_tweet, body_tweet, cta_tweet]
+            posts     = [hook_tweet, body_tweet, cta_tweet]
             pt_result = publish_thread(posts)
-            ids = pt_result.get("tweet_ids", [])
+            ids       = pt_result.get("tweet_ids", [])
             if ids:
                 tweet_id  = ids[0]
                 x_success = True
@@ -748,11 +744,6 @@ def run_viral_c20(session: str = "viral_c20") -> dict:
             f"{'이미지는 생성됐으나 ' if image_path else ''}X API 오류로 발행에 실패했습니다.\n"
             f"(오류: {str(e)[:100]})"
         )
-
-  logger.info(f"[Viral-C20] v1.4.0 파이프라인 시작 (dilemma={dilemma})")
-  logger.info(f"[Viral-C20] v1.4.0 파이프라인 시작 (category={category})")
-  logger.info(f"[Viral-C20] v1.4.0 파이프라인 시작 (image_path={image_path})")
-  logger.info(f"[Viral-C20] v1.4.0 파이프라인 시작 (tg_text={tg_text})")
 
     # ── Step 4: TG 발행 (X 성공 여부 무관) ──────────────────
     try:
@@ -880,7 +871,7 @@ def run_viral(session: str = "viral_afternoon") -> dict:
         session: "viral_afternoon"
 
     Returns:
-        {"success": True, "type": "quiz|money|vote", ...}
+        {"success": True, "type": "money|dilemma|vote", ...}
     """
     logger.info(f"[Viral] 파이프라인 시작 (session={session})")
 
@@ -908,7 +899,8 @@ def run_viral(session: str = "viral_afternoon") -> dict:
     # else:
     #     return {"success": False, "error": f"알 수 없는 타입: {content_type}"}
 
-    _generate_dilemma()
+    # [v1.5.3 수정] 할당 누락 수정: _generate_dilemma() → content = _generate_dilemma()
+    content = _generate_dilemma()
 
     if not content.get("success"):
         logger.warning(f"[Viral] 콘텐츠 생성 실패: {content.get('error')}")
@@ -920,7 +912,8 @@ def run_viral(session: str = "viral_afternoon") -> dict:
         from publishers.x_publisher import publish_tweet
         pub_result = publish_tweet(content["tweet"])
         tweet_id = pub_result.get("tweet_id", "FAIL")
-        logger.info(f"[Viral] X 발행: {tweet_id} | type={content_type}")
+        # [v1.5.3 수정] content_type 미정의 NameError → 리터럴 "dilemma" 사용
+        logger.info(f"[Viral] X 발행: {tweet_id} | type=dilemma")
 
         # 퀴즈 정답 reply (DRY_RUN 시 즉시, 실 발행 시 30분 후)
         if content.get("has_reply") and content.get("reply"):
@@ -932,7 +925,6 @@ def run_viral(session: str = "viral_afternoon") -> dict:
                     time.sleep(1800)  # 30분
                 try:
                     from publishers.x_publisher import publish_tweet as _pub_reply
-                    # reply_to가 지원되면 사용, 아니면 일반 트윗
                     try:
                         _pub_reply(content["reply"], reply_to=tweet_id)
                     except TypeError:
@@ -955,10 +947,10 @@ def run_viral(session: str = "viral_afternoon") -> dict:
         logger.warning(f"[Viral] TG 발행 실패: {e}")
 
     return {
-        "success": True,
-        "type": content_type,
+        "success":  True,
+        "type":     "dilemma",
         "tweet_id": tweet_id,
-        "session": session,
+        "session":  session,
     }
 
 
