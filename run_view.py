@@ -38,6 +38,58 @@ logging.basicConfig(
 logger = logging.getLogger("run_view")
 
 
+def _resolve_session_type(data: dict, session: str | None) -> str:
+    """외부 session 인자를 우선하여 세션 타입 결정."""
+    inner_session = data.get("output_helpers", {}).get("session_type", "postmarket")
+    return session if session else inner_session
+
+
+def _session_label(session_type: str) -> str:
+    """세션 타입을 표시 라벨로 변환."""
+    session_labels = {
+        "morning": "Morning Brief 🌅",
+        "intraday": "Intraday Update 📡",
+        "close": "Close Summary 🔔",
+        "postmarket": "Market Snapshot 📊",
+        "full": "Full Brief 📊",
+    }
+    return session_labels.get(session_type, "Market Snapshot 📊")
+
+
+def _sentimentize_thread(raw_posts: list, session_type: str, data: dict) -> list:
+    """AI 스레드 본문에 감성 트리거 적용(실패 시 원문 유지)."""
+    from publishers.x_formatter import format_thread_auto
+    try:
+        joined = "\n\n".join(raw_posts) if raw_posts else ""
+        if joined:
+            posts = format_thread_auto(joined, session_type, data)
+            logger.info(
+                f"[Step 3] 감성 트리거 적용 "
+                f"(thread: {len(raw_posts)}→{len(posts)}트윗, "
+                f"session={session_type})"
+            )
+            return posts
+        return raw_posts
+    except Exception as e:
+        logger.warning(f"[Step 3] 감성 트리거 실패 — 기존 AI 스레드 사용: {e}")
+        return raw_posts
+
+
+def _sentimentize_tweet(primary_text: str, session_type: str, data: dict) -> list:
+    """AI 단일 트윗에 감성 트리거 적용(실패 시 원문 1트윗 유지)."""
+    from publishers.x_formatter import format_thread_auto
+    try:
+        posts = format_thread_auto(primary_text, session_type, data)
+        logger.info(
+            f"[Step 3] 감성 트리거 적용 "
+            f"(tweet→{len(posts)}트윗, session={session_type})"
+        )
+        return posts
+    except Exception as e:
+        logger.warning(f"[Step 3] 감성 트리거 실패 — 기존 트윗 사용: {e}")
+        return [primary_text]
+
+
 def run(mode: str = "tweet", session: str = None) -> dict:
     """
     출력 파이프라인 실행.
@@ -102,19 +154,10 @@ def run(mode: str = "tweet", session: str = None) -> dict:
     from publishers.x_formatter import (
         format_market_snapshot_tweet, format_thread_posts,
         format_image_tweet, generate_ai_tweet, generate_ai_thread,
-        format_thread_auto,
     )
 
-    _inner_session = data.get("output_helpers", {}).get("session_type", "postmarket")
-    session_type   = session if session else _inner_session
-    session_labels = {
-        "morning":    "Morning Brief 🌅",
-        "intraday":   "Intraday Update 📡",
-        "close":      "Close Summary 🔔",
-        "postmarket": "Market Snapshot 📊",
-        "full":       "Full Brief 📊",
-    }
-    session_label = session_labels.get(session_type, "Market Snapshot 📊")
+    session_type = _resolve_session_type(data, session)
+    session_label = _session_label(session_type)
 
     # full: 이미지 트윗 고정 — 감성 미적용 (이미지가 메인)
     if session_type == "full":
@@ -125,42 +168,20 @@ def run(mode: str = "tweet", session: str = None) -> dict:
     elif mode == "thread":
         # C-12: AI 스레드 내용 생성 → 감성 트리거 적용 (v1.30.0)
         raw_posts = generate_ai_thread(data)
-        try:
-            # AI 스레드 내용을 합쳐서 감성화 (후킹+CTA 포함)
-            joined = "\n\n".join(raw_posts) if raw_posts else ""
-            if joined:
-                posts = format_thread_auto(joined, session_type, data)
-                logger.info(
-                    f"[Step 3] 감성 트리거 적용 "
-                    f"(thread: {len(raw_posts)}→{len(posts)}트윗, "
-                    f"session={session_type})"
-                )
-            else:
-                posts = raw_posts
-        except Exception as e:
-            logger.warning(f"[Step 3] 감성 트리거 실패 — 기존 AI 스레드 사용: {e}")
-            posts = raw_posts
+        posts = _sentimentize_thread(raw_posts, session_type, data)
         primary_text     = posts[0] if posts else ""
         image_tweet_text = None
 
     else:
         # C-1: AI 트윗 생성 + 감성 트리거 적용 (v1.30.0)
         primary_text = generate_ai_tweet(data, session_label)
-        try:
-            # format_thread_auto:
-            #   ≤800자 → build_single_tweet → CTA 추가 (1트윗 유지)
-            #    >800자 → build_thread      → 후킹+분할+CTA (복수 트윗)
-            posts = format_thread_auto(primary_text, session_type, data)
-            logger.info(
-                f"[Step 3] 감성 트리거 적용 "
-                f"(tweet→{len(posts)}트윗, session={session_type})"
-            )
-            # 감성화로 스레드가 됐으면 primary_text를 첫 트윗으로 갱신
-            if len(posts) > 1:
-                primary_text = posts[0]
-        except Exception as e:
-            logger.warning(f"[Step 3] 감성 트리거 실패 — 기존 트윗 사용: {e}")
-            posts = [primary_text]
+        # format_thread_auto:
+        #   ≤800자 → build_single_tweet → CTA 추가 (1트윗 유지)
+        #    >800자 → build_thread      → 후킹+분할+CTA (복수 트윗)
+        posts = _sentimentize_tweet(primary_text, session_type, data)
+        # 감성화로 스레드가 됐으면 primary_text를 첫 트윗으로 갱신
+        if len(posts) > 1:
+            primary_text = posts[0]
         image_tweet_text = format_image_tweet(data, session_type)
 
     logger.info(f"[Step 3] 생성 완료 ({len(primary_text)}자, {len(posts)}트윗)")
