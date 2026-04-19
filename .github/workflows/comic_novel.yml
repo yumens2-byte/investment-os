@@ -4,7 +4,7 @@ name: 📝 Comic Novel (Sunday)
 
 on:
   schedule:
-    - cron: '0 13 * * 0'  # UTC 13:00 = KST 22:00 일요일
+    - cron: '17 13 * * 0' 
   workflow_dispatch:
     inputs:
       dry_run:
