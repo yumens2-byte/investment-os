@@ -57,7 +57,7 @@ jobs:
 
   # ── C-20 극단적 선택 — 오전 08:00 KST 퇴근 18:00 KST ──────────────────────
   C-20:
-    name: C-20 극단적 선택 (오전 08:00 KST)
+    name: C-20 극단적 선택 (오전 08:00 KST 퇴근 18:00 KST)
     if: |
         github.event_name == 'workflow_dispatch' && github.event.inputs.session == 'C-20' || 
         github.event_name == 'schedule' && (github.event.schedule == '0 23 * * 0-4') || 
@@ -79,3 +79,14 @@ jobs:
           sleep $DELAY
       - name: Run C-20 오전
         run: python -c "from engines.viral_engine import run_viral_c20; print(run_viral_c20('viral_c20'))"
+
+      - name: Upload logs and images
+        if: always()   # 성공/실패 무관 업로드
+        uses: actions/upload-artifact@v4
+        with:
+          name: viral-c20-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            logs/
+            data/images/
+          retention-days: 7
+          if-no-files-found: warn
