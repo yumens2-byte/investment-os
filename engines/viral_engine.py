@@ -3,7 +3,17 @@ engines/viral_engine.py (C-6 / C-18 / C-19 / C-20 통합)
 ===================================================
 바이럴 콘텐츠 통합 엔진.
 
-VERSION = "1.6.0"
+VERSION = "1.6.1"
+
+v1.6.1 (2026-04-22):
+  - [긴급] A/B 텍스트 중복 생성 버그 수정
+    - 원인: 프롬프트 예시가 "A vs B" 통짜 문자열 → Gemini 오해
+    - 해결: 예시를 JSON 형식으로 분리 제시
+    - 해결: option_a == option_b 검증 추가 → 중복 시 재시도
+    - 해결: option_a 또는 option_b에 " vs " 포함 시 재시도
+  - 설계서: Notion 에러 회고 "2026-04-22 C-20 텍스트 중복 버그"
+
+v1.6.0 (2026-04-21):
 
 v1.6.0 (2026-04-21):
   - [신규] L1 프롬프트 필터 — engines/viral_guard.py 연동
@@ -452,39 +462,28 @@ def _generate_dilemma_viral() -> dict:
         "- 구체적 숫자 필수 (예: 월 300만원, 자산 50억)\n"
         "- 2030 현실에 맞는 구어체\n"
         "- 투자 권유 절대 아님\n\n"
-        "예시:\n"
-        "- '쭉쭉빵빵인데 평생 월급 200만원 vs 외모 평범한데 현금 자산 50억'\n"
-        "- '연봉 1억인데 꼰대 상사+매일 야근 vs 연봉 3천인데 풀리모트+자유'\n\n"
-        "needs_image 판단 기준 (중요 — 반드시 직접 판단):\n"
-        "- true: 시각적으로 표현 가능한 대비 (외모/차/집/명품/라이프스타일 등)\n"
-        "  예시 true: '쭉쭉빵빵 vs 외모 평범', '람보르기니 vs 국민차', '펜트하우스 vs 반지하'\n"
-        "- false: 숫자/금액/기간이 핵심인 추상 비교 (연봉, 복리, 자산 수치 등)\n"
-        "  예시 false: '연봉 1억 vs 배당 월 300', '복리 20년 vs 일시불 10억', '코인 vs 주식'\n"
-        "⚠️ 기본값은 false. 명확히 시각적인 경우에만 true.\n\n"
-        "⚠️ JSON 문법 규칙 (반드시 준수):\n"
-        "- 문자열 값 안에 큰따옴표(\") 사용 금지 → 작은따옴표(') 사용\n"
-        "- 각 필드 끝 쉼표 누락 금지, 마지막 필드 뒤 쉼표 금지\n"
-        "- option_a, option_b, condition: 한국어만\n"
-        "- option_a_en, option_b_en, condition_en: 영어만\n\n"
-        "JSON 형식:\n"
+        "⚠️ 절대 금지:\n"
+        "- option_a와 option_b에 동일한 문장 넣지 말 것\n"
+        "- option_a 또는 option_b 안에 ' vs ' 문자열 넣지 말 것 (A와 B는 이미 분리됨)\n"
+        "- 하나의 option 안에 양쪽 선택지를 통째로 넣지 말 것\n\n"
+        "올바른 예시 1 (JSON 출력 형식):\n"
         "{\n"
-        '  "option_a": "한국어 선택지 A",\n'
-        '  "option_b": "한국어 선택지 B",\n'
-        '  "condition": "한국어 조건",\n'
-        '  "category": "카테고리명",\n'
-        '  "needs_image": false,\n'
-        '  "hashtags": "#극단적선택 #태그2 #태그3 #태그4 #태그5",\n'
-        '  "option_a_en": "English Option A",\n'
-        '  "option_b_en": "English Option B",\n'
-        '  "condition_en": "English condition"\n'
+        '  "option_a": "쭉쭉빵빵인데 평생 월급 200만원",\n'
+        '  "option_b": "외모 평범한데 현금 자산 50억",\n'
+        '  "condition": "둘 중 하나 반드시 선택",\n'
+        "  ...\n"
         "}\n\n"
-        "hashtags 기준:\n"
-        "- 투자/자산: #재테크 #주식 #ETF #경제 #돈버는법\n"
-        "- 직장/커리어: #직장인 #N잡러 #FIRE족 #경제적자유 #퇴사\n"
-        "- 외모/연애: #연애현실 #돈이최고 #결혼 #현실연애 #부자\n"
-        "- 소비/라이프: #플렉스 #부자되기 #인생선택 #돈관리 #재테크\n"
-        "반드시 #극단적선택 포함. 총 5~6개.\n"
-    )
+        "올바른 예시 2:\n"
+        "{\n"
+        '  "option_a": "연봉 1억인데 꼰대 상사 + 매일 야근",\n'
+        '  "option_b": "연봉 3천인데 풀리모트 + 자유",\n'
+        "  ...\n"
+        "}\n\n"
+        "잘못된 예시 (절대 이렇게 하지 말 것):\n"
+        "{\n"
+        '  "option_a": "연봉 1억인데 야근 vs 연봉 3천인데 자유",  ← A에 전체 딜레마 넣음\n'
+        '  "option_b": "연봉 1억인데 야근 vs 연봉 3천인데 자유",  ← B에 같은 문장 복사\n'
+        "}\n\n"
 
     # ── 재시도 루프 (최대 3회) ────────────────────────────────
     temperatures = [1.0, 0.9, 0.8]
@@ -528,6 +527,38 @@ def _generate_dilemma_viral() -> dict:
                 last_error = f"시도 {attempt}: 필수 필드 누락 (option_a/b)"
                 logger.warning(f"[Viral-C20] {last_error}")
                 continue
+
+            # v1.6.1: A/B 중복 검증
+            if opt_a.strip() == opt_b.strip():
+                last_error = (
+                    f"시도 {attempt}: option_a와 option_b가 동일 "
+                    f"(opt_a={opt_a[:40]})"
+                )
+                logger.warning(f"[Viral-C20] {last_error}")
+                continue
+
+            # v1.6.1: 'vs' 통짜 문자열 포함 검증
+            # (A와 B는 이미 분리된 필드이므로 내부에 ' vs '가 있으면 Gemini 오해한 것)
+            if " vs " in opt_a or " vs " in opt_b:
+                last_error = (
+                    f"시도 {attempt}: option 내부에 'vs' 포함됨 "
+                    f"(opt_a={opt_a[:40]} opt_b={opt_b[:40]})"
+                )
+                logger.warning(f"[Viral-C20] {last_error}")
+                continue
+
+            # v1.6.1: 영문 버전도 동일 검증
+            opt_a_en_check = d.get("option_a_en", "")
+            opt_b_en_check = d.get("option_b_en", "")
+            if opt_a_en_check and opt_b_en_check:
+                if opt_a_en_check.strip() == opt_b_en_check.strip():
+                    last_error = f"시도 {attempt}: option_a_en과 option_b_en이 동일"
+                    logger.warning(f"[Viral-C20] {last_error}")
+                    continue
+                if " vs " in opt_a_en_check.lower() or " vs " in opt_b_en_check.lower():
+                    last_error = f"시도 {attempt}: option_en 내부에 'vs' 포함됨"
+                    logger.warning(f"[Viral-C20] {last_error}")
+                    continue
 
             opt_a_en     = d.get("option_a_en", "")
             opt_b_en     = d.get("option_b_en", "")
