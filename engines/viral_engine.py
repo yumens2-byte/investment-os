@@ -3,7 +3,21 @@ engines/viral_engine.py (C-6 / C-18 / C-19 / C-20 통합)
 ===================================================
 바이럴 콘텐츠 통합 엔진.
 
-VERSION = "1.5.6"
+VERSION = "1.6.0"
+
+v1.6.0 (2026-04-21):
+  - [신규] L1 프롬프트 필터 — engines/viral_guard.py 연동
+    - IP/브랜드 → 일반명사 치환 (lamborghini → luxury sports car)
+    - 실존 인물 감지 → 이미지 생성 거부 (텍스트만 발행)
+  - [신규] 이미지 시각화 모드 3종 — engines/viral_prompts.py 연동
+    - object: 카 10, 11 (플렉스/소비)
+    - situation: 카 7, 9 (외모/배우자) — 실루엣 전용
+    - lifestyle: 예비 매핑
+  - [Feature Flag] VIRAL_GUARD_L1 (기본 true), VIRAL_IMAGE_MODE_V2 (기본 true)
+  - [보존] run_viral_c20() 큰 흐름, _generate_dilemma_viral(), _should_generate_image()
+  - 설계서: Notion "🎨 C-20 바이럴 고도화 상세 설계서 v2.0"
+
+v1.5.6 (2026-04-16):
 
 v1.5.6 (2026-04-16):
   - needs_image 항상 True 반환 버그 수정
@@ -658,13 +672,99 @@ def _should_generate_image(category_hint: str, gemini_flag: bool) -> bool:
     return gemini_flag
 
 
-def _generate_dilemma_image_only(opt_a_en: str, opt_b_en: str,
-                                  condition_en: str = "") -> str | None:
+def _generate_dilemma_image_only(
+    opt_a_en: str,
+    opt_b_en: str,
+    condition_en: str = "",
+    category_index: int = -1,
+) -> str | None:
+    """
+    이미지 생성 (v1.6.0).
+
+    변경점 (v1.5.6 → v1.6.0):
+      1. category_index 인자 추가 — 시각화 모드 결정용
+      2. VIRAL_IMAGE_MODE_V2=true 시 3모드 분기 (object/situation/lifestyle)
+      3. VIRAL_GUARD_L1=true 시 L1 필터 적용
+         - IP/브랜드 → 일반명사 치환
+         - 실존 인물 감지 → None 반환 (이미지 생성 거부)
+
+    Feature Flag (모두 true 기본):
+      VIRAL_IMAGE_MODE_V2: 3모드 이미지
+      VIRAL_GUARD_L1:      L1 보안 필터
+
+    Returns:
+        image_path (str) | None (생성 실패 또는 L1 거부)
+    """
     date_str = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M")
     os.makedirs("data/images", exist_ok=True)
     out_path = f"data/images/c20_{date_str}.png"
 
-    prompt = (
+    use_mode_v2 = os.environ.get("VIRAL_IMAGE_MODE_V2", "true").lower() == "true"
+    use_guard_l1 = os.environ.get("VIRAL_GUARD_L1", "true").lower() == "true"
+
+    # ── 프롬프트 구성 ────────────────────────────────────────
+    if use_mode_v2 and category_index >= 0:
+        try:
+            from engines.viral_prompts import get_visual_mode, build_image_prompt
+            mode = get_visual_mode(category_index)
+            if mode is None:
+                logger.info(
+                    f"[Viral-C20] 카테고리 {category_index} 시각화 모드 없음 → 이미지 스킵"
+                )
+                return None
+            prompt = build_image_prompt(mode, opt_a_en, opt_b_en, condition_en)
+            logger.info(
+                f"[Viral-C20] 시각화 모드 적용: {mode} (카테고리 {category_index})"
+            )
+        except ImportError as ie:
+            logger.warning(
+                f"[Viral-C20] viral_prompts import 실패 → 기존 프롬프트 fallback: {ie}"
+            )
+            prompt = _build_legacy_prompt(opt_a_en, opt_b_en, condition_en)
+    else:
+        # v1.5.6 기존 프롬프트 (VIRAL_IMAGE_MODE_V2=false 또는 category_index=-1)
+        prompt = _build_legacy_prompt(opt_a_en, opt_b_en, condition_en)
+
+    # ── L1 보안 필터 ─────────────────────────────────────────
+    if use_guard_l1:
+        try:
+            from engines.viral_guard import sanitize_image_prompt
+            sanitized, safe, warnings = sanitize_image_prompt(
+                prompt, opt_a_en, opt_b_en, condition_en,
+            )
+            if warnings:
+                logger.warning(f"[Viral-C20][L1] 필터 동작: {warnings}")
+            if not safe:
+                logger.warning(
+                    "[Viral-C20][L1] 실존 인물 감지 → 이미지 생성 거부 (텍스트만 발행)"
+                )
+                return None
+            prompt = sanitized
+        except ImportError as ie:
+            logger.warning(f"[Viral-C20] viral_guard import 실패 → 필터 미적용: {ie}")
+
+    # ── 이미지 생성 (v1.5.6 동일 로직) ───────────────────────
+    try:
+        from core.gemini_gateway import generate_image
+        result = generate_image(prompt=prompt, output_path=out_path)
+        if result.get("success") and result.get("image_path"):
+            logger.info(
+                f"[Viral-C20] 이미지 생성 완료: {out_path} "
+                f"(key={result.get('key_used', '?')} paid={result.get('paid')})"
+            )
+            return out_path
+        logger.warning(
+            f"[Viral-C20] Gemini 이미지 실패: {result.get('error', 'unknown')}"
+        )
+        return None
+    except Exception as e:
+        logger.warning(f"[Viral-C20] 이미지 생성 예외: {e}")
+        return None
+
+
+def _build_legacy_prompt(opt_a_en: str, opt_b_en: str, condition_en: str = "") -> str:
+    """v1.5.6 기존 split-screen battle card 프롬프트. Fallback 전용."""
+    return (
         f"Dark cinematic split-screen battle card, 1080x1080 square. "
         f"LEFT half: deep blue gradient background, huge bold letter 'A' at top, "
         f"centered white bold text: '{opt_a_en[:80]}'. "
@@ -678,21 +778,6 @@ def _generate_dilemma_image_only(opt_a_en: str, opt_b_en: str,
         "CRITICAL: ALL text MUST be in English. No Korean characters."
     )
 
-    try:
-        from core.gemini_gateway import generate_image
-        result = generate_image(prompt=prompt, output_path=out_path)
-        if result.get("success") and result.get("image_path"):
-            logger.info(
-                f"[Viral-C20] 이미지 생성 완료: {out_path} "
-                f"(key={result.get('key_used', '?')} paid={result.get('paid')})"
-            )
-            return out_path
-        logger.warning(f"[Viral-C20] Gemini 이미지 실패: {result.get('error', 'unknown')}")
-        return None
-    except Exception as e:
-        logger.warning(f"[Viral-C20] 이미지 생성 예외: {e}")
-        return None
-
 
 # ──────────────────────────────────────────────────────────────
 # C-20 전용 파이프라인
@@ -703,7 +788,7 @@ def run_viral_c20(session: str = "viral_c20") -> dict:
     C-20 극단적 선택 전용 파이프라인 (v1.5.4).
     KST 08:00 / 18:00 평일 하루 2회.
     """
-    logger.info(f"[Viral-C20] v1.5.4 파이프라인 시작 (session={session})")
+    logger.info(f"[Viral-C20] v1.6.0 파이프라인 시작 (session={session})")
 
     if not should_run(session):
         return {"success": False, "reason": "not_my_slot"}
@@ -751,7 +836,12 @@ def run_viral_c20(session: str = "viral_c20") -> dict:
 
     image_path = None
     if needs_image:
-        image_path = _generate_dilemma_image_only(opt_a_en, opt_b_en, condition_en)
+        # v1.6.0: 카테고리 인덱스 전달 (시각화 모드 분기용)
+        category_index = _today_hash() % len(_C20_CATEGORIES)
+        image_path = _generate_dilemma_image_only(
+            opt_a_en, opt_b_en, condition_en,
+            category_index=category_index,
+        )
         if not image_path:
             logger.warning("[Viral-C20] 이미지 생성 전부 실패 → 발행 중단")
             _tg_notify(
