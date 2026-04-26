@@ -48,3 +48,6 @@ google-genai>=1.0.0
 
 #feedparser
 feedparser
+
+# v1.7.0 — Viral Targeting Policy 외부화 (2026-04-26)
+PyYAML>=6.0
