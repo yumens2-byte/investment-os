@@ -128,20 +128,36 @@ X_REPLY_MAX = 4000
 # ──────────────────────────────────────────────────────────────
 
 def _setup_file_logger() -> None:
-     def _setup_file_logger() -> None:
-    """
-    viral_engine 전용 파일 로거 등록.
-    경로: logs/viral/viral_YYYYMMDD.log
+    """viral_engine 전용 로거 등록 (v1.7.2.1).
+
+    파일 로그: logs/viral/viral_YYYYMMDD.log
+    stdout 로그: GitHub Actions runner stdout
     중복 등록 방지 포함.
 
-    v1.7.2: logger.setLevel(INFO) 추가 — root logger WARNING 기본값으로
-            INFO 로그가 reject되어 파일/stdout 모두 비어있던 버그 수정
+    v1.7.2.1 (2026-04-26):
+      - logger.setLevel(INFO) 추가 — root logger WARNING 기본값에 막혀
+        파일/stdout 모두 비어있던 버그 수정
+      - StreamHandler 추가 — python -c 직접 실행 시에도 stdout 로그 보장
     """
-    # v1.7.2: logger 자체의 level을 INFO로 설정 (FileHandler 레벨과 별개)
     logger.setLevel(logging.INFO)
 
+    fmt = logging.Formatter(
+        fmt="%(asctime)s [%(levelname)s] %(name)s — %(message)s",
+        datefmt="%Y-%m-%d %H:%M:%S",
+    )
+
+    has_stream = any(
+        isinstance(h, logging.StreamHandler) and not isinstance(h, logging.FileHandler)
+        for h in logger.handlers
+    )
+    if not has_stream:
+        sh = logging.StreamHandler()
+        sh.setLevel(logging.INFO)
+        sh.setFormatter(fmt)
+        logger.addHandler(sh)
+
     try:
-        log_dir  = os.path.join("logs", "viral")
+        log_dir = os.path.join("logs", "viral")
         os.makedirs(log_dir, exist_ok=True)
 
         date_str = datetime.now(KST).strftime("%Y%m%d")
@@ -153,17 +169,11 @@ def _setup_file_logger() -> None:
 
         fh = logging.FileHandler(log_path, encoding="utf-8")
         fh.setLevel(logging.DEBUG)
-        fh.setFormatter(logging.Formatter(
-            fmt="%(asctime)s [%(levelname)s] %(name)s — %(message)s",
-            datefmt="%Y-%m-%d %H:%M:%S",
-        ))
+        fh.setFormatter(fmt)
         logger.addHandler(fh)
         logger.info(f"[Viral] 파일 로그 등록: {log_path}")
     except Exception as e:
         logger.warning(f"[Viral] 파일 로그 등록 실패 (영향 없음): {e}")
-
-
-_setup_file_logger()
 
 
 # ──────────────────────────────────────────────────────────────
