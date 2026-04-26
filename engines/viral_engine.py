@@ -551,7 +551,7 @@ def _generate_dilemma_viral(
             result = call(
                 prompt=prompt_template,
                 model="flash-lite",
-                max_tokens=600,
+                max_tokens=1000,
                 temperature=temp,
                 response_json=False,
             )
@@ -571,6 +571,32 @@ def _generate_dilemma_viral(
                 last_error = (
                     f"시도 {attempt}: JSON 파싱 실패 — {je} | "
                     f"원문(앞 120자)={raw_text[:120]}"
+                )
+                logger.warning(f"[Viral-C20] {last_error}")
+                continue
+
+            # v1.7.2: Array 응답 처리 (Gemini가 [{...}] 형태로 반환 시)
+            if isinstance(d, list):
+                if len(d) == 0:
+                    last_error = f"시도 {attempt}: 빈 array 응답"
+                    logger.warning(f"[Viral-C20] {last_error}")
+                    continue
+                logger.info(f"[Viral-C20] array 응답 감지 → 첫 번째 element 사용")
+                d = d[0]
+
+            # v1.7.2: dict 검증
+            if not isinstance(d, dict):
+                last_error = f"시도 {attempt}: 비정상 응답 타입 {type(d).__name__}"
+                logger.warning(f"[Viral-C20] {last_error}")
+                continue
+
+            # v1.7.2: 다른 키 이름 fallback (Gemini camelCase 응답 대응)
+            opt_a = (d.get("option_a") or d.get("optionA") or d.get("a") or "")
+            opt_b = (d.get("option_b") or d.get("optionB") or d.get("b") or "")
+            if not opt_a or not opt_b:
+                last_error = (
+                    f"시도 {attempt}: 필수 필드 누락 (option_a/b) "
+                    f"| 응답키={list(d.keys())[:8]}"
                 )
                 logger.warning(f"[Viral-C20] {last_error}")
                 continue
@@ -787,13 +813,12 @@ def _build_segment_context_block(target_segment: str, policy: dict) -> str:
     banned_str = ", ".join(banned[:8]) if banned else "(없음)"
 
     return (
-        f"\n## 타겟 세그먼트 정밀화 (v1.7.0)\n"
-        f"- 연령대: {age_str}\n"
-        f"- 핵심 Pain: {pain}\n"
-        f"- 핵심 Desire: {desire}\n"
+        f"\n## 타겟 세그먼트 (참고용 컨텍스트, v1.7.2)\n"
+        f"- 연령대: {age_str}, Pain: {pain}, Desire: {desire}\n"
         f"- 현실 월급 범위: {salary_str}\n"
         f"- 절대 금지 표현: {banned_str}\n"
-        f"- 응답 JSON에 'conflict_axis' 필드 추가 (money/time/status/relationship/self_image 중 1)\n"
+        f"※ 위 컨텍스트는 option_a/option_b 작성 시 참고용. JSON 출력 형식은 변경 금지.\n"
+        f"※ title/description/target_age 등 추가 필드 만들지 말고, JSON 형식 예시 그대로 출력할 것.\n"
     )
 
 
