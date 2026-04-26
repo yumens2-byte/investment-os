@@ -1,0 +1,49 @@
+name: 📊 Viral Daily Report
+
+on:
+  schedule:
+    # 매일 KST 09:00 = UTC 00:00
+    - cron: '0 0 * * *'
+  workflow_dispatch:
+    inputs:
+      target_date:
+        description: 'Target date (YYYY-MM-DD). Empty = yesterday'
+        type: string
+        default: ''
+
+concurrency:
+  group: viral-daily-report
+  cancel-in-progress: false
+
+jobs:
+  daily_report:
+    name: Aggregate + Publish
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+
+    env:
+      SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+      SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
+      NOTION_API_KEY: ${{ secrets.NOTION_API_KEY }}
+      TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+      TELEGRAM_FREE_CHANNEL_ID: ${{ secrets.TELEGRAM_FREE_CHANNEL_ID }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+
+      - run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Run Daily Report
+        run: |
+          if [ -n "${{ github.event.inputs.target_date }}" ]; then
+            python -c "from engines.viral_daily_report import main; main('${{ github.event.inputs.target_date }}')"
+          else
+            python -m engines.viral_daily_report
+          fi
