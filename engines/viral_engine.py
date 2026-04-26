@@ -3,7 +3,18 @@ engines/viral_engine.py (C-6 / C-18 / C-19 / C-20 통합)
 ===================================================
 바이럴 콘텐츠 통합 엔진.
 
-VERSION = "1.6.1"
+VERSION = "1.7.0"
+
+
+v1.7.0 (2026-04-26):
+  - [신규] 타깃 세그먼트 5종 (S1~S5) — config/viral_targeting.yml 외부화
+  - [신규] 갈등축 5종 분류 (돈/지위/관계/시간/자기이미지)
+  - [신규] viral_score 4축 스코어링 게이트 (Shock/Relatability/Commentability/Safety)
+  - [신규] 70점 미만 폐기 + 최대 3회 재시도 (PolicyConfig 외부화)
+  - [신규] viral_logs 적재 (통과/폐기 후보 모두)
+  - [신규] _generate_dilemma_viral(target_segment, policy) 시그니처 확장 (후방 호환)
+  - [신규] 3차원: 12종 카테고리(시각화) x 5종 세그먼트(타깃) x 5종 갈등축(분석)
+  - [보존] _C20_CATEGORIES 12종, _should_generate_image(), _generate_dilemma_image_only() v1.6.0 흐름
 
 v1.6.1 (2026-04-22):
   - [긴급] A/B 텍스트 중복 생성 버그 수정
@@ -72,6 +83,19 @@ v1.5.0 (2026-04-14):
 v1.4.0 (2026-04-14):
   - C-20 이미지 고도화
 """
+# import hashlib
+# import json
+# import logging
+# import os
+# import random
+# import re
+# import time
+# from datetime import datetime, timezone, timedelta
+
+# logger = logging.getLogger(__name__)
+
+
+
 import hashlib
 import json
 import logging
@@ -81,7 +105,17 @@ import re
 import time
 from datetime import datetime, timezone, timedelta
 
+# v1.7.0 — Viral Targeting (GTT-Architect+Lead, 2026-04-26)
+from engines.viral_targeting_loader import is_fallback, load_policy
+from engines.viral_scorer import compute_viral_score
+from db.viral_log_store import (
+    ViralLog,
+    save_log,
+)
+
 logger = logging.getLogger(__name__)
+
+
 
 KST = timezone(timedelta(hours=9))
 
@@ -436,15 +470,23 @@ def _generate_dilemma() -> dict:
 # C-20 v1.4.0: 자극적 버전 + 이미지 전용 (v1.5.4: 재시도 추가)
 # ──────────────────────────────────────────────────────────────
 
-def _generate_dilemma_viral() -> dict:
+
+def _generate_dilemma_viral(
+    target_segment: str | None = None,
+    policy: dict | None = None,
+) -> dict:
     """
-    C-20 극단적 선택 — 자극적/논쟁적 강화 버전 (v1.5.4).
+    C-20 극단적 선택 — 자극적/논쟁적 강화 버전.
+
+    v1.7.0 (2026-04-26):
+      - target_segment / policy 신규 (default None — 후방 호환)
+      - None인 경우 v1.6.1 동작 그대로 유지 (silent failure 방지 경고 로그)
+      - 정책 주입 경로 시 세그먼트 컨텍스트 블록을 프롬프트에 추가
 
     v1.5.4 변경:
       - response_json=False → 원문 수신 후 _repair_json() + 직접 파싱
-        (gemini_gateway의 JSON 파싱 오류 우회)
       - 재시도 3회 + temperature 단계 하향 (1.0 → 0.9 → 0.8)
-      - 시도별 실패 사유 로그 기록 (파일 로그에도 남음)
+      - 시도별 실패 사유 로그 기록
     """
     from core.gemini_gateway import call, is_available
     if not is_available():
@@ -453,10 +495,22 @@ def _generate_dilemma_viral() -> dict:
     h             = _today_hash()
     category_hint = _C20_CATEGORIES[h % len(_C20_CATEGORIES)]
 
+    # v1.7.0: 세그먼트 컨텍스트 (없으면 빈 문자열 — 후방 호환)
+    segment_block = ""
+    if target_segment and policy:
+        segment_block = _build_segment_context_block(target_segment, policy)
+    else:
+        logger.warning(
+            "[Viral-C20] v1.7.0 — target_segment/policy 누락 → v1.6.1 호환 모드"
+
+
+
     prompt_template = (
-        "20~30대 직장인/투자 입문자 타겟 '극단적 선택' SNS 콘텐츠를 JSON으로 생성해줘.\n\n"
-        f"오늘 카테고리: {category_hint}\n\n"
-        "핵심 조건:\n"
+        "20~40대 타겟 '극단적 선택' SNS 콘텐츠를 JSON으로 생성해줘.\n\n"
+        f"오늘 카테고리: {category_hint}\n"
+        f"{segment_block}"
+        "\n핵심 조건:\n"
+
         "- 읽자마자 '헐', '와 이거 진짜 고민되는데' 반응 나와야 함\n"
         "- A 선택하면 B가 아깝고, B 선택하면 A가 아쉬운 진짜 딜레마\n"
         "- 구체적 숫자 필수 (예: 월 300만원, 자산 50억)\n"
@@ -642,12 +696,114 @@ def _generate_dilemma_viral() -> dict:
     return {"success": False, "error": f"3회 재시도 실패 — {last_error}"}
 
 
+
+# ──────────────────────────────────────────────────────────────
+# v1.7.0 — Viral Targeting Helpers (2026-04-26)
+# ──────────────────────────────────────────────────────────────
+
+def select_target_segment(
+    publish_date: str,
+    session: str,
+    segments_config: dict | None = None,
+) -> str:
+    """동일 (publish_date, session) → 항상 같은 세그먼트 반환 (재현성 보장)."""
+    if segments_config is None:
+        policy = load_policy()
+        segments_config = policy.get("segments", {})
+
+    if not segments_config:
+        logger.warning("[Viral-C20] segments_config 비어있음 → S2_25_29 fallback")
+        return "S2_25_29"
+
+    seed_text = f"{publish_date}:{session}"
+    seed = int(hashlib.md5(seed_text.encode("utf-8")).hexdigest()[:8], 16)
+    rnd = (seed % 10000) / 10000.0
+
+    cumulative = 0.0
+    selected = None
+    for sid, cfg in segments_config.items():
+        cumulative += float(cfg.get("weight", 0.0))
+        if rnd <= cumulative:
+            selected = sid
+            break
+
+    if selected is None:
+        selected = list(segments_config.keys())[-1]
+
+    logger.info(
+        f"[Viral-C20] segment 선택: {selected} "
+        f"(date={publish_date} session={session} rnd={rnd:.4f})"
+    )
+    return selected
+
+
+def classify_conflict_axis(
+    candidate: dict,
+    axes_config: dict | None = None,
+) -> str:
+    """Gemini 명시값 우선, 없으면 키워드 매칭으로 추정."""
+    explicit = candidate.get("conflict_axis")
+    if explicit and isinstance(explicit, str):
+        if axes_config is None or explicit in axes_config:
+            return explicit
+
+    full_text = " ".join(
+        str(candidate.get(k, ""))
+        for k in ("opt_a", "opt_b", "condition", "condition_text")
+    )
+
+    keyword_map = {
+        "money":        ["연봉", "월급", "원", "만", "억", "수익", "투자", "배당"],
+        "time":         ["시간", "퇴근", "야근", "주말", "휴가", "여유", "주 5일", "주 6일"],
+        "status":       ["직장", "회사", "직위", "타이틀", "명함", "대기업", "스타트업"],
+        "relationship": ["가족", "부모", "친구", "결혼", "연애", "동료", "주변"],
+        "self_image":   ["외모", "체형", "스타일", "인스타", "자존감", "매력"],
+    }
+
+    scores = {axis: 0 for axis in keyword_map}
+    for axis, kws in keyword_map.items():
+        for kw in kws:
+            if kw in full_text:
+                scores[axis] += 1
+
+    if max(scores.values()) == 0:
+        return "money"
+    return max(scores, key=scores.get)
+
+
+def _build_segment_context_block(target_segment: str, policy: dict) -> str:
+    """Gemini 프롬프트에 주입할 세그먼트 컨텍스트 텍스트 생성."""
+    seg = (policy.get("segments", {}) or {}).get(target_segment, {})
+    age_range = seg.get("age_range", [])
+    pain = seg.get("pain", "")
+    desire = seg.get("desire", "")
+    salary = (seg.get("numeric_range", {}) or {}).get("salary_monthly", [])
+    banned = policy.get("banned_expressions", []) or []
+
+    age_str = f"{age_range[0]}~{age_range[1]}세" if len(age_range) == 2 else "20~40대"
+    salary_str = (
+        f"{salary[0]}만원 ~ {salary[1]}만원" if len(salary) == 2 else "현실 범위"
+    )
+    banned_str = ", ".join(banned[:8]) if banned else "(없음)"
+
+    return (
+        f"\n## 타겟 세그먼트 정밀화 (v1.7.0)\n"
+        f"- 연령대: {age_str}\n"
+        f"- 핵심 Pain: {pain}\n"
+        f"- 핵심 Desire: {desire}\n"
+        f"- 현실 월급 범위: {salary_str}\n"
+        f"- 절대 금지 표현: {banned_str}\n"
+        f"- 응답 JSON에 'conflict_axis' 필드 추가 (money/time/status/relationship/self_image 중 1)\n"
+    )
+
+
 # ──────────────────────────────────────────────────────────────
 # C-20 카테고리 상수 (모듈 레벨)
 # _generate_dilemma_viral() + _should_generate_image() 공유 사용
 # ──────────────────────────────────────────────────────────────
 
 _C20_CATEGORIES = [
+
     "극단적 수익 vs 안정 (연복리/배당/일시불, 숫자 크게)",      # 0  abstract → False
     "인생 한 방 vs 평생 안정 수입 (극단적 금액)",              # 1  abstract → False
     "자산 선택 (부동산/주식/코인/금 극단 비교)",               # 2  abstract → False
@@ -814,12 +970,20 @@ def _build_legacy_prompt(opt_a_en: str, opt_b_en: str, condition_en: str = "") -
 # C-20 전용 파이프라인
 # ──────────────────────────────────────────────────────────────
 
+
 def run_viral_c20(session: str = "viral_c20") -> dict:
     """
-    C-20 극단적 선택 전용 파이프라인 (v1.5.4).
+    C-20 극단적 선택 전용 파이프라인.
     KST 08:00 / 18:00 평일 하루 2회.
+
+    v1.7.0 (2026-04-26):
+      - 정책 로드 (config/viral_targeting.yml)
+      - 타깃 세그먼트 결정 (S1~S5)
+      - 갈등축 분류 (5종)
+      - viral_score 70점 미만 폐기 + 최대 3회 재시도
+      - viral_logs 적재 (통과/폐기 모두)
     """
-    logger.info(f"[Viral-C20] v1.6.0 파이프라인 시작 (session={session})")
+    logger.info(f"[Viral-C20] v1.7.0 파이프라인 시작 (session={session})")
 
     if not should_run(session):
         return {"success": False, "reason": "not_my_slot"}
@@ -833,16 +997,116 @@ def run_viral_c20(session: str = "viral_c20") -> dict:
         except Exception as e:
             logger.warning(f"[Viral-C20] TG 안내 실패: {e}")
 
-    # ── Step 1: 텍스트 생성 (3회 재시도 내장) ───────────────
-    content = _generate_dilemma_viral()
-    if not content.get("success"):
-        logger.error(f"[Viral-C20] 텍스트 생성 최종 실패: {content.get('error')}")
-        _tg_notify(
-            f"⚠️ [C-20 {slot}] 콘텐츠 생성 실패\n"
-            f"Gemini 텍스트 생성 오류로 발행을 건너뜁니다.\n"
-            f"오류: {content.get('error', 'unknown')}"
+    # ── v1.7.0 Step 0: 정책 로드 + 세그먼트 결정 ──────────────
+    policy = load_policy()
+    if is_fallback(policy):
+        logger.warning("[Viral-C20] fallback 정책 사용 중 — 운영자 확인 필요")
+
+    today = datetime.now(KST).strftime("%Y-%m-%d")
+    target_segment = select_target_segment(today, session, policy.get("segments"))
+    policy_version = policy.get("version", "unknown")
+    threshold = int(policy.get("viral_score_threshold", 70))
+    max_retry = int(policy.get("max_retry_count", 3))
+    cta_pool = policy.get("cta_templates", []) or []
+    disclaimer_pool = policy.get("disclaimer_templates", []) or []
+
+    # ── v1.7.0 Step 1: Generator Loop (max 3 retry) ──────────
+    content = None
+    last_score_result = None
+    discarded_count = 0
+    attempt = 0
+
+    for attempt in range(1, max_retry + 1):
+        logger.info(
+            f"[Viral-C20] 후보 #{attempt}/{max_retry} 생성 segment={target_segment}"
         )
-        return content
+        candidate = _generate_dilemma_viral(
+            target_segment=target_segment,
+            policy=policy,
+        )
+
+        if not candidate.get("success"):
+            logger.error(f"[Viral-C20] Gemini 호출 실패: {candidate.get('error')}")
+            continue
+
+        # 갈등축 분류
+        candidate["conflict_axis"] = classify_conflict_axis(
+            candidate, policy.get("conflict_axes")
+        )
+
+        # 스코어 계산
+        seg_policy = (policy.get("segments", {}) or {}).get(target_segment, {})
+        banned = policy.get("banned_expressions", []) or []
+        score_result = compute_viral_score(
+            candidate=candidate,
+            segment_policy=seg_policy,
+            banned_expressions=banned,
+            threshold=threshold,
+        )
+        last_score_result = score_result
+
+        if score_result.passed:
+            logger.info(
+                f"[Viral-C20] 후보 #{attempt} 통과 (score={score_result.total} >= {threshold})"
+            )
+            content = candidate
+            break
+
+        # 폐기 적재
+        discarded_count += 1
+        try:
+            cond_text = candidate.get("condition") or ""
+            discarded_log = ViralLog(
+                publish_date=today,
+                session=session,
+                target_segment=target_segment,
+                conflict_axis=candidate.get("conflict_axis", "money"),
+                candidate_no=attempt,
+                is_published=False,
+                viral_score=score_result.total,
+                score_shock=score_result.shock,
+                score_relatability=score_result.relatability,
+                score_commentability=score_result.commentability,
+                score_safety=score_result.safety,
+                opt_a=candidate.get("opt_a"),
+                opt_b=candidate.get("opt_b"),
+                condition_text=cond_text,
+                reasoning_json=score_result.to_reasoning_json(),
+                discard_reason=f"score_below_threshold:{score_result.total}",
+                policy_version=policy_version,
+            )
+            save_log(discarded_log)
+            logger.warning(
+                f"[Viral-C20] 후보 #{attempt} 폐기 적재 score={score_result.total}"
+            )
+        except Exception as ee:
+            logger.warning(f"[Viral-C20] 폐기 후보 적재 실패 (영향 없음): {ee}")
+
+    # ── v1.7.0 Step 1-end: 3회 모두 실패 처리 ────────────────
+    if content is None:
+        last_total = last_score_result.total if last_score_result else "?"
+        logger.error(
+            f"[Viral-C20] {max_retry}회 모두 score<{threshold} 폐기 → 발행 중단"
+        )
+        _tg_notify(
+            f"⚠️ [C-20 {slot}] {max_retry}회 재시도 모두 점수 미달\n"
+            f"마지막 후보 score={last_total} (기준 {threshold})\n"
+            f"이번 슬롯 발행을 건너뜁니다."
+        )
+        return {
+            "success": False,
+            "reason": "all_candidates_below_threshold",
+            "discarded_count": discarded_count,
+            "last_score": last_total,
+        }
+
+    # ── v1.7.0: CTA + Disclaimer 변형 적용 ────────────────────
+    if cta_pool:
+        content["_chosen_cta"] = random.choice(cta_pool)
+    if disclaimer_pool:
+        content["_chosen_disclaimer"] = random.choice(disclaimer_pool)
+
+
 
     opt_a_en     = content["opt_a_en"]
     opt_b_en     = content["opt_b_en"]
@@ -952,19 +1216,59 @@ def run_viral_c20(session: str = "viral_c20") -> dict:
     except Exception as e:
         logger.warning(f"[Viral-C20] TG 발행 실패: {e}")
 
+
+    # ── v1.7.0 Step 5: viral_logs 통과 후보 적재 ──────────────
+    try:
+        passed_log = ViralLog(
+            publish_date=today,
+            session=session,
+            target_segment=target_segment,
+            conflict_axis=content.get("conflict_axis", "money"),
+            candidate_no=attempt,
+            is_published=x_success,
+            viral_score=last_score_result.total,
+            score_shock=last_score_result.shock,
+            score_relatability=last_score_result.relatability,
+            score_commentability=last_score_result.commentability,
+            score_safety=last_score_result.safety,
+            needs_image=bool(content.get("needs_image", False)),
+            image_generated=bool(image_path),
+            opt_a=content.get("opt_a"),
+            opt_b=content.get("opt_b"),
+            condition_text=content.get("condition", ""),
+            cta_used=content.get("_chosen_cta"),
+            disclaimer_used=content.get("_chosen_disclaimer"),
+            tweet_id=str(tweet_id) if x_success else None,
+            reasoning_json=last_score_result.to_reasoning_json(),
+            policy_version=policy_version,
+        )
+        log_id = save_log(passed_log)
+        if log_id:
+            logger.info(f"[Viral-C20] viral_logs 적재 완료 log_id={log_id}")
+    except Exception as ee:
+        logger.warning(f"[Viral-C20] viral_logs 적재 실패 (영향 없음): {ee}")
+
     logger.info(
         f"[Viral-C20] 완료 | x_success={x_success} | "
-        f"has_image={bool(image_path)} | tweet_id={tweet_id} | category={category}"
+        f"has_image={bool(image_path)} | tweet_id={tweet_id} | "
+        f"segment={target_segment} | axis={content.get('conflict_axis')} | "
+        f"score={last_score_result.total}"
     )
 
     return {
-        "success":   x_success,
-        "type":      "dilemma",
-        "tweet_id":  tweet_id,
-        "session":   session,
-        "category":  category,
-        "has_image": bool(image_path),
+        "success":         x_success,
+        "type":            "dilemma",
+        "tweet_id":        tweet_id,
+        "session":         session,
+        "category":        category,
+        "has_image":       bool(image_path),
+        "target_segment":  target_segment,
+        "conflict_axis":   content.get("conflict_axis"),
+        "viral_score":     last_score_result.total,
+        "discarded_count": discarded_count,
     }
+
+
 
 
 # ──────────────────────────────────────────────────────────────
