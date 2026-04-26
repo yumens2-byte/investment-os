@@ -51,3 +51,7 @@ feedparser
 
 # v1.7.0 — Viral Targeting Policy 외부화 (2026-04-26)
 PyYAML>=6.0
+
+# v1.7.0 — Auto-Pruning System DB 접근 (2026-04-26)
+SQLAlchemy>=2.0,<3.0
+psycopg2-binary>=2.9
