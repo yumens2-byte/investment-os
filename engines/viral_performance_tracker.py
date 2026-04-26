@@ -1,16 +1,23 @@
 """
-Investment OS — Viral Performance Tracker v1.0.0
+engines/viral_performance_tracker.py
+================================
+C-20 Auto-Pruning Tracker — 매 30분 cron 실행.
 
-매 30분 cron으로 실행:
-1. 측정 사이클 — 24h/48h/68h/80h 마일스톤 도래 트윗의 X metrics 회수
-2. 폐기 결정 — 80h 도래 트윗 임계값 평가 + 6단계 안전 가드 + Deleter 위임
+VERSION = "1.1.0"
 
-설계 원칙:
-- 측정 윈도우 ±15분 (cron 30분 간격 커버)
-- 마일스톤별 배치 X API 호출 (최대 100개/배치)
-- 안전 가드 6단계 (grace_period / high_score / protected / daily_limit /
-  manual_review / threshold)
-- 모드 4종 (off / monitor / dry_run / full)
+v1.1.0 (2026-04-26):
+  - DAO 변경 (SQLAlchemy → supabase-py 패턴 정합성)
+  - 로직/흐름 무변경: 측정 사이클 + 폐기 결정 + 안전 가드 그대로
+
+v1.0.0 (2026-04-26): 초기 버전
+
+핵심 책임:
+  1. 측정 사이클 — 24h/48h/68h/80h 마일스톤 도래 트윗 X metrics 회수
+  2. 폐기 결정 — 80h 도래 트윗 6단계 안전 가드 + Deleter 위임
+
+운영:
+  cron: */30 * * * *  (30분 간격)
+  mode: VIRAL_AUTO_DELETE 환경변수 (off/monitor/dry_run/full)
 """
 from __future__ import annotations
 
@@ -35,7 +42,7 @@ from db.viral_metrics_store import (
     save_metric,
 )
 
-VERSION = "1.0.0"
+VERSION = "1.1.0"
 
 logger = logging.getLogger(__name__)
 
@@ -70,7 +77,7 @@ class DeleteDecision:
 
 @dataclass
 class TrackerSummary:
-    """1회 실행 요약 (운영 지표용)."""
+    """1회 실행 요약."""
 
     mode: str
     candidates_total: int = 0
@@ -143,6 +150,18 @@ def find_due_milestone(
     return None
 
 
+def _parse_created_at(raw: Any) -> datetime | None:
+    """supabase-py가 반환하는 ISO 문자열 → datetime."""
+    if isinstance(raw, datetime):
+        return raw if raw.tzinfo else raw.replace(tzinfo=timezone.utc)
+    if isinstance(raw, str):
+        try:
+            return datetime.fromisoformat(raw.replace("Z", "+00:00"))
+        except ValueError:
+            return None
+    return None
+
+
 # ─────────────────────────────────────────────────────────────────────────
 # X API 배치 조회
 # ─────────────────────────────────────────────────────────────────────────
@@ -190,9 +209,8 @@ def fetch_metrics_batch(tweet_ids: list[str]) -> dict[str, dict[str, Any]]:
 
         except tweepy.TooManyRequests:
             logger.warning(
-                "[Tracker] X API rate limit (batch %d~%d) → 다음 cron 재시도",
-                i,
-                i + len(batch),
+                f"[Tracker] X API rate limit (batch {i}~{i+len(batch)}) "
+                "→ 다음 cron 재시도"
             )
             for tid in batch:
                 if tid not in result:
@@ -202,10 +220,7 @@ def fetch_metrics_batch(tweet_ids: list[str]) -> dict[str, dict[str, Any]]:
                     }
         except Exception as e:
             logger.error(
-                "[Tracker] X API 배치 조회 실패 (batch %d~%d): %s",
-                i,
-                i + len(batch),
-                e,
+                f"[Tracker] X API 배치 조회 실패 (batch {i}~{i+len(batch)}): {e}"
             )
             for tid in batch:
                 if tid not in result:
@@ -242,13 +257,8 @@ def evaluate_for_deletion(
     thresholds = policy_auto_delete.get("thresholds", {}) or {}
 
     # 1) Grace period
-    created_at = log.get("created_at")
-    if isinstance(created_at, str):
-        try:
-            created_at = datetime.fromisoformat(created_at.replace("Z", "+00:00"))
-        except ValueError:
-            created_at = None
-    if not isinstance(created_at, datetime):
+    created_at = _parse_created_at(log.get("created_at"))
+    if not created_at:
         return DeleteDecision(False, "no_created_at")
 
     elapsed = hours_since(created_at)
@@ -334,7 +344,7 @@ def evaluate_for_deletion(
 
 def main() -> TrackerSummary:
     """cron 진입점. 매 30분 실행."""
-    logger.info("[Tracker] v%s 시작", VERSION)
+    logger.info(f"[Tracker] v{VERSION} 시작")
 
     policy = load_policy()
     if is_fallback(policy):
@@ -348,7 +358,7 @@ def main() -> TrackerSummary:
     )
 
     if mode not in VALID_MODES:
-        logger.error("[Tracker] 잘못된 모드 %s → off로 동작", mode)
+        logger.error(f"[Tracker] 잘못된 모드 {mode} → off로 동작")
         mode = MODE_OFF
 
     summary = TrackerSummary(mode=mode)
@@ -368,22 +378,15 @@ def main() -> TrackerSummary:
     summary.candidates_total = len(candidates)
 
     logger.info(
-        "[Tracker] 측정 후보 %d건 (mode=%s, schedule=%s)",
-        len(candidates),
-        mode,
-        [e.get("hours") for e in schedule],
+        f"[Tracker] 측정 후보 {len(candidates)}건 (mode={mode}, "
+        f"schedule={[e.get('hours') for e in schedule]})"
     )
 
     milestone_groups: dict[int, list[dict[str, Any]]] = {}
     for log in candidates:
-        created_at = log.get("created_at")
-        if isinstance(created_at, str):
-            try:
-                created_at = datetime.fromisoformat(
-                    created_at.replace("Z", "+00:00")
-                )
-            except ValueError:
-                continue
+        created_at = _parse_created_at(log.get("created_at"))
+        if not created_at:
+            continue
 
         elapsed = hours_since(created_at)
         due_ms = find_due_milestone(elapsed, schedule)
@@ -399,9 +402,7 @@ def main() -> TrackerSummary:
 
     for ms_hours, logs in milestone_groups.items():
         tweet_ids = [str(log["tweet_id"]) for log in logs]
-        logger.info(
-            "[Tracker] 마일스톤 %dh 배치 측정 %d건", ms_hours, len(tweet_ids)
-        )
+        logger.info(f"[Tracker] 마일스톤 {ms_hours}h 배치 측정 {len(tweet_ids)}건")
 
         batch_result = fetch_metrics_batch(tweet_ids)
 
@@ -436,7 +437,7 @@ def main() -> TrackerSummary:
 
     # ─── Step 2. 폐기 결정 (mode != monitor 시에만) ────────
     if mode == MODE_MONITOR:
-        logger.info("[Tracker] mode=monitor → 폐기 결정 스킵 (%s)", _summarize(summary))
+        logger.info(f"[Tracker] mode=monitor → 폐기 결정 스킵 ({_summarize(summary)})")
         return summary
 
     eval_targets = get_pending_evaluation_logs(min_hours=EVAL_MILESTONE_HOURS)
@@ -444,16 +445,15 @@ def main() -> TrackerSummary:
     today_deleted = count_today_auto_deletions()
 
     logger.info(
-        "[Tracker] 폐기 결정 평가 대상 %d건 (오늘 자동삭제 %d건)",
-        len(eval_targets),
-        today_deleted,
+        f"[Tracker] 폐기 결정 평가 대상 {len(eval_targets)}건 "
+        f"(오늘 자동삭제 {today_deleted}건)"
     )
 
     for log in eval_targets:
         metric = get_metric_by_milestone(log["log_id"], EVAL_MILESTONE_HOURS)
         if metric is None:
             logger.warning(
-                "[Tracker] 80h 측정 없음 log_id=%s → 평가 스킵", log["log_id"]
+                f"[Tracker] 80h 측정 없음 log_id={log['log_id']} → 평가 스킵"
             )
             summary.safety_blocks["no_metric"] = (
                 summary.safety_blocks.get("no_metric", 0) + 1
@@ -492,7 +492,7 @@ def main() -> TrackerSummary:
                 summary.safety_blocks.get(decision.reason, 0) + 1
             )
 
-    logger.info("[Tracker] v%s 완료 — %s", VERSION, _summarize(summary))
+    logger.info(f"[Tracker] v{VERSION} 완료 — {_summarize(summary)}")
     return summary
 
 

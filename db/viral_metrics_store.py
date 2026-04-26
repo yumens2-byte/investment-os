@@ -1,29 +1,41 @@
 """
-Investment OS — Viral Performance Metrics Store v1.0.0
+db/viral_metrics_store.py
+================================
+C-20 viral_performance_metrics 테이블 DAO.
 
-viral_performance_metrics 테이블 DAO.
-- save_metric(): UPSERT (log_id, milestone_hours)
-- get_latest_metric(): 특정 log의 가장 최근 측정값
-- get_metric_by_milestone(): 특정 마일스톤의 측정값
+VERSION = "1.1.0"
+
+v1.1.0 (2026-04-26):
+  - [긴급] SQLAlchemy 패턴 → supabase-py 패턴 전면 재작성
+  - 마스터 시스템 db/supabase_client.py(get_client()) 100% 준수
+  - 외부 인터페이스(함수 시그니처) 무변경 → tracker 영향 없음
+  - UPSERT 키: (log_id, milestone_hours) 복합 UNIQUE 제약 활용
+
+v1.0.0 (2026-04-26): 초기 버전 (SQLAlchemy 기반, deprecated)
+
+함수 목록:
+  save_metric()              — UPSERT (log_id, milestone_hours)
+  get_latest_metric()        — 가장 최근 마일스톤 측정값 (성공만)
+  get_metric_by_milestone()  — 특정 (log_id, milestone) 측정값
 """
-from __future__ import annotations
-
-import json
 import logging
 from dataclasses import dataclass
-from datetime import datetime, timezone
-from decimal import Decimal
 from typing import Any
-from uuid import UUID
-
-from sqlalchemy import text
-from sqlalchemy.exc import SQLAlchemyError
-
-from db.supabase_client import get_engine
-
-VERSION = "1.0.0"
 
 logger = logging.getLogger(__name__)
+
+VERSION = "1.1.0"
+
+
+def _get_client():
+    """Supabase 클라이언트 가져오기 (마스터 패턴)."""
+    from db.supabase_client import get_client
+    return get_client()
+
+
+# ─────────────────────────────────────────────────────────────────────────
+# 데이터 클래스 (외부 인터페이스 — tracker가 사용)
+# ─────────────────────────────────────────────────────────────────────────
 
 
 @dataclass
@@ -123,124 +135,100 @@ class PerformanceMetric:
         )
 
 
-_UPSERT_SQL = text("""
-INSERT INTO viral_performance_metrics (
-    log_id, tweet_id, milestone_hours, hours_since_publish,
-    impression_count, like_count, reply_count, retweet_count,
-    quote_count, bookmark_count, url_link_clicks, user_profile_clicks,
-    engagement_rate, api_response_raw, fetch_status, fetch_error,
-    measured_at
-) VALUES (
-    :log_id, :tweet_id, :milestone_hours, :hours_since_publish,
-    :impression_count, :like_count, :reply_count, :retweet_count,
-    :quote_count, :bookmark_count, :url_link_clicks, :user_profile_clicks,
-    :engagement_rate, CAST(:api_response_raw AS jsonb), :fetch_status, :fetch_error,
-    NOW()
-)
-ON CONFLICT (log_id, milestone_hours) DO UPDATE SET
-    hours_since_publish = EXCLUDED.hours_since_publish,
-    impression_count    = EXCLUDED.impression_count,
-    like_count          = EXCLUDED.like_count,
-    reply_count         = EXCLUDED.reply_count,
-    retweet_count       = EXCLUDED.retweet_count,
-    quote_count         = EXCLUDED.quote_count,
-    bookmark_count      = EXCLUDED.bookmark_count,
-    url_link_clicks     = EXCLUDED.url_link_clicks,
-    user_profile_clicks = EXCLUDED.user_profile_clicks,
-    engagement_rate     = EXCLUDED.engagement_rate,
-    api_response_raw    = EXCLUDED.api_response_raw,
-    fetch_status        = EXCLUDED.fetch_status,
-    fetch_error         = EXCLUDED.fetch_error,
-    measured_at         = EXCLUDED.measured_at
-RETURNING metric_id
-""")
+# ─────────────────────────────────────────────────────────────────────────
+# 1. UPSERT — save_metric
+# ─────────────────────────────────────────────────────────────────────────
 
 
 def save_metric(metric: PerformanceMetric) -> str | None:
-    """UPSERT. 동일 (log_id, milestone_hours) 조합은 갱신."""
+    """
+    UPSERT. 동일 (log_id, milestone_hours) 조합은 갱신.
+    UNIQUE INDEX uq_perf_log_milestone(log_id, milestone_hours) 활용.
+
+    Returns: metric_id (UUID 문자열) | None
+    """
     try:
-        engine = get_engine()
-        with engine.begin() as conn:
-            row = conn.execute(
-                _UPSERT_SQL,
-                {
-                    "log_id": metric.log_id,
-                    "tweet_id": metric.tweet_id,
-                    "milestone_hours": metric.milestone_hours,
-                    "hours_since_publish": metric.hours_since_publish,
-                    "impression_count": metric.impression_count,
-                    "like_count": metric.like_count,
-                    "reply_count": metric.reply_count,
-                    "retweet_count": metric.retweet_count,
-                    "quote_count": metric.quote_count,
-                    "bookmark_count": metric.bookmark_count,
-                    "url_link_clicks": metric.url_link_clicks,
-                    "user_profile_clicks": metric.user_profile_clicks,
-                    "engagement_rate": metric.engagement_rate,
-                    "api_response_raw": (
-                        json.dumps(metric.api_response_raw, ensure_ascii=False)
-                        if metric.api_response_raw is not None
-                        else None
-                    ),
-                    "fetch_status": metric.fetch_status,
-                    "fetch_error": metric.fetch_error,
-                },
-            ).fetchone()
-            metric_id = str(row[0]) if row else None
+        row = {
+            "log_id":              metric.log_id,
+            "tweet_id":            metric.tweet_id,
+            "milestone_hours":     metric.milestone_hours,
+            "hours_since_publish": metric.hours_since_publish,
+            "impression_count":    metric.impression_count,
+            "like_count":          metric.like_count,
+            "reply_count":         metric.reply_count,
+            "retweet_count":       metric.retweet_count,
+            "quote_count":         metric.quote_count,
+            "bookmark_count":      metric.bookmark_count,
+            "url_link_clicks":     metric.url_link_clicks,
+            "user_profile_clicks": metric.user_profile_clicks,
+            "engagement_rate":     metric.engagement_rate,
+            "api_response_raw":    metric.api_response_raw,    # supabase-py: dict → jsonb
+            "fetch_status":        metric.fetch_status,
+            "fetch_error":         metric.fetch_error,
+        }
+
+        # 복합 키 UPSERT — supabase-py 지원: "log_id,milestone_hours"
+        result = (
+            _get_client()
+            .table("viral_performance_metrics")
+            .upsert(row, on_conflict="log_id,milestone_hours")
+            .execute()
+        )
+
+        if result.data and len(result.data) > 0:
+            metric_id = result.data[0].get("metric_id")
             logger.info(
-                "[ViralMetricsStore] UPSERT log=%s milestone=%dh status=%s",
-                metric.log_id,
-                metric.milestone_hours,
-                metric.fetch_status,
+                f"[ViralMetricsStore v{VERSION}] UPSERT log={metric.log_id} "
+                f"milestone={metric.milestone_hours}h status={metric.fetch_status}"
             )
             return metric_id
-    except SQLAlchemyError as e:
-        logger.error(
-            "[ViralMetricsStore] UPSERT 실패 log=%s milestone=%dh: %s",
-            metric.log_id,
-            metric.milestone_hours,
-            e,
+
+        logger.warning("[ViralMetricsStore] UPSERT 응답에 data 없음")
+        return None
+
+    except Exception as e:
+        logger.warning(
+            f"[ViralMetricsStore] UPSERT 실패 log={metric.log_id} "
+            f"milestone={metric.milestone_hours}h: {e}"
         )
         return None
 
 
-_GET_LATEST_SQL = text("""
-SELECT
-    metric_id, log_id, tweet_id, milestone_hours, hours_since_publish,
-    impression_count, like_count, reply_count, retweet_count, quote_count,
-    bookmark_count, url_link_clicks, user_profile_clicks, engagement_rate,
-    fetch_status, fetch_error, measured_at
-FROM viral_performance_metrics
-WHERE log_id = :log_id AND fetch_status = 'success'
-ORDER BY milestone_hours DESC, measured_at DESC
-LIMIT 1
-""")
+# ─────────────────────────────────────────────────────────────────────────
+# 2. SELECT — 조회 함수
+# ─────────────────────────────────────────────────────────────────────────
 
 
 def get_latest_metric(log_id: str) -> dict[str, Any] | None:
-    """특정 log의 가장 늦은 마일스톤 측정값 (성공 케이스만)."""
+    """
+    특정 log의 가장 늦은 마일스톤 측정값 (성공 케이스만).
+    fetch_status='success' 필터링 후 milestone_hours DESC 정렬.
+    """
     try:
-        engine = get_engine()
-        with engine.connect() as conn:
-            row = conn.execute(_GET_LATEST_SQL, {"log_id": log_id}).fetchone()
-            if not row:
-                return None
-            return _row_to_dict(row)
-    except SQLAlchemyError as e:
-        logger.error("[ViralMetricsStore] get_latest 실패 log=%s: %s", log_id, e)
+        result = (
+            _get_client()
+            .table("viral_performance_metrics")
+            .select(
+                "metric_id, log_id, tweet_id, milestone_hours, hours_since_publish, "
+                "impression_count, like_count, reply_count, retweet_count, "
+                "quote_count, bookmark_count, url_link_clicks, user_profile_clicks, "
+                "engagement_rate, fetch_status, fetch_error, measured_at"
+            )
+            .eq("log_id", log_id)
+            .eq("fetch_status", "success")
+            .order("milestone_hours", desc=True)
+            .order("measured_at", desc=True)
+            .limit(1)
+            .execute()
+        )
+
+        if result.data and len(result.data) > 0:
+            return result.data[0]
         return None
 
-
-_GET_BY_MILESTONE_SQL = text("""
-SELECT
-    metric_id, log_id, tweet_id, milestone_hours, hours_since_publish,
-    impression_count, like_count, reply_count, retweet_count, quote_count,
-    bookmark_count, url_link_clicks, user_profile_clicks, engagement_rate,
-    fetch_status, fetch_error, measured_at
-FROM viral_performance_metrics
-WHERE log_id = :log_id AND milestone_hours = :milestone_hours
-LIMIT 1
-""")
+    except Exception as e:
+        logger.warning(f"[ViralMetricsStore] get_latest 실패 log={log_id}: {e}")
+        return None
 
 
 def get_metric_by_milestone(
@@ -248,33 +236,28 @@ def get_metric_by_milestone(
 ) -> dict[str, Any] | None:
     """특정 (log_id, milestone) 측정값 조회 (성공/실패 무관)."""
     try:
-        engine = get_engine()
-        with engine.connect() as conn:
-            row = conn.execute(
-                _GET_BY_MILESTONE_SQL,
-                {"log_id": log_id, "milestone_hours": milestone_hours},
-            ).fetchone()
-            if not row:
-                return None
-            return _row_to_dict(row)
-    except SQLAlchemyError as e:
-        logger.error(
-            "[ViralMetricsStore] get_by_milestone 실패 log=%s ms=%d: %s",
-            log_id,
-            milestone_hours,
-            e,
+        result = (
+            _get_client()
+            .table("viral_performance_metrics")
+            .select(
+                "metric_id, log_id, tweet_id, milestone_hours, hours_since_publish, "
+                "impression_count, like_count, reply_count, retweet_count, "
+                "quote_count, bookmark_count, url_link_clicks, user_profile_clicks, "
+                "engagement_rate, fetch_status, fetch_error, measured_at"
+            )
+            .eq("log_id", log_id)
+            .eq("milestone_hours", milestone_hours)
+            .limit(1)
+            .execute()
         )
+
+        if result.data and len(result.data) > 0:
+            return result.data[0]
         return None
 
-
-def _row_to_dict(row: Any) -> dict[str, Any]:
-    """Row → dict 변환."""
-    d = dict(row._mapping) if hasattr(row, "_mapping") else dict(row)
-    for k, v in d.items():
-        if isinstance(v, Decimal):
-            d[k] = float(v)
-        elif isinstance(v, UUID):
-            d[k] = str(v)
-        elif isinstance(v, datetime):
-            d[k] = v.astimezone(timezone.utc).isoformat()
-    return d
+    except Exception as e:
+        logger.warning(
+            f"[ViralMetricsStore] get_by_milestone 실패 "
+            f"log={log_id} ms={milestone_hours}: {e}"
+        )
+        return None

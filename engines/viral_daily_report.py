@@ -1,45 +1,52 @@
 """
-Investment OS — Viral Daily Report v1.0.0
+engines/viral_daily_report.py
+================================
+C-20 일일 리포트 — 매일 KST 09:00 cron 실행.
 
-매일 KST 09:00 cron으로 실행:
-1. 전일 viral_logs 집계 (발행/폐기/세그먼트 분포)
-2. 전일~3일 전 metrics 집계 (24h/48h/68h/80h 평균)
-3. 자동 삭제 통계
-4. Notion 운영 현황 페이지에 자식 페이지로 리포트 발행
-5. Telegram 무료 채널에 요약 발송
+VERSION = "1.1.0"
 
-설계 원칙:
-- 마스터의 메모리: Notion 운영 현황 = 3339208cbdc3810a83cdc8612944e30d
-- 운영 점검 즉시 가능
-- "보호 후보" 일일 알림 (impression 50 미만 + viral_score 70 이상)
+v1.1.0 (2026-04-26):
+  - [긴급] SQLAlchemy 패턴 → supabase-py 패턴 전면 재작성
+  - 복잡한 SQL 집계(PERCENTILE_CONT/FILTER) → Python 단 집계로 전환
+  - 마스터 시스템 db/supabase_query.py 패턴 100% 준수
+
+v1.0.0 (2026-04-26): 초기 버전 (SQLAlchemy 기반, deprecated)
+
+플로우:
+  1. 전일 viral_logs 조회 → Python 단에서 집계
+  2. 전일 viral_performance_metrics 조회 → 평균/백분위 계산
+  3. 자동 삭제 통계 집계
+  4. Notion 운영 현황 페이지에 자식 페이지로 발행
+  5. Telegram 무료 채널에 요약 발송
+
+Notion 운영 현황 페이지: 3339208cbdc3810a83cdc8612944e30d
 """
-from __future__ import annotations
-
 import logging
 import os
+import statistics
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
-from sqlalchemy import text
-from sqlalchemy.exc import SQLAlchemyError
+logger = logging.getLogger(__name__)
 
-try:
-    from db.supabase_client import get_engine
-except ImportError as ie:
-    raise RuntimeError(
-        "db.supabase_client.get_engine() import 실패. "
-        "마스터 시스템 모듈 명세 확인 필요."
-    ) from ie
-
-VERSION = "1.0.0"
+VERSION = "1.1.0"
 
 KST = timezone(timedelta(hours=9))
 
-logger = logging.getLogger(__name__)
-
 # Notion 운영 현황 페이지 (마스터 메모리)
 NOTION_OPS_PAGE_ID = "3339208cbdc3810a83cdc8612944e30d"
+
+
+def _get_client():
+    """Supabase 클라이언트 가져오기 (마스터 패턴)."""
+    from db.supabase_client import get_client
+    return get_client()
+
+
+# ─────────────────────────────────────────────────────────────────────────
+# 데이터 클래스
+# ─────────────────────────────────────────────────────────────────────────
 
 
 @dataclass
@@ -54,88 +61,240 @@ class DailySummary:
     segment_distribution: dict[str, int] = field(default_factory=dict)
     axis_distribution: dict[str, int] = field(default_factory=dict)
     auto_deleted_today: int = 0
-    safety_blocks_today: dict[str, int] = field(default_factory=dict)
     avg_impression_24h: float | None = None
     avg_impression_80h: float | None = None
     avg_engagement_rate_80h: float | None = None
+    p50_impression_80h: float | None = None
+    p80_impression_80h: float | None = None
     protected_candidates: list[dict[str, Any]] = field(default_factory=list)
 
 
 # ─────────────────────────────────────────────────────────────────────────
-# 집계 SQL
+# 집계 함수 (Python 단 — supabase-py 단순 query만 사용)
 # ─────────────────────────────────────────────────────────────────────────
 
 
-_SQL_PUBLISHED_COUNT = text("""
-SELECT
-    COUNT(*) FILTER (WHERE is_published = true) AS published,
-    COUNT(*) FILTER (WHERE is_published = false) AS discarded,
-    AVG(viral_score) FILTER (WHERE is_published = true) AS avg_score
-FROM viral_logs
-WHERE publish_date = :target_date
-""")
+def _aggregate_logs(target_date: str) -> dict[str, Any]:
+    """target_date의 viral_logs 조회 + Python 집계."""
+    out = {
+        "published": 0,
+        "discarded": 0,
+        "avg_score": 0.0,
+        "segments": {},
+        "axes": {},
+        "log_ids_published": [],
+    }
+
+    try:
+        result = (
+            _get_client()
+            .table("viral_logs")
+            .select(
+                "log_id, target_segment, conflict_axis, "
+                "is_published, viral_score"
+            )
+            .eq("publish_date", target_date)
+            .execute()
+        )
+        rows = result.data or []
+    except Exception as e:
+        logger.warning(f"[ViralDailyReport] viral_logs 조회 실패: {e}")
+        return out
+
+    score_sum = 0
+    for r in rows:
+        if r.get("is_published"):
+            out["published"] += 1
+            seg = r.get("target_segment") or "unknown"
+            ax = r.get("conflict_axis") or "unknown"
+            out["segments"][seg] = out["segments"].get(seg, 0) + 1
+            out["axes"][ax] = out["axes"].get(ax, 0) + 1
+            score_sum += int(r.get("viral_score") or 0)
+            out["log_ids_published"].append(r["log_id"])
+        else:
+            out["discarded"] += 1
+
+    if out["published"] > 0:
+        out["avg_score"] = round(score_sum / out["published"], 1)
+
+    return out
 
 
-_SQL_SEGMENT_DIST = text("""
-SELECT target_segment, COUNT(*) AS cnt
-FROM viral_logs
-WHERE publish_date = :target_date AND is_published = true
-GROUP BY target_segment
-ORDER BY cnt DESC
-""")
+def _aggregate_metrics(log_ids: list[str]) -> dict[str, Any]:
+    """log_ids에 해당하는 metrics 조회 + Python 단 평균/백분위 계산."""
+    out: dict[str, Any] = {
+        "avg_imp_24": None,
+        "avg_imp_80": None,
+        "avg_er_80": None,
+        "p50_imp_80": None,
+        "p80_imp_80": None,
+    }
+
+    if not log_ids:
+        return out
+
+    try:
+        # supabase-py: .in_() 으로 IN 절 처리
+        result = (
+            _get_client()
+            .table("viral_performance_metrics")
+            .select(
+                "log_id, milestone_hours, fetch_status, "
+                "impression_count, engagement_rate"
+            )
+            .in_("log_id", log_ids)
+            .eq("fetch_status", "success")
+            .execute()
+        )
+        rows = result.data or []
+    except Exception as e:
+        logger.warning(f"[ViralDailyReport] metrics 조회 실패: {e}")
+        return out
+
+    imp_24: list[float] = []
+    imp_80: list[float] = []
+    er_80: list[float] = []
+
+    for r in rows:
+        ms = r.get("milestone_hours")
+        imp = r.get("impression_count")
+        er = r.get("engagement_rate")
+
+        if ms == 24 and imp is not None:
+            imp_24.append(float(imp))
+        elif ms == 80:
+            if imp is not None:
+                imp_80.append(float(imp))
+            if er is not None:
+                er_80.append(float(er))
+
+    if imp_24:
+        out["avg_imp_24"] = round(sum(imp_24) / len(imp_24), 1)
+    if imp_80:
+        out["avg_imp_80"] = round(sum(imp_80) / len(imp_80), 1)
+        if len(imp_80) >= 2:
+            sorted_imp = sorted(imp_80)
+            out["p50_imp_80"] = round(statistics.median(sorted_imp), 1)
+            # p80 — 80번째 백분위 (정확한 PERCENTILE_CONT 모사)
+            out["p80_imp_80"] = round(_percentile(sorted_imp, 0.80), 1)
+        else:
+            out["p50_imp_80"] = round(imp_80[0], 1)
+            out["p80_imp_80"] = round(imp_80[0], 1)
+    if er_80:
+        out["avg_er_80"] = round(sum(er_80) / len(er_80), 5)
+
+    return out
 
 
-_SQL_AXIS_DIST = text("""
-SELECT conflict_axis, COUNT(*) AS cnt
-FROM viral_logs
-WHERE publish_date = :target_date AND is_published = true
-GROUP BY conflict_axis
-ORDER BY cnt DESC
-""")
+def _percentile(sorted_values: list[float], q: float) -> float:
+    """PostgreSQL PERCENTILE_CONT 동작 모사 (선형 보간)."""
+    if not sorted_values:
+        return 0.0
+    n = len(sorted_values)
+    if n == 1:
+        return sorted_values[0]
+    # PERCENTILE_CONT: position = q * (n-1)
+    pos = q * (n - 1)
+    lower = int(pos)
+    upper = min(lower + 1, n - 1)
+    frac = pos - lower
+    return sorted_values[lower] * (1 - frac) + sorted_values[upper] * frac
 
 
-_SQL_AUTO_DELETED = text("""
-SELECT COUNT(*) AS cnt
-FROM viral_logs
-WHERE is_deleted = true
-  AND delete_mode = 'auto'
-  AND deleted_at::date = :target_date
-""")
+def _count_auto_deleted(target_date: str) -> int:
+    """target_date에 자동 삭제된 건수."""
+    try:
+        # deleted_at은 timestamptz → target_date 하루 범위로 조회
+        # KST 자정 기준 변환
+        dt_start = datetime.fromisoformat(f"{target_date}T00:00:00+09:00")
+        dt_end = dt_start + timedelta(days=1)
+        start_iso = dt_start.astimezone(timezone.utc).isoformat()
+        end_iso = dt_end.astimezone(timezone.utc).isoformat()
+
+        result = (
+            _get_client()
+            .table("viral_logs")
+            .select("log_id", count="exact")
+            .eq("is_deleted", True)
+            .eq("delete_mode", "auto")
+            .gte("deleted_at", start_iso)
+            .lt("deleted_at", end_iso)
+            .execute()
+        )
+        return int(result.count) if result.count is not None else 0
+
+    except Exception as e:
+        logger.warning(f"[ViralDailyReport] auto_deleted 조회 실패: {e}")
+        return 0
 
 
-_SQL_AVG_METRICS = text("""
-SELECT
-    AVG(impression_count) FILTER (WHERE milestone_hours = 24)::numeric(10,1) AS avg_imp_24,
-    AVG(impression_count) FILTER (WHERE milestone_hours = 80)::numeric(10,1) AS avg_imp_80,
-    AVG(engagement_rate) FILTER (WHERE milestone_hours = 80)::numeric(7,5) AS avg_er_80
-FROM viral_performance_metrics m
-JOIN viral_logs l ON m.log_id = l.log_id
-WHERE l.publish_date = :target_date
-  AND m.fetch_status = 'success'
-""")
+def _find_protected_candidates() -> list[dict[str, Any]]:
+    """high score(>=70) + low impression(<50) 보호 후보 조회."""
+    try:
+        # Step 1: 최근 5일 발행분 조회 (score>=70, 미보호, 미삭제)
+        cutoff = (datetime.now(timezone.utc) - timedelta(days=5)).isoformat()
+        log_result = (
+            _get_client()
+            .table("viral_logs")
+            .select(
+                "log_id, tweet_id, target_segment, conflict_axis, "
+                "viral_score, created_at"
+            )
+            .eq("is_published", True)
+            .eq("is_deleted", False)
+            .eq("protected", False)
+            .gte("viral_score", 70)
+            .gte("created_at", cutoff)
+            .order("created_at", desc=True)
+            .limit(50)
+            .execute()
+        )
+        candidates = log_result.data or []
+        if not candidates:
+            return []
 
+        # Step 2: 80h metrics 일괄 조회
+        log_ids = [c["log_id"] for c in candidates]
+        metric_result = (
+            _get_client()
+            .table("viral_performance_metrics")
+            .select("log_id, impression_count, engagement_rate")
+            .in_("log_id", log_ids)
+            .eq("milestone_hours", 80)
+            .eq("fetch_status", "success")
+            .execute()
+        )
+        metrics_by_log = {m["log_id"]: m for m in (metric_result.data or [])}
 
-_SQL_PROTECTED_CANDIDATES = text("""
-SELECT
-    l.log_id, l.tweet_id, l.target_segment, l.conflict_axis,
-    l.viral_score, m.impression_count, m.engagement_rate
-FROM viral_logs l
-JOIN viral_performance_metrics m ON l.log_id = m.log_id
-WHERE l.is_published = true
-  AND l.is_deleted = false
-  AND l.protected = false
-  AND m.milestone_hours = 80
-  AND m.fetch_status = 'success'
-  AND l.viral_score >= 70
-  AND m.impression_count < 50
-  AND l.created_at >= NOW() - INTERVAL '5 days'
-ORDER BY l.created_at DESC
-LIMIT 10
-""")
+        # Step 3: Python 단에서 imp<50 필터
+        protected: list[dict[str, Any]] = []
+        for c in candidates:
+            m = metrics_by_log.get(c["log_id"])
+            if m is None:
+                continue
+            imp = m.get("impression_count")
+            if imp is not None and imp < 50:
+                protected.append({
+                    "log_id":      c["log_id"],
+                    "tweet_id":    c["tweet_id"],
+                    "segment":     c["target_segment"],
+                    "axis":        c["conflict_axis"],
+                    "viral_score": c["viral_score"],
+                    "impression":  int(imp),
+                    "er":          float(m.get("engagement_rate") or 0.0),
+                })
+                if len(protected) >= 10:
+                    break
+
+        return protected
+
+    except Exception as e:
+        logger.warning(f"[ViralDailyReport] protected_candidates 조회 실패: {e}")
+        return []
 
 
 # ─────────────────────────────────────────────────────────────────────────
-# 메인 집계
+# 메인 집계 함수
 # ─────────────────────────────────────────────────────────────────────────
 
 
@@ -143,70 +302,30 @@ def collect_daily_summary(target_date: str) -> DailySummary:
     """target_date(YYYY-MM-DD) 기준 1일치 요약."""
     summary = DailySummary(target_date=target_date)
 
-    try:
-        engine = get_engine()
-        with engine.connect() as conn:
-            # 1) 발행/폐기 카운트
-            row = conn.execute(
-                _SQL_PUBLISHED_COUNT, {"target_date": target_date}
-            ).fetchone()
-            if row:
-                summary.published_count = int(row[0] or 0)
-                summary.discarded_count = int(row[1] or 0)
-                summary.avg_viral_score = float(row[2] or 0.0)
-                total = summary.published_count + summary.discarded_count
-                if total > 0:
-                    summary.discard_rate = round(
-                        summary.discarded_count / total, 3
-                    )
+    # 1) 발행/폐기 + 분포 집계
+    log_agg = _aggregate_logs(target_date)
+    summary.published_count = log_agg["published"]
+    summary.discarded_count = log_agg["discarded"]
+    summary.avg_viral_score = log_agg["avg_score"]
+    summary.segment_distribution = log_agg["segments"]
+    summary.axis_distribution = log_agg["axes"]
+    total = summary.published_count + summary.discarded_count
+    if total > 0:
+        summary.discard_rate = round(summary.discarded_count / total, 3)
 
-            # 2) 세그먼트 분포
-            for r in conn.execute(
-                _SQL_SEGMENT_DIST, {"target_date": target_date}
-            ):
-                summary.segment_distribution[str(r[0])] = int(r[1])
+    # 2) metrics 평균/백분위
+    metric_agg = _aggregate_metrics(log_agg["log_ids_published"])
+    summary.avg_impression_24h = metric_agg["avg_imp_24"]
+    summary.avg_impression_80h = metric_agg["avg_imp_80"]
+    summary.avg_engagement_rate_80h = metric_agg["avg_er_80"]
+    summary.p50_impression_80h = metric_agg["p50_imp_80"]
+    summary.p80_impression_80h = metric_agg["p80_imp_80"]
 
-            # 3) 갈등축 분포
-            for r in conn.execute(_SQL_AXIS_DIST, {"target_date": target_date}):
-                summary.axis_distribution[str(r[0])] = int(r[1])
+    # 3) 자동 삭제 건수
+    summary.auto_deleted_today = _count_auto_deleted(target_date)
 
-            # 4) 오늘 자동 삭제 건수
-            row = conn.execute(
-                _SQL_AUTO_DELETED, {"target_date": target_date}
-            ).fetchone()
-            summary.auto_deleted_today = int(row[0] or 0) if row else 0
-
-            # 5) metrics 평균
-            row = conn.execute(
-                _SQL_AVG_METRICS, {"target_date": target_date}
-            ).fetchone()
-            if row:
-                summary.avg_impression_24h = (
-                    float(row[0]) if row[0] is not None else None
-                )
-                summary.avg_impression_80h = (
-                    float(row[1]) if row[1] is not None else None
-                )
-                summary.avg_engagement_rate_80h = (
-                    float(row[2]) if row[2] is not None else None
-                )
-
-            # 6) 보호 후보
-            for r in conn.execute(_SQL_PROTECTED_CANDIDATES):
-                summary.protected_candidates.append(
-                    {
-                        "log_id": str(r[0]),
-                        "tweet_id": str(r[1]),
-                        "segment": str(r[2]),
-                        "axis": str(r[3]),
-                        "viral_score": int(r[4]),
-                        "impression": int(r[5]) if r[5] is not None else 0,
-                        "er": float(r[6]) if r[6] is not None else 0.0,
-                    }
-                )
-
-    except SQLAlchemyError as e:
-        logger.error("[ViralDailyReport] 집계 실패: %s", e)
+    # 4) 보호 후보
+    summary.protected_candidates = _find_protected_candidates()
 
     return summary
 
@@ -246,6 +365,8 @@ def build_notion_content(summary: DailySummary) -> str:
         if s.avg_engagement_rate_80h is not None
         else "—"
     )
+    p50 = f"{s.p50_impression_80h:.0f}" if s.p50_impression_80h is not None else "—"
+    p80 = f"{s.p80_impression_80h:.0f}" if s.p80_impression_80h is not None else "—"
 
     return (
         f"# Viral Daily Report — {s.target_date}\n\n"
@@ -259,7 +380,8 @@ def build_notion_content(summary: DailySummary) -> str:
         f"## 성과 지표\n\n"
         f"- 평균 impression (24h): **{avg_imp_24}**\n"
         f"- 평균 impression (80h): **{avg_imp_80}**\n"
-        f"- 평균 engagement_rate (80h): **{avg_er_80}**\n\n"
+        f"- 평균 engagement_rate (80h): **{avg_er_80}**\n"
+        f"- 80h impression p50: {p50} / p80: {p80}\n\n"
         f"## 자동 폐기\n\n"
         f"- 오늘 자동 삭제: **{s.auto_deleted_today}건**\n\n"
         f"## 보호 후보 (운영자 검토 필요)\n\n"
@@ -309,53 +431,45 @@ def publish_to_notion(summary: DailySummary) -> str | None:
             if not line.strip():
                 continue
             if line.startswith("# "):
-                blocks.append(
-                    {
-                        "object": "block",
-                        "type": "heading_1",
-                        "heading_1": {
-                            "rich_text": [
-                                {"type": "text", "text": {"content": line[2:]}}
-                            ]
-                        },
-                    }
-                )
+                blocks.append({
+                    "object": "block",
+                    "type": "heading_1",
+                    "heading_1": {
+                        "rich_text": [
+                            {"type": "text", "text": {"content": line[2:]}}
+                        ]
+                    },
+                })
             elif line.startswith("## "):
-                blocks.append(
-                    {
-                        "object": "block",
-                        "type": "heading_2",
-                        "heading_2": {
-                            "rich_text": [
-                                {"type": "text", "text": {"content": line[3:]}}
-                            ]
-                        },
-                    }
-                )
+                blocks.append({
+                    "object": "block",
+                    "type": "heading_2",
+                    "heading_2": {
+                        "rich_text": [
+                            {"type": "text", "text": {"content": line[3:]}}
+                        ]
+                    },
+                })
             else:
-                blocks.append(
-                    {
-                        "object": "block",
-                        "type": "paragraph",
-                        "paragraph": {
-                            "rich_text": [
-                                {"type": "text", "text": {"content": line[:1900]}}
-                            ]
-                        },
-                    }
-                )
+                blocks.append({
+                    "object": "block",
+                    "type": "paragraph",
+                    "paragraph": {
+                        "rich_text": [
+                            {"type": "text", "text": {"content": line[:1900]}}
+                        ]
+                    },
+                })
 
         body = {
             "parent": {"page_id": NOTION_OPS_PAGE_ID},
             "properties": {
                 "title": {
-                    "title": [
-                        {
-                            "text": {
-                                "content": f"Viral Daily Report — {summary.target_date}"
-                            }
+                    "title": [{
+                        "text": {
+                            "content": f"Viral Daily Report — {summary.target_date}"
                         }
-                    ]
+                    }]
                 }
             },
             "children": blocks[:100],
@@ -369,17 +483,17 @@ def publish_to_notion(summary: DailySummary) -> str | None:
         )
         if r.status_code == 200:
             page_id = r.json().get("id")
-            logger.info("[ViralDailyReport] Notion 페이지 생성 완료 page=%s", page_id)
+            logger.info(f"[ViralDailyReport] Notion 페이지 생성 완료 page={page_id}")
             return page_id
         else:
             logger.error(
-                "[ViralDailyReport] Notion API 실패 status=%d body=%s",
-                r.status_code,
-                r.text[:200],
+                f"[ViralDailyReport] Notion API 실패 status={r.status_code} "
+                f"body={r.text[:200]}"
             )
             return None
+
     except Exception as e:
-        logger.error("[ViralDailyReport] Notion 발행 예외: %s", e)
+        logger.error(f"[ViralDailyReport] Notion 발행 예외: {e}")
         return None
 
 
@@ -387,18 +501,22 @@ def publish_to_telegram(summary: DailySummary) -> bool:
     """TG 무료 채널에 요약 발송."""
     try:
         from publishers.telegram_publisher import send_message
-
         send_message(build_telegram_summary(summary), channel="free")
         logger.info("[ViralDailyReport] TG 발송 완료")
         return True
     except Exception as e:
-        logger.warning("[ViralDailyReport] TG 발송 실패: %s", e)
+        logger.warning(f"[ViralDailyReport] TG 발송 실패: {e}")
         return False
+
+
+# ─────────────────────────────────────────────────────────────────────────
+# 메인 진입점
+# ─────────────────────────────────────────────────────────────────────────
 
 
 def main(target_date: str | None = None) -> dict[str, Any]:
     """cron 진입점. 매일 09:00 KST. target_date 미지정 시 어제."""
-    logger.info("[ViralDailyReport] v%s 시작", VERSION)
+    logger.info(f"[ViralDailyReport] v{VERSION} 시작")
 
     if target_date is None:
         yesterday = (datetime.now(KST) - timedelta(days=1)).date()
@@ -406,10 +524,9 @@ def main(target_date: str | None = None) -> dict[str, Any]:
 
     summary = collect_daily_summary(target_date)
     logger.info(
-        "[ViralDailyReport] 집계 완료 published=%d discarded=%d auto_deleted=%d",
-        summary.published_count,
-        summary.discarded_count,
-        summary.auto_deleted_today,
+        f"[ViralDailyReport] 집계 완료 published={summary.published_count} "
+        f"discarded={summary.discarded_count} "
+        f"auto_deleted={summary.auto_deleted_today}"
     )
 
     notion_page_id = publish_to_notion(summary)
