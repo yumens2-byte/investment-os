@@ -80,6 +80,19 @@ jobs:
       - name: Run C-20 오전
         run: python -c "from engines.viral_engine import run_viral_c20; print(run_viral_c20('viral_c20'))"
 
+      - name: Run viral
+        run: |
+          export PYTHONUNBUFFERED=1
+          python -c "
+          import logging
+          logging.basicConfig(
+              level=logging.INFO,
+              format='%(asctime)s [%(levelname)s] %(name)s — %(message)s',
+          )
+          from engines.viral_engine import run_viral_c20
+          print(run_viral_c20('viral_c20'))
+          "
+
       - name: Upload logs and images
         if: always()   # 성공/실패 무관 업로드
         uses: actions/upload-artifact@v4
