@@ -502,8 +502,7 @@ def _generate_dilemma_viral(
     else:
         logger.warning(
             "[Viral-C20] v1.7.0 — target_segment/policy 누락 → v1.6.1 호환 모드"
-
-
+        )
 
     prompt_template = (
         "20~40대 타겟 '극단적 선택' SNS 콘텐츠를 JSON으로 생성해줘.\n\n"
@@ -538,6 +537,7 @@ def _generate_dilemma_viral(
         '  "option_a": "연봉 1억인데 야근 vs 연봉 3천인데 자유",  ← A에 전체 딜레마 넣음\n'
         '  "option_b": "연봉 1억인데 야근 vs 연봉 3천인데 자유",  ← B에 같은 문장 복사\n'
         "}\n\n"
+    )
 
     # ── 재시도 루프 (최대 3회) ────────────────────────────────
     temperatures = [1.0, 0.9, 0.8]
