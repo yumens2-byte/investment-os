@@ -7,7 +7,7 @@ on:
     # C-20 오전: KST 08:00 (UTC 23:00 전날) — 일~목 UTC = 월~금 KST
     - cron: "0 23 * * 0-4"
     # C-20 퇴근: KST 18:00 (UTC 09:00) — 평일
-    - cron: "0 9 * * 1-5"
+    #- cron: "0 9 * * 1-5"
   workflow_dispatch:
     inputs:
       session:
