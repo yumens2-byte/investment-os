@@ -33,13 +33,6 @@ from config.settings import (
     COPPER_GOLD_OPTIMISM, COPPER_GOLD_PESSIMISM,
     FED_BS_QE_THR, FED_BS_QT_THR,
     SOFR_STRESS_THR, SOFR_TENSION_THR,
-    # [A-4 고도화] TLT 4단계 건강도 임계값 (v1.9.0 추가)
-    TLT_RALLY_THR  =  0.5   # ≥ +0.5%  → Rally  (채권 강세)
-    TLT_STABLE_THR = -0.5   # > -0.5%  → Stable (보합)
-    TLT_WEAK_THR   = -1.5   # > -1.5%  → Weak   (채권 약세)
-                             # ≤ -1.5%  → Crash  (채권 급락)
-    US30Y_HIGH_THR =  5.0   # > 5.0%   → 고금리 압박 (+1 보정)
-    US30Y_LOW_THR  =  3.5   # < 3.5%   → 저금리 지지 (-1 보정)
 )
 from config.settings import (
     # ... 기존 imports 유지 ...
