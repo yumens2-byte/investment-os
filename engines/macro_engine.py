@@ -49,6 +49,11 @@ from config.settings import (
     MOVE_CALM, MOVE_ELEVATED, MOVE_STRESSED,
     STAGFLATION_SPY_THR, STAGFLATION_TLT_THR,
     YIELD_SPREAD_NORMAL_BP, YIELD_SPREAD_FLAT_BP, YIELD_SPREAD_DEEP_BP,
+    # ── Priority A 고도화 임계값 (v1.9.0 추가) ────────────────
+    TLT_RALLY_THR, TLT_STABLE_THR, TLT_WEAK_THR,
+    US30Y_HIGH_THR, US30Y_LOW_THR,
+)
+
 )
 
 logger = logging.getLogger(__name__)
