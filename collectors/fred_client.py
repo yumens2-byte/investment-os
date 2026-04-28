@@ -18,7 +18,7 @@ import logging
 from typing import Optional
 from config.settings import FRED_API_KEY, FRED_SERIES
 
-VERSION = "1.3.0"
+VERSION = "1.4.0"
 
 logger = logging.getLogger(__name__)
 
@@ -155,6 +155,19 @@ def collect_macro_data() -> dict:
     else:
         logger.warning("[FRED] DGS2 수집 실패 → None (엔진에서 중립 처리)")
 
+    # ── 신규 (v1.4.0): 10Y / 30Y Treasury Yield 절대값 ──────
+    us10y = _fetch_latest(FRED_SERIES.get("us10y", "DGS10"))
+    if us10y is not None:
+        logger.info(f"[FRED] 10Y Treasury Yield: {us10y:.3f}%")
+    else:
+        logger.warning("[FRED] DGS10 수집 실패 → None (엔진에서 중립 처리)")
+
+    us30y = _fetch_latest(FRED_SERIES.get("us30y", "DGS30"))
+    if us30y is not None:
+        logger.info(f"[FRED] 30Y Treasury Yield: {us30y:.3f}%")
+    else:
+        logger.warning("[FRED] DGS30 수집 실패 → None (엔진에서 중립 처리)")
+
     # ── Priority B: CPI + NFP + Fed Balance Sheet + SOFR ────
     cpi_yoy  = _fetch_yoy_change(FRED_SERIES.get("cpi",      "CPIAUCSL"))
     core_cpi_yoy = _fetch_yoy_change(FRED_SERIES.get("core_cpi", "CPILFESL"))
@@ -200,14 +213,29 @@ def collect_macro_data() -> dict:
     else:
         data["spread_2y10y_bp"] = None
 
+    # ── 신규 (v1.4.0): 10Y / 30Y 절대값 + 스프레드 ──────────
+    data["us10y"] = us10y
+    data["us30y"] = us30y
+
+    # 2Y-30Y 스프레드 (장기 커브): us30y, us2y 모두 있을 때만 계산
+    if us30y is not None and us2y is not None:
+        data["spread_2y30y_bp"] = round((us30y - us2y) * 100, 1)
+    else:
+        data["spread_2y30y_bp"] = None
+
+    # 10Y-30Y 스프레드 (장기 기울기): us30y, us10y 모두 있을 때만 계산
+    if us30y is not None and us10y is not None:
+        data["spread_10y30y_bp"] = round((us30y - us10y) * 100, 1)
+    else:
+        data["spread_10y30y_bp"] = None
+
     logger.info(
-        f"[FRED] 수집 완료: 기준금리 {_fmt_pct(fed_rate)} | "
-        f"HY 스프레드 {_fmt_pct(hy_spread)} | "
-        f"수익률 곡선 {_fmt_pct(yield_curve)} | "
-        f"2Y금리 {_fmt_pct(us2y)} | "
-        f"스프레드 {data.get('spread_2y10y_bp')}bp | "
-        f"실업수당 {_fmt_int_k(initial_claims)} | "
-        f"기대인플레 {_fmt_pct(inflation_exp)}"
+        f"[FRED v{VERSION}] 수집 완료: 기준금리 {_fmt_pct(fed_rate)} | "
+        f"HY {_fmt_pct(hy_spread)} | "
+        f"2Y {_fmt_pct(us2y)} | 10Y {_fmt_pct(us10y)} | 30Y {_fmt_pct(us30y)} | "
+        f"2Y-10Y {data.get('spread_2y10y_bp')}bp | "
+        f"2Y-30Y {data.get('spread_2y30y_bp')}bp | "
+        f"10Y-30Y {data.get('spread_10y30y_bp')}bp"
     )
     return data
 
