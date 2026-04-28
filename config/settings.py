@@ -224,6 +224,7 @@ TICKER_MAP = {
     "XLB":  "XLB",      # B-3: 소재
 }
 
+
 # FRED 시리즈 ID
 FRED_SERIES = {
     "fed_funds_rate": "FEDFUNDS",
