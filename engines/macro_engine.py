@@ -47,8 +47,6 @@ from config.settings import (
     US30Y_HIGH_THR, US30Y_LOW_THR,
 )
 
-)
-
 logger = logging.getLogger(__name__)
 
 
