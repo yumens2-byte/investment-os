@@ -1,5 +1,5 @@
 """
-run_market.py (v1.5.1)
+run_market.py (v1.7.0)
 =======================
 역할: 취합(수집) + 분석
 실행: python run_market.py [--session morning|intraday|close]
@@ -61,6 +61,71 @@ def _detect_session() -> str:
         return "intraday"
     else:
         return "close"
+
+def _validate_core_inputs(
+    snapshot: dict,
+    fred_data: dict,
+    crypto_basis_result,
+    btc_sentiment_result,
+) -> None:
+    """
+    assemble_core_data() 직전 필수 필드 None 체크 게이트 (v1.7.0).
+
+    반복 발생 고위험 패턴 방지:
+      - Tier1 필수 필드 4개 전체 None → ValueError (파이프라인 중단)
+      - Tier1 부분 None / Tier2 None → WARNING (엔진에서 중립 처리, 계속)
+      - 파라미터 전달 체인 누락 → WARNING (v1.5.1 BUGFIX 패턴 재발 방지)
+
+    Args:
+        snapshot: collect_market_snapshot() 결과
+        fred_data: collect_macro_data() 결과
+        crypto_basis_result: get_btc_basis() 결과 (None 가능)
+        btc_sentiment_result: get_btc_sentiment() 결과 (None 가능)
+
+    Raises:
+        ValueError: Tier1 필수 필드 4개 전체 None인 경우
+    """
+    # ── Tier1 필수 필드 체크 ─────────────────────────────────
+    tier1_missing = []
+    for key in ("vix", "sp500", "us10y", "oil"):
+        if snapshot.get(key) is None:
+            tier1_missing.append(f"snapshot.{key}")
+
+    if tier1_missing:
+        all_none = len(tier1_missing) == 4
+        if all_none:
+            logger.error(
+                f"[Gate] Tier1 필수 필드 전체 None: {tier1_missing} "
+                f"— 시장 데이터 수집 전면 실패. 파이프라인 중단."
+            )
+            raise ValueError(
+                f"assemble_core_data() 게이트: Tier1 필수 필드 전체 누락 {tier1_missing}"
+            )
+        else:
+            logger.warning(
+                f"[Gate] Tier1 필드 부분 누락: {tier1_missing} "
+                f"— 엔진에서 중립 처리 진행"
+            )
+
+    # ── Tier2 경고 체크 ──────────────────────────────────────
+    for key in ("fed_funds_rate", "spread_2y10y_bp"):
+        if fred_data.get(key) is None:
+            logger.warning(
+                f"[Gate] fred_data.{key} = None "
+                f"— 엔진 중립 처리 (파이프라인 계속)"
+            )
+
+    # ── 파라미터 전달 체인 체크 (v1.5.1 BUGFIX 패턴 재발 방지) ──
+    if crypto_basis_result is None:
+        logger.warning(
+            "[Gate] crypto_basis_result = None "
+            "— assemble_core_data()에 None 전달됨 (Unknown 처리됨)"
+        )
+    if btc_sentiment_result is None:
+        logger.warning(
+            "[Gate] btc_sentiment_result = None "
+            "— assemble_core_data()에 None 전달됨 (Unknown 처리됨)"
+        )
 
 
 def run(session: str) -> dict:
@@ -437,6 +502,16 @@ def run(session: str) -> dict:
 
     # ── Step 6: JSON 조립 ──────────────────────────────────────
     logger.info("[Step 6] JSON Core Data 조립")
+
+    # ── Step 6 게이트: assemble_core_data() 파라미터 Null 검증 ──
+    # v1.7.0: 반복 발생 고위험 패턴 방지 (v1.5.1 BUGFIX 동일 사고 재발 차단)
+    _validate_core_inputs(
+        snapshot=snapshot,
+        fred_data=fred_data,
+        crypto_basis_result=crypto_basis_result,
+        btc_sentiment_result=btc_sentiment_result,
+    )
+  
     from core.json_builder import assemble_core_data, build_envelope, save_core_data
     data = assemble_core_data(
         fx_rates=fx_rates,
@@ -618,6 +693,10 @@ def main():
             logger.warning("[run_market] Validation FAIL — run_view.py 실행 차단")
             sys.exit(2)
         sys.exit(0)
+    except ValueError as e:
+        # v1.7.0: Tier1 필수 필드 전체 누락 (게이트 차단)
+        logger.critical(f"[run_market] 데이터 게이트 차단: {e}")
+        sys.exit(3)
     except Exception as e:
         logger.critical(f"[run_market] 예외 발생: {e}", exc_info=True)
         sys.exit(1)
