@@ -234,6 +234,9 @@ FRED_SERIES = {
     "unemployment":      "UNRATE",     # B-2: 실업률 (%)
     "fed_balance_sheet": "WALCL",      # B-7: 연준 총자산 (백만 달러)
     "sofr":              "SOFR",       # B-8: SOFR (담보부 익일물 금리)
+    # ── 신규 추가 (2026-04-28) ──────────────────────────────
+    "us10y": "DGS10",   # 10-Year Treasury Constant Maturity Rate (절대값)
+    "us30y": "DGS30",   # 30-Year Treasury Constant Maturity Rate (절대값)
 }
 
 # ─── 다중 RSS 소스 설정 (Reddit 대체) ──────────────────────
@@ -303,6 +306,21 @@ RSS_SOURCES = [
         "weight": 1.1,
         "max_items": 8,
         "timeout_sec": 10,
+    },
+     # ── 신규 추가 (2026-04-28) ──────────────────────────────
+    {
+        "name": "Fox Business — Markets",
+        "url": "https://moxie.foxbusiness.com/google-publisher/markets.xml",
+        "weight": 1.2,
+        "max_items": 10,
+        "timeout_sec": 8,
+    },
+    {
+        "name": "Fox Business — Economy",
+        "url": "https://moxie.foxbusiness.com/google-publisher/economy.xml",
+        "weight": 1.2,
+        "max_items": 8,
+        "timeout_sec": 8,
     },
 ]
 
