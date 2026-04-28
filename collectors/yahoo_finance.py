@@ -50,7 +50,8 @@ from config.settings import TICKER_MAP, ETF_CORE, ETF_SIGNAL
 
 logger = logging.getLogger(__name__)
 
-VERSION = "1.8.0"
+
+VERSION = "1.9.0"
 
 # ─────────────────────────────────────────────────────────────────────────────
 # v1.7.0: yfinance 라이브러리 로그 noise 차단
@@ -153,13 +154,18 @@ def _fetch_with_requests(ticker_symbol: str, mode: str = "change") -> Optional[f
 
 
 def _fetch(ticker_symbol: str, mode: str = "change") -> Optional[float]:
-    """yfinance → requests 순서로 시도. 둘 다 실패 시 None."""
-    val = _fetch_with_yfinance(ticker_symbol, mode)
+    """
+    requests → yfinance 순서로 시도. 둘 다 실패 시 None. (v1.9.0)
+    GitHub Actions 환경: yfinance 1차 시도 100% 실패 확인됨
+    → requests를 1순위로 전환하여 티커당 약 3~4초 절감
+    """
+    # 1순위: requests (GitHub Actions 환경에서 안정적)
+    val = _fetch_with_requests(ticker_symbol, mode)
     if val is not None:
         return val
-    logger.info(f"[YF] requests fallback 시도: {ticker_symbol}")
-    time.sleep(0.3)
-    return _fetch_with_requests(ticker_symbol, mode)
+    # 2순위: yfinance fallback (로컬 환경 또는 requests 차단 시)
+    logger.info(f"[YF] yfinance fallback 시도: {ticker_symbol}")
+    return _fetch_with_yfinance(ticker_symbol, mode)
 
 
 def collect_market_snapshot() -> dict:
