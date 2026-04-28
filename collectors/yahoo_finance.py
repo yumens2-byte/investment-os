@@ -50,7 +50,7 @@ from config.settings import TICKER_MAP, ETF_CORE, ETF_SIGNAL
 
 logger = logging.getLogger(__name__)
 
-VERSION = "1.7.0"
+VERSION = "1.8.0"
 
 # ─────────────────────────────────────────────────────────────────────────────
 # v1.7.0: yfinance 라이브러리 로그 noise 차단
@@ -293,7 +293,7 @@ def collect_etf_sma() -> dict:
 
 def collect_put_call_ratio() -> dict:
     """
-    D-2: CBOE Equity Put/Call Ratio 수집 (v2.2)
+    D-2: CBOE Equity Put/Call Ratio 수집 (v2.3)
 
     데이터 소스 우선순위:
       1순위: CBOE JSON API
@@ -302,7 +302,9 @@ def collect_put_call_ratio() -> dict:
       4순위: yfinance SPY 옵션 체인 계산 (v2.2 추가)
              → SPY put/call volume 합산으로 PCR 직접 계산
              → 1~3순위 전부 차단 시 fallback
-      5순위: Unknown graceful
+      5순위: CBOE Archive CSV (v2.3 추가)
+             → cdn.cboe.com CDN 직접 배포 경로 (기존 API와 별도)
+      6순위: Unknown graceful
     """
     logger.info("[YF_PCR] Put/Call Ratio 수집 시작 (v2.2 graceful)")
 
@@ -329,6 +331,13 @@ def collect_put_call_ratio() -> dict:
     if pcr is not None:
         result = _build_pcr_result(pcr, source="yfinance_spy")
         logger.info(f"[YF_PCR] PCR={pcr} → {result['pcr_state']} (source=yfinance_spy)")
+        return result
+
+    # ── 5순위: CBOE Archive CSV (v2.3 추가) ──────────────────
+    pcr = _fetch_pcr_cboe_archive_csv()
+    if pcr is not None:
+        result = _build_pcr_result(pcr, source="cboe_archive_csv")
+        logger.info(f"[YF_PCR] PCR={pcr} → {result['pcr_state']} (source=cboe_archive_csv)")
         return result
 
     logger.info("[YF_PCR] Unknown (graceful — 모든 소스 사용 불가, 파이프라인 무영향)")
@@ -541,6 +550,70 @@ def _fetch_pcr_yfinance() -> Optional[float]:
 
     except Exception as e:
         logger.debug(f"[YF_PCR] yfinance 실패: {e}")
+        return None
+
+
+def _fetch_pcr_cboe_archive_csv() -> Optional[float]:
+    """
+    5순위: CBOE Equity PCR Archive CSV (cdn.cboe.com, v2.3 신규)
+
+    URL: https://cdn.cboe.com/resources/options/volume_and_call_put_ratios/equitypcarchive.csv
+    형식: Trade_date,Call,Put,Total,P/C Ratio
+    특징: CDN 직접 배포 경로 — 기존 JSON API / HTML과 별도 엔드포인트
+          마지막 행 = 최신 확정값 (장 마감 T+0)
+    """
+    try:
+        import requests
+        url = (
+            "https://cdn.cboe.com/resources/options/volume_and_call_put_ratios"
+            "/equitypcarchive.csv"
+        )
+        headers = {
+            "User-Agent": (
+                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+                "AppleWebKit/537.36 (KHTML, like Gecko) "
+                "Chrome/120.0.0.0 Safari/537.36"
+            ),
+            "Accept": "text/csv,*/*",
+            "Referer": "https://www.cboe.com/",
+        }
+        resp = requests.get(url, headers=headers, timeout=_PCR_TIMEOUT_SEC)
+        if resp.status_code != 200:
+            logger.debug(f"[YF_PCR] CBOE Archive CSV HTTP {resp.status_code}")
+            return None
+
+        text = resp.text.strip()
+        if not text:
+            return None
+
+        lines = [line.strip() for line in text.split("\n") if line.strip()]
+        if len(lines) < 2:
+            return None
+
+        # 헤더 검증: Trade_date,Call,Put,Total,P/C Ratio
+        header = lines[0].lower()
+        if "p/c" not in header and "ratio" not in header:
+            logger.debug("[YF_PCR] CBOE Archive CSV 헤더 불인식")
+            return None
+
+        # 마지막 행 = 최신 확정값
+        last = lines[-1].split(",")
+        if len(last) < 5:
+            return None
+
+        try:
+            pcr = round(float(last[4].strip()), 3)
+            if 0.1 < pcr < 5.0:
+                logger.debug(f"[YF_PCR] CBOE Archive CSV 파싱 성공: PCR={pcr}")
+                return pcr
+        except (ValueError, IndexError):
+            pass
+
+        logger.debug("[YF_PCR] CBOE Archive CSV 값 파싱 실패")
+        return None
+
+    except Exception as e:
+        logger.debug(f"[YF_PCR] CBOE Archive CSV 실패: {e}")
         return None
 
 
