@@ -173,6 +173,14 @@ FED_BS_QT_THR = -30.0  # -300억 이하 → QT Active (유동성 축소)
 SOFR_STRESS_THR  = 0.5   # 차이 > 0.5%p → 단기자금 스트레스
 SOFR_TENSION_THR = 0.2   # 차이 > 0.2%p → 긴장 경계
 
+# [A-4 고도화] TLT 4단계 건강도 임계값 (v1.9.0 추가)
+TLT_RALLY_THR  =  0.5   # ≥ +0.5%  → Rally  (채권 강세)
+TLT_STABLE_THR = -0.5   # > -0.5%  → Stable (보합)
+TLT_WEAK_THR   = -1.5   # > -1.5%  → Weak   (채권 약세)
+                         # ≤ -1.5%  → Crash  (채권 급락)
+US30Y_HIGH_THR =  5.0   # > 5.0%   → 고금리 압박 (score +1 보정)
+US30Y_LOW_THR  =  3.5   # < 3.5%   → 저금리 지지 (score -1 보정)
+
 # ─── ETF Universe ─────────────────────────────────────────
 ETF_CORE = ["QQQM", "XLK", "SPYM", "XLE", "ITA", "TLT"]
 ETF_SIGNAL = ["XLF", "GLD"]
