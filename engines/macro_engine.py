@@ -894,6 +894,76 @@ def _score_spy_tlt_regime(tier2_data: dict, snapshot: dict) -> dict:
         "tlt_change":            round(tlt_chg, 2),
     }
 
+def _score_tlt_health(tier2_data: dict, fred_data: dict) -> dict:
+    """
+    [A-4 고도화] TLT 4단계 건강도 분석 (v1.9.0)
+
+    tlt_change + us30y 절대값 조합으로 채권 시장 상태를 4단계로 판정합니다.
+    기존 _score_spy_tlt_regime() (SPY×TLT 4상한)과 독립적으로 동작합니다.
+
+    판정 기준:
+      Rally  : tlt_change ≥ +0.5%  → score=1 (채권 강세, 안전자산 수요)
+      Stable : +0.5% > tlt ≥ -0.5% → score=2 (보합)
+      Weak   : -0.5% > tlt > -1.5% → score=3 (채권 약세)
+      Crash  : tlt_change ≤ -1.5%  → score=4 (채권 급락)
+
+    us30y 레벨 보정 (클리핑: 1~4):
+      us30y > 5.0% → score +1 (고금리 = 채권 추가 압박)
+      us30y < 3.5% → score -1 (저금리 = 채권 지지)
+
+    Args:
+        tier2_data: collect_tier2_market_data() 결과
+        fred_data:  collect_macro_data() 결과
+
+    Returns:
+        {
+            tlt_health_score: int,   # 1(Rally)~4(Crash)
+            tlt_health_state: str,   # "TLT Rally|Stable|Weak|Crash|No Data"
+            tlt_us30y_level:  str,   # "High|Normal|Low|Unknown"
+        }
+    """
+    tlt_chg = tier2_data.get("tlt_change") if tier2_data else None
+    us30y   = fred_data.get("us30y")       if fred_data  else None
+
+    if tlt_chg is None:
+        return {
+            "tlt_health_score": 2,
+            "tlt_health_state": "No Data",
+            "tlt_us30y_level":  "Unknown",
+        }
+
+    # 기본 4단계 판정
+    if tlt_chg >= TLT_RALLY_THR:
+        base_score, base_state = 1, "TLT Rally"
+    elif tlt_chg > TLT_STABLE_THR:
+        base_score, base_state = 2, "TLT Stable"
+    elif tlt_chg > TLT_WEAK_THR:
+        base_score, base_state = 3, "TLT Weak"
+    else:
+        base_score, base_state = 4, "TLT Crash"
+
+    # us30y 레벨 보정
+    if us30y is not None:
+        if us30y > US30Y_HIGH_THR:
+            us30y_level    = "High"
+            adjusted_score = min(4, base_score + 1)
+        elif us30y < US30Y_LOW_THR:
+            us30y_level    = "Low"
+            adjusted_score = max(1, base_score - 1)
+        else:
+            us30y_level    = "Normal"
+            adjusted_score = base_score
+    else:
+        us30y_level    = "Unknown"
+        adjusted_score = base_score
+
+    state_map = {1: "TLT Rally", 2: "TLT Stable", 3: "TLT Weak", 4: "TLT Crash"}
+    return {
+        "tlt_health_score": adjusted_score,
+        "tlt_health_state": state_map[adjusted_score],
+        "tlt_us30y_level":  us30y_level,
+    }
+
 
 def _score_yield_spread(fred_data: dict) -> dict:
     """
@@ -1420,6 +1490,7 @@ def run_macro_engine(
     small_cap_sig   = _score_small_cap_relative(tier2_data or {}, snapshot)
     move_sig        = _score_move(tier2_data or {}, snapshot)
     tlt_regime_sig  = _score_spy_tlt_regime(tier2_data or {}, snapshot)
+    tlt_health_sig  = _score_tlt_health(tier2_data or {}, fred_data or {})   # ← 신규
     yield_spread_sig= _score_yield_spread(fred_data or {})
     spy_trend_sig   = _score_spy_trend(spy_sma_data or {})
 
@@ -1457,6 +1528,10 @@ def run_macro_engine(
         "spy_sma50":             spy_trend_sig.get("spy_sma50"),
         "spy_sma200":            spy_trend_sig.get("spy_sma200"),
         "pct_from_sma200":       spy_trend_sig.get("pct_from_sma200"),
+        # A-4 고도화: TLT 건강도 (v1.9.0)
+        "tlt_health_score":  tlt_health_sig["tlt_health_score"],
+        "tlt_health_state":  tlt_health_sig["tlt_health_state"],
+        "tlt_us30y_level":   tlt_health_sig["tlt_us30y_level"],
     })
 
     logger.info(
