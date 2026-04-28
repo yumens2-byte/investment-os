@@ -17,6 +17,7 @@ v1.7.0 (2026-04-07): 운영 로그 정리 + PCR graceful degradation
   · publish_eligible은 PCR 없이도 True (regime/etf/risk 엔진 모두 PCR 없이 정상)
   · 미래에 새 데이터 소스가 발견되면 _fetch_pcr_xxx 함수만 추가하면 됨
 
+
 v1.6.0: PCR 수집 v2.0 — CBOE 공식 + Stooq 다중 fallback (2026-04-07)
 - collect_put_call_ratio() 완전 재작성
   · ^CPCE Yahoo 의존 제거 (deprecated)
