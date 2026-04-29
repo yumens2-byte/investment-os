@@ -1,9 +1,12 @@
 """
-collectors/fred_client.py (v1.3.0)
+collectors/fred_client.py (v1.6.0)
 ====================================
 FRED API에서 거시경제 지표를 수집한다.
 공식 무료 API. 데이터 갱신 주기: 일~주 단위.
 
+v1.6.0 (2026-04-30) Phase 3-B — FRED 3.5초×3회 재시도 적용
+v1.5.0 (2026-04-xx) TIPS BEI(T5YIE, T10YIE), IG Spread(BAMLC0A0CM) 추가
+v1.4.0 (2026-04-xx) 10Y(DGS10), 30Y(DGS30) 절대값 + 파생 스프레드 추가
 v1.3.0 (2026-04-11) Priority A — us2y(DGS2), spread_2y10y_bp 추가
 v1.1.0 (2026-04-07) — 다중 BUGFIX (운영 사고 위험 6건 수정)
 ─────────────────────────────────────────────────────────────
@@ -15,14 +18,19 @@ BUG-F5 🚨 1차 ICSA fetch에 단위 변환 누락 수정
 BUG-F6 🚨 detect_macro_changes() false alarm 차단
 """
 import logging
+import time
 from typing import Optional
 from config.settings import FRED_API_KEY, FRED_SERIES
 
-VERSION = "1.5.0"
+VERSION = "1.6.0"
 
 logger = logging.getLogger(__name__)
 
 _fred_client = None
+
+# ── Phase 3-B: FRED 재시도 파라미터 ──────────────────────────
+_FRED_RETRY_MAX      = 3    # 최대 시도 횟수
+_FRED_RETRY_WAIT_SEC = 3.5  # 시도 간 고정 대기 (초)
 
 
 def _get_client():
@@ -41,20 +49,48 @@ def _get_client():
     return _fred_client
 
 
+def _fetch_with_retry(series_id: str, fetch_fn) -> Optional[float]:
+    """
+    FRED API 단일 시리즈 재시도 래퍼 (Phase 3-B).
+
+    동작:
+      - 최대 3회 시도, 3.5초 고정 대기
+      - Exception 발생 시에만 재시도
+        (None 반환 = 데이터 없음 → 재시도 안 함, 즉시 반환)
+      - 최종 실패 시 None 반환 (stale fallback 금지 원칙 유지)
+    """
+    for attempt in range(1, _FRED_RETRY_MAX + 1):
+        try:
+            return fetch_fn()
+        except Exception as e:
+            if attempt == _FRED_RETRY_MAX:
+                logger.error(
+                    f"[FRED] {series_id} 최종 실패 "
+                    f"(attempt {attempt}/{_FRED_RETRY_MAX}): {type(e).__name__}: {e}"
+                )
+                return None
+            logger.warning(
+                f"[FRED] {series_id} 재시도 {attempt}/{_FRED_RETRY_MAX} — "
+                f"{type(e).__name__}: {e} | {_FRED_RETRY_WAIT_SEC}s 후 재시도"
+            )
+            time.sleep(_FRED_RETRY_WAIT_SEC)
+    return None  # unreachable — 방어 코드
+
+
 def _fetch_latest(series_id: str) -> Optional[float]:
-    """특정 시리즈의 최신값 조회. 실패 시 None 반환 (stale fallback 금지)."""
+    """특정 시리즈의 최신값 조회. 실패 시 3.5s×3회 재시도 후 None 반환."""
     client = _get_client()
     if client is None:
         return None
-    try:
+
+    def _call() -> Optional[float]:
         series = client.get_series(series_id)
         if series is None or series.empty:
             return None
         series = series.dropna()
         return float(series.iloc[-1]) if not series.empty else None
-    except Exception as e:
-        logger.error(f"[FRED] {series_id} 조회 실패: {e}")
-        return None
+
+    return _fetch_with_retry(series_id, _call)
 
 
 def _fmt_pct(v: Optional[float]) -> str:
@@ -76,12 +112,14 @@ def _fmt_int_k(v: Optional[float]) -> str:
     except (TypeError, ValueError):
         return "N/A"
 
+
 def _fetch_yoy_change(series_id: str) -> Optional[float]:
-    """YoY 변화율 계산 (%). 최신값과 12개월 전 값 비교."""
+    """YoY 변화율 계산 (%). 최신값과 12개월 전 값 비교. 실패 시 3.5s×3회 재시도."""
     client = _get_client()
     if client is None:
         return None
-    try:
+
+    def _call() -> Optional[float]:
         series = client.get_series(series_id)
         if series is None or series.empty:
             return None
@@ -93,17 +131,17 @@ def _fetch_yoy_change(series_id: str) -> Optional[float]:
         if prev_12m == 0:
             return None
         return round((current - prev_12m) / prev_12m * 100, 2)
-    except Exception as e:
-        logger.error(f"[FRED] {series_id} YoY 계산 실패: {e}")
-        return None
+
+    return _fetch_with_retry(series_id, _call)
 
 
 def _fetch_mom_change(series_id: str) -> Optional[float]:
-    """MoM 절대 변화량. 최신값 - 직전값 (단위: 시리즈 원단위)."""
+    """MoM 절대 변화량. 최신값 - 직전값 (단위: 시리즈 원단위). 실패 시 3.5s×3회 재시도."""
     client = _get_client()
     if client is None:
         return None
-    try:
+
+    def _call() -> Optional[float]:
         series = client.get_series(series_id)
         if series is None or series.empty:
             return None
@@ -111,9 +149,8 @@ def _fetch_mom_change(series_id: str) -> Optional[float]:
         if len(series) < 2:
             return None
         return round(float(series.iloc[-1]) - float(series.iloc[-2]), 1)
-    except Exception as e:
-        logger.error(f"[FRED] {series_id} MoM 계산 실패: {e}")
-        return None
+
+    return _fetch_with_retry(series_id, _call)
 
 
 def collect_macro_data() -> dict:
@@ -184,13 +221,13 @@ def collect_macro_data() -> dict:
         logger.warning("[FRED] BAMLC0A0CM 수집 실패 → None (엔진에서 중립 처리)")
 
     # ── Priority B: CPI + NFP + Fed Balance Sheet + SOFR ────
-    cpi_yoy  = _fetch_yoy_change(FRED_SERIES.get("cpi",      "CPIAUCSL"))
-    core_cpi_yoy = _fetch_yoy_change(FRED_SERIES.get("core_cpi", "CPILFESL"))
-    nfp_change   = _fetch_mom_change(FRED_SERIES.get("nfp",   "PAYEMS"))
-    unemployment = _fetch_latest(FRED_SERIES.get("unemployment", "UNRATE"))
-    fed_bs_raw   = _fetch_latest(FRED_SERIES.get("fed_balance_sheet", "WALCL"))
+    cpi_yoy      = _fetch_yoy_change(FRED_SERIES.get("cpi",              "CPIAUCSL"))
+    core_cpi_yoy = _fetch_yoy_change(FRED_SERIES.get("core_cpi",         "CPILFESL"))
+    nfp_change   = _fetch_mom_change(FRED_SERIES.get("nfp",              "PAYEMS"))
+    unemployment = _fetch_latest(FRED_SERIES.get("unemployment",          "UNRATE"))
+    fed_bs_raw   = _fetch_latest(FRED_SERIES.get("fed_balance_sheet",     "WALCL"))
     fed_bs_change_bn = _fetch_mom_change(FRED_SERIES.get("fed_balance_sheet", "WALCL"))
-    sofr         = _fetch_latest(FRED_SERIES.get("sofr", "SOFR"))
+    sofr         = _fetch_latest(FRED_SERIES.get("sofr",                 "SOFR"))
 
     if cpi_yoy is not None:
         logger.info(f"[FRED] CPI YoY: {cpi_yoy:.2f}% | Core CPI YoY: {_fmt_pct(core_cpi_yoy)}")
@@ -202,27 +239,25 @@ def collect_macro_data() -> dict:
     # ── 결과 dict 조립 ──────────────────────────────────────
     # ★ stale 하드코딩 fallback 절대 금지 (BUG-F1, F2 fix)
     data = {
-        "fed_funds_rate":      fed_rate,
-        "hy_spread":           hy_spread,
-        "yield_curve":         yield_curve,
-        "credit_stress":       _classify_credit_stress(hy_spread),
+        "fed_funds_rate":       fed_rate,
+        "hy_spread":            hy_spread,
+        "yield_curve":          yield_curve,
+        "credit_stress":        _classify_credit_stress(hy_spread),
         "yield_curve_inverted": (yield_curve is not None and yield_curve < 0),
-        "initial_claims":      initial_claims,
-        "inflation_exp":       inflation_exp,
-        "us2y":                us2y,
+        "initial_claims":       initial_claims,
+        "inflation_exp":        inflation_exp,
+        "us2y":                 us2y,
         # ── Priority B ──────────────────────────────────────
         "cpi_yoy":          cpi_yoy,
         "core_cpi_yoy":     core_cpi_yoy,
-        "nfp_change":       nfp_change,        # MoM 변화량 (천 명)
-        "unemployment":     unemployment,       # 실업률 (%)
-        "fed_balance_bn":   round(fed_bs_raw / 1000, 1) if fed_bs_raw else None,  # 10억 달러
+        "nfp_change":       nfp_change,
+        "unemployment":     unemployment,
+        "fed_balance_bn":   round(fed_bs_raw / 1000, 1) if fed_bs_raw else None,
         "fed_bs_change_bn": round(fed_bs_change_bn / 1000, 1) if fed_bs_change_bn else None,
         "sofr":             sofr,
     }
 
     # ── Priority A: 10Y-2Y 스프레드 bp 계산 ─────────────────
-    # yield_curve (T10Y2Y) = 10Y - 2Y (FRED 기본 계산값)
-    # bp 단위로 변환하여 콘텐츠/시그널에서 활용
     if data.get("yield_curve") is not None:
         data["spread_2y10y_bp"] = round(data["yield_curve"] * 100, 1)
     else:
@@ -232,13 +267,11 @@ def collect_macro_data() -> dict:
     data["us10y"] = us10y
     data["us30y"] = us30y
 
-    # 2Y-30Y 스프레드 (장기 커브): us30y, us2y 모두 있을 때만 계산
     if us30y is not None and us2y is not None:
         data["spread_2y30y_bp"] = round((us30y - us2y) * 100, 1)
     else:
         data["spread_2y30y_bp"] = None
 
-    # 10Y-30Y 스프레드 (장기 기울기): us30y, us10y 모두 있을 때만 계산
     if us30y is not None and us10y is not None:
         data["spread_10y30y_bp"] = round((us30y - us10y) * 100, 1)
     else:
@@ -247,7 +280,6 @@ def collect_macro_data() -> dict:
     # ── 아이템 4: TIPS BEI + 실질금리 (v1.5.0 추가) ──────────────
     data["bei_5y"]  = bei_5y
     data["bei_10y"] = bei_10y
-    # 실질금리 = 명목금리(us10y) - BEI(10Y)
     if us10y is not None and bei_10y is not None:
         data["real_rate_10y"] = round(us10y - bei_10y, 3)
     else:
