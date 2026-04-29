@@ -45,6 +45,11 @@ from config.settings import (
     # ── Priority A 고도화 임계값 (v1.9.0 추가) ────────────────
     TLT_RALLY_THR, TLT_STABLE_THR, TLT_WEAK_THR,
     US30Y_HIGH_THR, US30Y_LOW_THR,
+    # ── 아이템 4~7 추가 (2026-04-29) ─────────────────────────────
+    BEI_HOT, BEI_ELEVATED, BEI_LOW, REAL_RATE_TIGHT,
+    IG_SPREAD_LOW, IG_SPREAD_ELEVATED, IG_SPREAD_STRESS,
+    SPREAD_2Y30Y_STEEP, SPREAD_2Y30Y_NORMAL, SPREAD_2Y30Y_FLAT,
+    MOVE_VIX_DIVERGE_MOVE_THR, MOVE_VIX_DIVERGE_VIX_THR,
 )
 
 logger = logging.getLogger(__name__)
@@ -789,42 +794,52 @@ def _score_small_cap_relative(tier2_data: dict, snapshot: dict) -> dict:
     }
 
 
-def _score_move(tier2_data: dict, snapshot: dict) -> dict:
+def _score_move(tier2_data: dict, signals: dict = None) -> dict:
     """
-    [A-3] MOVE Index — 채권 변동성 (채권 시장의 VIX)
-    ──────────────────────────────────────────────────
-    ^MOVE 수집 불안정 → None 허용, 중립 처리.
-    VIX와의 비율로 주식/채권 변동성 괴리 감지.
+    [A-3 고도화] MOVE Index 4단계 + VIX 괴리 복합 시그널 (v1.9.0+)
 
-    출력: move_score (1=안정 ~ 4=위기)
+    4단계 (기존 3단계 → 4단계 확장):
+      < 80    → Bond Calm     (1) ← MOVE_CALM
+      80~110  → Bond Moderate (2) ← MOVE_CALM ~ MOVE_ELEVATED
+      110~140 → Bond Elevated (3) ← MOVE_ELEVATED ~ MOVE_STRESSED
+      ≥ 140   → Bond Crisis   (4) ← MOVE_STRESSED+
+
+    VIX 괴리 감지 (신규):
+      MOVE ≥ 110 AND VIX ≤ 20 → Bond Leading Stress
+      의미: 주식 안심 + 채권 경계 → 채권이 선행하는 리스크 신호
     """
-    move = tier2_data.get("move_index") if tier2_data else None
-    vix  = snapshot.get("vix")
+    move = (tier2_data or {}).get("move_index")
+    vix  = (signals or {}).get("vix") if signals else None
 
     if move is None:
         return {
-            "move_score":     2,
-            "move_state":     "No Data",
-            "move_value":     None,
-            "move_vix_ratio": None,
+            "move_score": 2, "move_state": "No Data",
+            "move_value": None, "move_vix_ratio": None, "move_vix_diverge": False,
         }
 
-    if move < MOVE_CALM:
-        state, score = "Bond Calm", 1
-    elif move < MOVE_ELEVATED:
-        state, score = "Bond Elevated", 2
-    elif move < MOVE_STRESSED:
-        state, score = "Bond Stressed", 3
-    else:
-        state, score = "Bond Crisis", 4
+    if move < MOVE_CALM:       score, state = 1, "Bond Calm"
+    elif move < MOVE_ELEVATED: score, state = 2, "Bond Moderate"
+    elif move < MOVE_STRESSED: score, state = 3, "Bond Elevated"
+    else:                      score, state = 4, "Bond Crisis"
 
-    ratio = round(move / vix, 2) if vix and vix > 0 else None
+    move_vix_ratio = None
+    if vix and vix > 0:
+        move_vix_ratio = round(move / vix, 3)
+
+    diverge = (
+        move >= MOVE_VIX_DIVERGE_MOVE_THR and
+        vix is not None and
+        vix <= MOVE_VIX_DIVERGE_VIX_THR
+    )
+    if diverge:
+        state = "Bond Leading Stress"
 
     return {
-        "move_score":     score,
-        "move_state":     state,
-        "move_value":     round(move, 1),
-        "move_vix_ratio": ratio,
+        "move_score":      score,
+        "move_state":      state,
+        "move_value":      round(move, 1),
+        "move_vix_ratio":  move_vix_ratio,
+        "move_vix_diverge": diverge,
     }
 
 
@@ -958,6 +973,117 @@ def _score_tlt_health(tier2_data: dict, fred_data: dict) -> dict:
         "tlt_health_score": adjusted_score,
         "tlt_health_state": state_map[adjusted_score],
         "tlt_us30y_level":  us30y_level,
+    }
+
+def _score_tips_bei(fred_data: dict) -> dict:
+    """
+    [아이템 4] TIPS Breakeven Inflation 시그널 (v1.9.0+)
+
+    T5YIE(5Y BEI) + T10YIE(10Y BEI) 기반.
+    10Y BEI 주 시그널, 없으면 5Y 사용.
+    실질금리(us10y - bei_10y) > 2.0% 시 score +1 보정.
+
+    판정:
+      > 2.8% → Overheating (4) / 2.3~2.8 → Elevated (3)
+      1.8~2.3 → Normal (2) / < 1.8% → Deflationary (1)
+    """
+    bei_5y  = (fred_data or {}).get("bei_5y")
+    bei_10y = (fred_data or {}).get("bei_10y")
+    us10y   = (fred_data or {}).get("us10y")
+
+    if bei_10y is None and bei_5y is None:
+        return {
+            "tips_bei_score": 2, "tips_bei_state": "No Data",
+            "tips_bei_5y": None, "tips_bei_10y": None, "real_rate_10y": None,
+        }
+
+    primary_bei = bei_10y if bei_10y is not None else bei_5y
+
+    if primary_bei >= BEI_HOT:        base_score, state = 4, "BEI Overheating"
+    elif primary_bei >= BEI_ELEVATED: base_score, state = 3, "BEI Elevated"
+    elif primary_bei >= BEI_LOW:      base_score, state = 2, "BEI Normal"
+    else:                             base_score, state = 1, "BEI Deflationary"
+
+    real_rate = None
+    if us10y is not None and bei_10y is not None:
+        real_rate = round(us10y - bei_10y, 3)
+        if real_rate > REAL_RATE_TIGHT:
+            base_score = min(4, base_score + 1)
+            state = f"{state} (High Real Rate)"
+
+    return {
+        "tips_bei_score": base_score,
+        "tips_bei_state": state,
+        "tips_bei_5y":    bei_5y,
+        "tips_bei_10y":   bei_10y,
+        "real_rate_10y":  real_rate,
+    }
+
+
+def _score_ig_spread(fred_data: dict) -> dict:
+    """
+    [아이템 5] IG Credit Spread 시그널 (v1.9.0+)
+
+    ICE BofA US Corporate Index OAS (BAMLC0A0CM).
+    기존 credit_stress(HY 기반) 유지, IG 별도 필드 추가 (Option A).
+
+    판정:
+      < 1.0% → Low (1) / 1.0~1.5 → Normal (2)
+      1.5~2.5 → Elevated (3) / > 2.5% → Stress (4)
+    """
+    ig = (fred_data or {}).get("ig_spread")
+    hy = (fred_data or {}).get("hy_spread")
+
+    if ig is None:
+        return {
+            "ig_spread_score": 2, "ig_spread_state": "No Data",
+            "ig_spread": None, "ig_hy_gap": None,
+        }
+
+    if ig < IG_SPREAD_LOW:        score, state = 1, "IG Low"
+    elif ig < IG_SPREAD_ELEVATED: score, state = 2, "IG Normal"
+    elif ig < IG_SPREAD_STRESS:   score, state = 3, "IG Elevated"
+    else:                          score, state = 4, "IG Stress"
+
+    ig_hy_gap = round(hy - ig, 3) if hy is not None else None
+
+    return {
+        "ig_spread_score": score,
+        "ig_spread_state": state,
+        "ig_spread":       round(ig, 3),
+        "ig_hy_gap":       ig_hy_gap,
+    }
+
+
+def _score_yield_curve_long(fred_data: dict) -> dict:
+    """
+    [아이템 6] 장기 수익률 커브 2Y-30Y 시그널 (v1.9.0+)
+
+    기존 spread_score(2Y-10Y)와 독립 산출.
+
+    판정 (bp):
+      > 150 → Long Steep (1) / 50~150 → Long Normal (2)
+      0~50  → Long Flat  (3) / < 0   → Long Inverted (4)
+    """
+    spread_bp = (fred_data or {}).get("spread_2y30y_bp")
+    us30y     = (fred_data or {}).get("us30y")
+
+    if spread_bp is None:
+        return {
+            "spread_2y30y_score": 2, "spread_2y30y_state": "No Data",
+            "spread_2y30y_bp": None, "us30y": us30y,
+        }
+
+    if spread_bp > SPREAD_2Y30Y_STEEP:    score, state = 1, "Long Steep"
+    elif spread_bp > SPREAD_2Y30Y_NORMAL: score, state = 2, "Long Normal"
+    elif spread_bp > SPREAD_2Y30Y_FLAT:   score, state = 3, "Long Flat"
+    else:                                  score, state = 4, "Long Inverted"
+
+    return {
+        "spread_2y30y_score": score,
+        "spread_2y30y_state": state,
+        "spread_2y30y_bp":    spread_bp,
+        "us30y":              us30y,
     }
 
 
@@ -1486,7 +1612,12 @@ def run_macro_engine(
     small_cap_sig   = _score_small_cap_relative(tier2_data or {}, snapshot)
     move_sig        = _score_move(tier2_data or {}, snapshot)
     tlt_regime_sig  = _score_spy_tlt_regime(tier2_data or {}, snapshot)
-    tlt_health_sig  = _score_tlt_health(tier2_data or {}, fred_data or {})   # ← 신규
+    tlt_health_sig      = _score_tlt_health(tier2_data or {}, fred_data or {})
+    # ── 아이템 4~7 신규 시그널 (v1.9.0+) ─────────────────────────
+    tips_bei_sig        = _score_tips_bei(fred_data or {})
+    ig_spread_sig       = _score_ig_spread(fred_data or {})
+    yield_curve_long_sig= _score_yield_curve_long(fred_data or {})
+    move_sig            = _score_move(tier2_data or {}, signals)   # signals 전달
     yield_spread_sig= _score_yield_spread(fred_data or {})
     spy_trend_sig   = _score_spy_trend(spy_sma_data or {})
 
@@ -1528,6 +1659,23 @@ def run_macro_engine(
         "tlt_health_score":  tlt_health_sig["tlt_health_score"],
         "tlt_health_state":  tlt_health_sig["tlt_health_state"],
         "tlt_us30y_level":   tlt_health_sig["tlt_us30y_level"],
+        # ── 아이템 4: TIPS BEI ───────────────────────────────────
+        "tips_bei_score":    tips_bei_sig["tips_bei_score"],
+        "tips_bei_state":    tips_bei_sig["tips_bei_state"],
+        "tips_bei_5y":       tips_bei_sig["tips_bei_5y"],
+        "tips_bei_10y":      tips_bei_sig["tips_bei_10y"],
+        "real_rate_10y":     tips_bei_sig["real_rate_10y"],
+        # ── 아이템 5: IG Credit Spread ───────────────────────────
+        "ig_spread_score":   ig_spread_sig["ig_spread_score"],
+        "ig_spread_state":   ig_spread_sig["ig_spread_state"],
+        "ig_spread":         ig_spread_sig["ig_spread"],
+        "ig_hy_gap":         ig_spread_sig["ig_hy_gap"],
+        # ── 아이템 6: US30Y Long Curve ──────────────────────────
+        "spread_2y30y_score": yield_curve_long_sig["spread_2y30y_score"],
+        "spread_2y30y_state": yield_curve_long_sig["spread_2y30y_state"],
+        "spread_2y30y_bp":    yield_curve_long_sig["spread_2y30y_bp"],
+        # ── 아이템 7: MOVE VIX 괴리 ─────────────────────────────
+        "move_vix_diverge":  move_sig["move_vix_diverge"],
     })
 
     logger.info(
