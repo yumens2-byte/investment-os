@@ -1032,6 +1032,40 @@ def _score_cnn_fg(cnn_fg: dict) -> dict:
         "cnn_fg_score": score,
     }
 
+def _score_cnn_fg_zone(cnn_fg_value) -> dict:
+    """
+    [Phase 3-A 신규] CNN F&G 3구역 분류 시그널 (cross_asset_state와 동일 임계값).
+ 
+    목적:
+      cnn_fg_state 5단계 (강도 표현) ↔ cross_asset 4상한 (Greed/Fear 분류)
+      두 라벨이 같은 value=64에 다르게 적용되어 콘텐츠 일관성 저하 발생.
+      cnn_fg_zone (3구역)을 신설하여 cross_asset과 동일한 임계값 사용.
+ 
+    임계값 (cross_asset과 동일):
+      > CNN_FG_GREED (55)   → Greed
+      < CNN_FG_FEAR  (45)   → Fear
+      그 외                  → Neutral
+ 
+    Args:
+        cnn_fg_value: float | None (0~100)
+ 
+    Returns:
+        cnn_fg_zone: str (Fear/Neutral/Greed/Unknown)
+    """
+    if cnn_fg_value is None:
+        return {"cnn_fg_zone": "Unknown"}
+ 
+    try:
+        v = float(cnn_fg_value)
+    except (TypeError, ValueError):
+        return {"cnn_fg_zone": "Unknown"}
+ 
+    if v > CNN_FG_GREED:
+        return {"cnn_fg_zone": "Greed"}
+    if v < CNN_FG_FEAR:
+        return {"cnn_fg_zone": "Fear"}
+    return {"cnn_fg_zone": "Neutral"}
+
 
 def _score_cross_asset_sentiment(cnn_fg_value, crypto_fg_value) -> dict:
     """
@@ -1163,13 +1197,72 @@ def _score_leverage_overheating(basis_spread, funding_rate) -> dict:
       Normal              둘 다 정상 범위                          (2)
       No Data             데이터 부족                              (2)
     """
-    if basis_spread is None or funding_rate is None:
+    """
+    [Phase 3 / Phase 3-A] Crypto Basis + Funding 결합 BTC 레버리지 과열도.
+
+    Phase 3-A (2026-04-29) 보강:
+      - Binance HTTP 451 차단 + OKX/Bybit Failover 모두 실패 시
+        funding_rate=None인 상태에서도 basis 단독으로 판정 가능 ("Basis Only" 모드)
+    """
+    # ── 둘 다 None → No Data ───────────────────────────────────
+    if basis_spread is None and funding_rate is None:
         return {
             "leverage_overheating_state": "No Data",
             "leverage_overheating_score": 2,
             "leverage_divergence": False,
         }
 
+    # ── Phase 3-A 신규: Basis Only 모드 ────────────────────────
+    # OKX/Bybit 모두 실패해 funding=None인 상태에서도 basis로 판정
+    if funding_rate is None and basis_spread is not None:
+        try:
+            b = float(basis_spread)
+        except (TypeError, ValueError):
+            return {
+                "leverage_overheating_state": "No Data",
+                "leverage_overheating_score": 2,
+                "leverage_divergence": False,
+            }
+
+        if b >= BASIS_LONG_HEAVY_THR:
+            return {
+                "leverage_overheating_state": "Basis Long Heavy",
+                "leverage_overheating_score": 3,
+                "leverage_divergence": False,
+            }
+        if b <= BASIS_SHORT_HEAVY_THR:
+            return {
+                "leverage_overheating_state": "Basis Short Heavy",
+                "leverage_overheating_score": 3,
+                "leverage_divergence": False,
+            }
+        if abs(b) < BASIS_NORMAL_RANGE:
+            return {
+                "leverage_overheating_state": "Basis Normal",
+                "leverage_overheating_score": 2,
+                "leverage_divergence": False,
+            }
+        if b > 0:
+            return {
+                "leverage_overheating_state": "Basis Mild Long",
+                "leverage_overheating_score": 2,
+                "leverage_divergence": False,
+            }
+        return {
+            "leverage_overheating_state": "Basis Mild Short",
+            "leverage_overheating_score": 2,
+            "leverage_divergence": False,
+        }
+
+    # ── basis_spread만 None → No Data (basis가 더 신뢰 가능) ────
+    if basis_spread is None and funding_rate is not None:
+        return {
+            "leverage_overheating_state": "No Data",
+            "leverage_overheating_score": 2,
+            "leverage_divergence": False,
+        }
+
+    # ── 둘 다 있음: 기존 4단계 로직 (변경 없음) ────────────────
     try:
         b = float(basis_spread)
         f = float(funding_rate)
@@ -1873,6 +1966,8 @@ def run_macro_engine(
     # ── Phase 3 신규 시그널 (2026-04-29) ────────────────────────
     signals.update(_score_cnn_fg(cnn_fg))                  # P3-1: 주식 F&G
     signals.update(_score_btc_funding(btc_funding))        # P3-2: BTC Funding
+    # ── Phase 3-A 신규 (2026-04-29): cnn_fg_zone 3구역 ───────
+    signals.update(_score_cnn_fg_zone(signals.get("cnn_fg_value")))
 
     # crypto_fg_* alias (명확화 + 후방호환)
     signals["crypto_fg_value"] = (fear_greed or {}).get("value")
@@ -2066,9 +2161,10 @@ def run_macro_engine(
         f"NasRel={signals.get('nasdaq_rel_state','N/A')} | "
         f"Bank={signals.get('banking_stress_state','N/A')}"
     )
-    # Phase 3 신규 시그널 로그
+    # Phase 3 시그널 로그 (Phase 3-A: zone 추가)
     logger.info(
-        f"[MacroEngine] Phase3: CNN_FG={signals.get('cnn_fg_state')} | "
+        f"[MacroEngine] Phase3: CNN_FG={signals.get('cnn_fg_state')}"
+        f"(zone={signals.get('cnn_fg_zone')}) | "
         f"CrossAsset={signals.get('cross_asset_state')} | "
         f"BTC_Funding={signals.get('btc_funding_state')} | "
         f"Leverage={signals.get('leverage_overheating_state')}"
