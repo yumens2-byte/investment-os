@@ -18,7 +18,7 @@ import logging
 from typing import Optional
 from config.settings import FRED_API_KEY, FRED_SERIES
 
-VERSION = "1.4.0"
+VERSION = "1.5.0"
 
 logger = logging.getLogger(__name__)
 
@@ -168,6 +168,21 @@ def collect_macro_data() -> dict:
     else:
         logger.warning("[FRED] DGS30 수집 실패 → None (엔진에서 중립 처리)")
 
+    # ── 아이템 4: TIPS Breakeven Inflation (v1.5.0 추가) ─────────
+    bei_5y  = _fetch_latest(FRED_SERIES.get("bei_5y",  "T5YIE"))
+    bei_10y = _fetch_latest(FRED_SERIES.get("bei_10y", "T10YIE"))
+    if bei_5y is not None and bei_10y is not None:
+        logger.info(f"[FRED] BEI: 5Y={bei_5y:.2f}% 10Y={bei_10y:.2f}%")
+    else:
+        logger.warning("[FRED] BEI 수집 부분 실패 → None 허용")
+
+    # ── 아이템 5: IG Credit Spread (v1.5.0 추가) ─────────────────
+    ig_spread = _fetch_latest(FRED_SERIES.get("ig_spread", "BAMLC0A0CM"))
+    if ig_spread is not None:
+        logger.info(f"[FRED] IG Spread: {ig_spread:.3f}%")
+    else:
+        logger.warning("[FRED] BAMLC0A0CM 수집 실패 → None (엔진에서 중립 처리)")
+
     # ── Priority B: CPI + NFP + Fed Balance Sheet + SOFR ────
     cpi_yoy  = _fetch_yoy_change(FRED_SERIES.get("cpi",      "CPIAUCSL"))
     core_cpi_yoy = _fetch_yoy_change(FRED_SERIES.get("core_cpi", "CPILFESL"))
@@ -229,13 +244,26 @@ def collect_macro_data() -> dict:
     else:
         data["spread_10y30y_bp"] = None
 
+    # ── 아이템 4: TIPS BEI + 실질금리 (v1.5.0 추가) ──────────────
+    data["bei_5y"]  = bei_5y
+    data["bei_10y"] = bei_10y
+    # 실질금리 = 명목금리(us10y) - BEI(10Y)
+    if us10y is not None and bei_10y is not None:
+        data["real_rate_10y"] = round(us10y - bei_10y, 3)
+    else:
+        data["real_rate_10y"] = None
+
+    # ── 아이템 5: IG Credit Spread (v1.5.0 추가) ──────────────────
+    data["ig_spread"] = ig_spread
+
     logger.info(
         f"[FRED v{VERSION}] 수집 완료: 기준금리 {_fmt_pct(fed_rate)} | "
-        f"HY {_fmt_pct(hy_spread)} | "
+        f"HY {_fmt_pct(hy_spread)} | IG {_fmt_pct(ig_spread)} | "
         f"2Y {_fmt_pct(us2y)} | 10Y {_fmt_pct(us10y)} | 30Y {_fmt_pct(us30y)} | "
+        f"BEI 5Y={_fmt_pct(bei_5y)} 10Y={_fmt_pct(bei_10y)} | "
+        f"실질금리 {_fmt_pct(data.get('real_rate_10y'))} | "
         f"2Y-10Y {data.get('spread_2y10y_bp')}bp | "
-        f"2Y-30Y {data.get('spread_2y30y_bp')}bp | "
-        f"10Y-30Y {data.get('spread_10y30y_bp')}bp"
+        f"2Y-30Y {data.get('spread_2y30y_bp')}bp"
     )
     return data
 
