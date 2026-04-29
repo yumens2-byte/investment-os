@@ -1948,6 +1948,7 @@ def run_macro_engine(
 
     # ── 기존 7개 시그널 산출 ──
     signals = {}
+    signals["vix"] = vix   # Phase 3-B FIX: move_vix_ratio 2차 호출용 raw VIX 보존
     signals.update(_score_vix(vix))
     signals.update(_score_us10y(us10y))
     signals.update(_score_oil(oil))
