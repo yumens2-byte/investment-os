@@ -296,9 +296,14 @@ def run(session: str) -> dict:
     try:
         from collectors.yahoo_finance import collect_sector_etfs
         sector_data = collect_sector_etfs()
+        _def_avg = round(
+            ((sector_data.get('xlv_change') or 0) +
+             (sector_data.get('xlu_change') or 0) +
+             (sector_data.get('xlp_change') or 0)) / 3, 2
+        )
         logger.info(
             f"[Step 2-Sector] 섹터 수집 완료 | "
-            f"방어(XLV/XLU/XLP) avg={round((sector_data.get('xlv_change',0) or 0 + sector_data.get('xlu_change',0) or 0 + sector_data.get('xlp_change',0) or 0)/3,2)} | "
+            f"방어(XLV/XLU/XLP) avg={_def_avg} | "
             f"Cu={sector_data.get('copper_change')}%"
         )
     except Exception as e:
@@ -402,9 +407,9 @@ def run(session: str) -> dict:
                 except Exception:
                     pass
             else:
-                # confidence < 0.7 → 경고만 (낮은 확신 무시)
+                # confidence < 0.8 → 경고만
                 logger.info(
-                    f"[Step 3.5] confidence={confidence:.1f} < 0.7 "
+                    f"[Step 3.5] confidence={confidence:.1f} < 0.8 "
                     f"— 경고만, Risk Level 유지"
                 )
                 try:
