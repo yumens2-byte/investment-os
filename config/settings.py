@@ -181,6 +181,28 @@ TLT_WEAK_THR   = -1.5   # > -1.5%  → Weak   (채권 약세)
 US30Y_HIGH_THR =  5.0   # > 5.0%   → 고금리 압박 (score +1 보정)
 US30Y_LOW_THR  =  3.5   # < 3.5%   → 저금리 지지 (score -1 보정)
 
+# ─── 아이템 4: TIPS Breakeven Inflation 임계값 (2026-04-29 추가) ──
+BEI_HOT          = 2.8   # > 2.8% → 인플레 기대 과열
+BEI_ELEVATED     = 2.3   # 2.3~2.8% → 주의 구간
+BEI_LOW          = 1.8   # < 1.8% → 디플레 우려
+REAL_RATE_TIGHT  = 2.0   # 실질금리 > 2.0% → 성장주 밸류에이션 압박
+REAL_RATE_EASY   = 0.0   # 실질금리 < 0.0% → 마이너스 실질금리 → 성장주 지지
+
+# ─── 아이템 5: IG Credit Spread 임계값 (2026-04-29 추가) ──────────
+IG_SPREAD_LOW      = 1.0   # < 1.0% → 크레딧 양호
+IG_SPREAD_ELEVATED = 1.5   # 1.0~1.5% → 주의 구간
+IG_SPREAD_STRESS   = 2.5   # > 2.5% → 크레딧 스트레스
+
+# ─── 아이템 6: US30Y Spread 임계값 (2026-04-29 추가) ─────────────
+SPREAD_2Y30Y_STEEP  = 150.0  # > 150bp → 장기 성장 기대 강함
+SPREAD_2Y30Y_NORMAL =  50.0  # 50~150bp → 정상 범위
+SPREAD_2Y30Y_FLAT   =   0.0  # 0~50bp → 장기 우려 / < 0bp → 역전
+
+# ─── 아이템 7: MOVE VIX 괴리 감지 임계값 (2026-04-29 추가) ──────
+# 기존: MOVE_CALM=80, MOVE_ELEVATED=110, MOVE_STRESSED=140 유지
+MOVE_VIX_DIVERGE_MOVE_THR = 110.0  # MOVE >= 110 (Elevated 이상)
+MOVE_VIX_DIVERGE_VIX_THR  =  20.0  # AND VIX <= 20 → 채권 선행 스트레스
+
 # ─── ETF Universe ─────────────────────────────────────────
 ETF_CORE = ["QQQM", "XLK", "SPYM", "XLE", "ITA", "TLT"]
 ETF_SIGNAL = ["XLF", "GLD"]
@@ -246,6 +268,12 @@ FRED_SERIES = {
     # ── 신규 추가 (2026-04-28) ──────────────────────────────
     "us10y": "DGS10",   # 10-Year Treasury Constant Maturity Rate (절대값)
     "us30y": "DGS30",   # 30-Year Treasury Constant Maturity Rate (절대값)
+  
+    # ── 아이템 4/5 추가 (2026-04-29) ─────────────────────────────
+    "bei_5y":    "T5YIE",       # 5Y Breakeven Inflation Rate
+    "bei_10y":   "T10YIE",      # 10Y Breakeven Inflation Rate
+    "ig_spread": "BAMLC0A0CM",  # ICE BofA US Corporate OAS (IG Spread)
+}
 }
 
 # ─── 다중 RSS 소스 설정 (Reddit 대체) ──────────────────────
