@@ -162,6 +162,26 @@ def run(session: str) -> dict:
     except Exception as e:
         logger.warning(f"[Step 1-FG] Fear & Greed 수집 실패 (영향 없음): {e}")
 
+    # ── Phase 3: CNN Stock Market F&G 수집 (2026-04-29) ─────────
+    cnn_fg = None
+    try:
+        from collectors.cnn_fear_greed import collect_cnn_fg
+        cnn_fg = collect_cnn_fg()
+        if cnn_fg.get("success"):
+            logger.info(
+                f"[Step 1-CNN] CNN F&G: {cnn_fg.get('value')} "
+                f"({cnn_fg.get('rating')})"
+            )
+        else:
+            logger.warning(
+                f"[Step 1-CNN] CNN F&G 수집 실패 → fallback "
+                f"(crypto F&G로 임시 대체, 영향 없음)"
+            )
+    except Exception as e:
+        logger.warning(f"[Step 1-CNN] CNN F&G 예외 (영향 없음): {e}")
+
+  
+
     # BTC/ETH 가격 수집
     crypto = {}
     try:
@@ -299,15 +319,17 @@ def run(session: str) -> dict:
         snapshot,
         fred_data,
         combined_sentiment,
-        fear_greed=fear_greed,       # T1-1: Fear & Greed → sentiment 보강
-        crypto=crypto,               # T1-2: BTC → risk appetite 보조
-        etf_prices=etf_prices,       # T1-4: XLF/GLD → 금융안정 보강
-        tier2_data=tier2_data,       # T2-1,2,5: Breadth/VolTerm/EM
-        pcr_data=pcr_data,           # T1-5: Put/Call Ratio (D-2)
-        spy_sma_data=spy_sma_data,    # ← 신규 추가
-        # T1-3: snapshot 내 sp500/nasdaq 등락률은 이미 snapshot에 포함
-        # T2-3,4: fred_data 내 initial_claims/inflation_exp는 이미 fred_data에 포함
-        sector_data=sector_data,      # ← 추가
+        fear_greed=fear_greed,
+        crypto=crypto,
+        etf_prices=etf_prices,
+        tier2_data=tier2_data,
+        pcr_data=pcr_data,
+        spy_sma_data=spy_sma_data,
+        sector_data=sector_data,
+        # ── Phase 3 신규 (2026-04-29) ──
+        cnn_fg=cnn_fg,                  # 주식 F&G
+        btc_funding=None,                # Step 2 시점 미수집 → Step 5.8 후처리
+        crypto_basis=None,               # Step 2 시점 미수집 → Step 5.8 후처리
     )
     signals = macro_result["signals"]
     market_score = macro_result["market_score"]
@@ -499,6 +521,50 @@ def run(session: str) -> dict:
             "themes_critical": "",
         }
 
+    # ── Phase 3 STEP 5.7: BTC Funding Rate (2026-04-29) ─────────
+    logger.info("[Step 5.7] Phase 3 BTC Funding Rate 수집")
+    btc_funding = None
+    try:
+        from collectors.binance_funding import get_btc_funding_rate
+        btc_funding = get_btc_funding_rate()
+        if btc_funding.get("success"):
+            logger.info(
+                f"[Step 5.7] 완료: rate={btc_funding.get('funding_rate_8h')}% "
+                f"(APR {btc_funding.get('funding_rate_apr')}%)"
+            )
+        else:
+            logger.warning(
+                f"[Step 5.7] 수집 실패 → leverage_overheating No Data"
+            )
+    except Exception as e:
+        logger.warning(f"[Step 5.7] 예외 (영향 없음): {e}")
+
+    # ── Phase 3 STEP 5.8: leverage_overheating 후처리 (2026-04-29) ─
+    # Step 2 시점에 btc_funding/crypto_basis가 미수집 상태였으므로
+    # Step 5.5/5.6/5.7 완료 후 직접 시그널 계산하여 signals에 병합
+    try:
+        from engines.macro_engine import (
+            _score_btc_funding, _score_leverage_overheating
+        )
+
+        # btc_funding 시그널 재계산 (Step 2에서 None이었음)
+        funding_sig = _score_btc_funding(btc_funding)
+        signals.update(funding_sig)
+
+        # leverage_overheating 시그널 계산
+        _basis = (crypto_basis_result or {}).get("basis_spread")
+        _funding = signals.get("btc_funding_rate")
+        leverage_sig = _score_leverage_overheating(_basis, _funding)
+        signals.update(leverage_sig)
+
+        logger.info(
+            f"[Step 5.8] Phase 3 후처리: "
+            f"BTC_Funding={signals.get('btc_funding_state')} | "
+            f"Leverage={signals.get('leverage_overheating_state')}"
+        )
+    except Exception as e:
+        logger.warning(f"[Step 5.8] Phase 3 후처리 실패 (영향 없음): {e}")
+
 
     # ── Step 6: JSON 조립 ──────────────────────────────────────
     logger.info("[Step 6] JSON Core Data 조립")
@@ -533,7 +599,10 @@ def run(session: str) -> dict:
         # ── Phase 1A (v1.5.1 BUGFIX): 누락되어 있던 파라미터 추가 ──
         crypto_basis=crypto_basis_result,
         btc_sentiment=btc_sentiment_result,
-        spy_sma_data=spy_sma_data,     # ← 신규 추가
+        spy_sma_data=spy_sma_data,
+        # ── Phase 3 신규 (2026-04-29) ──
+        cnn_fg=cnn_fg,
+        btc_funding=btc_funding,
     )
     envelope = build_envelope(f"run market ({session})", data)
 
