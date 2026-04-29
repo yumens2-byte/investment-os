@@ -1,21 +1,91 @@
 """
-collectors/binance_funding.py (v1.0.0)
-=======================================
-Phase 3 — Binance BTC Funding Rate 수집
+Phase 3-A 통합 패치 가이드
+─────────────────────────────────────────────────────────────────────
 
-목적:
-  - Crypto.com Basis와 결합하여 leverage_overheating 시그널 생성
-  - 글로벌 BTC 선물 시장의 롱-숏 비용 측정
+본 파일은 GitHub 반영용 패치 가이드입니다.
 
-API 정보:
-  - URL: GET https://fapi.binance.com/fapi/v1/premiumIndex?symbol=BTCUSDT
-  - 인증: 불필요 (완전 공개 API)
-  - Rate Limit: 500/5min/IP (충분)
-  - 8시간 주기 갱신 (UTC 00:00, 08:00, 16:00)
 
-캐싱 전략:
-  - TTL 30분 (8h 갱신 주기지만 markPrice 변동 반영)
-  - cache_key: "binance:funding:btcusdt"
+════════════════════════════════════════════════════════════════════
+[PATCH 1] collectors/binance_funding.py — DEPRECATED 표시
+════════════════════════════════════════════════════════════════════
+
+찾을 위치 (파일 최상단 docstring):
+
+    \"\"\"
+    collectors/binance_funding.py (v1.0.0)
+    =======================================
+    Phase 3 — Binance BTC Funding Rate 수집
+
+교체 후:
+
+    \"\"\"
+    collectors/binance_funding.py (v1.0.0) [DEPRECATED 2026-04-29]
+    ===============================================================
+    ⚠️ DEPRECATED — 이 파일은 더 이상 호출되지 않습니다.
+
+    원인:
+      Binance Futures API (fapi.binance.com)가 GitHub Actions IP에서
+      HTTP 451 (Unavailable For Legal Reasons) 반환.
+      미국 정부의 Binance 차단 정책으로 우회 시 컴플라이언스 위반.
+
+    대체:
+      collectors/crypto_funding.py (v1.0.0) — OKX → Bybit Failover
+
+    보안 정책:
+      - Binance API 호출 절대 금지 (메모리 #22 / Notion 보안 페이지)
+      - VPN/프록시/Cloudflare Workers 등 우회 도구 사용 금지
+      - 본 파일은 참조용 보존만, 신규 호출 추가 금지
+
+    Phase 3 — Binance BTC Funding Rate 수집
+
+
+════════════════════════════════════════════════════════════════════
+[PATCH 2] run_market.py — import 경로 교체 (Step 5.7)
+════════════════════════════════════════════════════════════════════
+
+찾을 위치:
+
+    # ── Phase 3 STEP 5.7: BTC Funding Rate (2026-04-29) ─────────
+    logger.info("[Step 5.7] Phase 3 BTC Funding Rate 수집")
+    btc_funding = None
+    try:
+        from collectors.binance_funding import get_btc_funding_rate
+        btc_funding = get_btc_funding_rate()
+        if btc_funding.get("success"):
+            logger.info(
+                f"[Step 5.7] 완료: rate={btc_funding.get('funding_rate_8h')}% "
+                f"(APR {btc_funding.get('funding_rate_apr')}%)"
+            )
+        else:
+            logger.warning(
+                f"[Step 5.7] 수집 실패 → leverage_overheating No Data"
+            )
+    except Exception as e:
+        logger.warning(f"[Step 5.7] 예외 (영향 없음): {e}")
+
+교체 후:
+
+    # ── Phase 3-A STEP 5.7: BTC Funding Rate Failover (2026-04-29) ─
+    # binance_funding.py DEPRECATED → crypto_funding.py로 교체
+    # OKX → Bybit Failover, 모두 실패 시 leverage_overheating은 Basis 단독 모드
+    logger.info("[Step 5.7] Phase 3-A BTC Funding Rate Failover 수집")
+    btc_funding = None
+    try:
+        from collectors.crypto_funding import get_btc_funding_rate
+        btc_funding = get_btc_funding_rate()
+        if btc_funding.get("success"):
+            logger.info(
+                f"[Step 5.7] 완료: exchange={btc_funding.get('exchange')} "
+                f"rate={btc_funding.get('funding_rate_8h')}% "
+                f"(APR {btc_funding.get('funding_rate_apr')}%)"
+            )
+        else:
+            logger.warning(
+                f"[Step 5.7] OKX+Bybit 모두 실패 → leverage_overheating "
+                f"Basis 단독 모드"
+            )
+    except Exception as e:
+        logger.warning(f"[Step 5.7] 예외 (영향 없음): {e}")
 """
 import logging
 import time
