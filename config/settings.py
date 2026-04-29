@@ -201,7 +201,28 @@ SPREAD_2Y30Y_FLAT   =   0.0  # 0~50bp → 장기 우려 / < 0bp → 역전
 # ─── 아이템 7: MOVE VIX 괴리 감지 임계값 (2026-04-29 추가) ──────
 # 기존: MOVE_CALM=80, MOVE_ELEVATED=110, MOVE_STRESSED=140 유지
 MOVE_VIX_DIVERGE_MOVE_THR = 110.0  # MOVE >= 110 (Elevated 이상)
-MOVE_VIX_DIVERGE_VIX_THR  =  20.0  # AND VIX <= 20 → 채권 선행 스트레스
+MOVE_VIX_DIVERGE_VIX_THR  =  20.0   # AND VIX <= 20 (주식 안심 구간)
+# → 채권 경계 + 주식 안심 동시 = 채권이 선행하는 리스크 신호
+
+# ─── Phase 3: Cross-Asset Sentiment 임계값 (2026-04-29 추가) ────
+# CNN(stock) + alternative.me(crypto) F&G 4상한 분류용
+CNN_FG_GREED          = 55       # > 55 → Greed
+CNN_FG_FEAR           = 45       # < 45 → Fear
+CRYPTO_FG_GREED       = 55       # crypto F&G Greed 기준 (별도 신설)
+CRYPTO_FG_FEAR        = 45       # crypto F&G Fear 기준
+SENTIMENT_DIVERGE_THR = 30       # |CNN - Crypto| > 30 → 강한 분기
+
+# ─── Phase 3: BTC Funding Rate 임계값 (2026-04-29 추가) ────────
+# Binance 8h funding rate 기준
+FUNDING_LONG_HEAVY_THR  =  0.05  # > +0.05% (8h) → Long Heavy (연 54%+)
+FUNDING_SHORT_HEAVY_THR = -0.05  # < -0.05%      → Short Heavy
+FUNDING_NORMAL_RANGE    =  0.01  # |x| < 0.01%   → Normal
+
+# ─── Phase 3: Leverage Overheating 임계값 (2026-04-29 추가) ────
+# Crypto.com Basis + Binance Funding 결합 판정용
+BASIS_LONG_HEAVY_THR    =  0.10  # Basis > +0.10% → 강한 contango
+BASIS_SHORT_HEAVY_THR   = -0.10  # Basis < -0.10% → 강한 backwardation
+BASIS_NORMAL_RANGE      =  0.05  # |Basis| < 0.05% → Normal
 
 # ─── ETF Universe ─────────────────────────────────────────
 ETF_CORE = ["QQQM", "XLK", "SPYM", "XLE", "ITA", "TLT"]
