@@ -274,7 +274,6 @@ FRED_SERIES = {
     "bei_10y":   "T10YIE",      # 10Y Breakeven Inflation Rate
     "ig_spread": "BAMLC0A0CM",  # ICE BofA US Corporate OAS (IG Spread)
 }
-}
 
 # ─── 다중 RSS 소스 설정 (Reddit 대체) ──────────────────────
 # weight: 감성 집계 시 가중치 (높을수록 영향력 큼)
