@@ -50,6 +50,12 @@ from config.settings import (
     IG_SPREAD_LOW, IG_SPREAD_ELEVATED, IG_SPREAD_STRESS,
     SPREAD_2Y30Y_STEEP, SPREAD_2Y30Y_NORMAL, SPREAD_2Y30Y_FLAT,
     MOVE_VIX_DIVERGE_MOVE_THR, MOVE_VIX_DIVERGE_VIX_THR,
+    # ── Phase 3 추가 (2026-04-29) ───────────────────────────────
+    CNN_FG_GREED, CNN_FG_FEAR,
+    CRYPTO_FG_GREED, CRYPTO_FG_FEAR,
+    SENTIMENT_DIVERGE_THR,
+    FUNDING_LONG_HEAVY_THR, FUNDING_SHORT_HEAVY_THR, FUNDING_NORMAL_RANGE,
+    BASIS_LONG_HEAVY_THR, BASIS_SHORT_HEAVY_THR, BASIS_NORMAL_RANGE,
 )
 
 logger = logging.getLogger(__name__)
@@ -151,11 +157,13 @@ def _score_news_sentiment(news_sentiment: str) -> dict:
 
 def _score_fear_greed(fear_greed: dict) -> dict:
     """
-    [T1-1] Fear & Greed Index → 심리 보강 시그널
+    [T1-1] alternative.me Crypto Fear & Greed Index → 보조 시그널
     ─────────────────────────────────────────────
-    목적: RSS 뉴스 감성만으로는 시장 심리를 정밀하게 측정하기 어려움.
-          CNN/alternative.me의 Fear & Greed 지수를 보조 지표로 활용하여
-          Risk Score 산출 시 sentiment_score를 보정한다.
+    ⚠️ 이 함수는 alternative.me crypto F&G만 처리합니다.
+       (이전 docstring "CNN/alternative.me" 기재는 잘못됨 — Phase 3에서 정정)
+
+    주식 시장 F&G는 _score_cnn_fg() 사용.
+    출력 필드명 fear_greed_*는 후방호환 위해 유지.
 
     입력: fear_greed dict (collect_fear_greed() 결과)
           - value: 0~100 (0=극도 공포, 100=극도 탐욕)
@@ -975,6 +983,256 @@ def _score_tlt_health(tier2_data: dict, fred_data: dict) -> dict:
         "tlt_us30y_level":  us30y_level,
     }
 
+# ════════════════════════════════════════════════════════════════════
+# Phase 3 신규 시그널 (2026-04-29)
+# ════════════════════════════════════════════════════════════════════
+
+def _score_cnn_fg(cnn_fg: dict) -> dict:
+    """
+    [Phase 3 신규] CNN Stock Market Fear & Greed Index 시그널.
+
+    목적:
+      기존 _score_fear_greed()는 alternative.me(crypto)만 처리.
+      주식 시장 F&G(CNN)를 별도 시그널로 도입하여 risk_score 정확도 향상.
+
+    출력:
+        cnn_fg_value: float | None
+        cnn_fg_state: str
+        cnn_fg_score: int (1~5) | None  ← None은 fallback 트리거 의미
+    """
+    if cnn_fg is None or not cnn_fg.get("success"):
+        return {
+            "cnn_fg_value": None,
+            "cnn_fg_state": "Unknown",
+            "cnn_fg_score": None,
+        }
+
+    value = cnn_fg.get("value")
+    if value is None:
+        return {
+            "cnn_fg_value": None,
+            "cnn_fg_state": "Unknown",
+            "cnn_fg_score": None,
+        }
+
+    if value <= 20:
+        state, score = "Extreme Fear", 1
+    elif value <= 30:
+        state, score = "Fear", 2
+    elif value <= 70:
+        state, score = "Neutral", 3
+    elif value <= 85:
+        state, score = "Greed", 4
+    else:
+        state, score = "Extreme Greed", 5
+
+    return {
+        "cnn_fg_value": round(float(value), 1),
+        "cnn_fg_state": state,
+        "cnn_fg_score": score,
+    }
+
+
+def _score_cross_asset_sentiment(cnn_fg_value, crypto_fg_value) -> dict:
+    """
+    [Phase 3 신규] Cross-Asset Sentiment 4상한 분류.
+
+    의미:
+      CNN F&G  = 미국 주식 시장 감성
+      Crypto F&G (alternative.me) = 크립토 시장 감성
+      두 지표는 다른 시장을 측정 → divergence 분석으로 가치 도출
+
+    4상한:
+      Risk-On Consensus     주식 Greed + 크립토 Greed
+      Risk-Off Consensus    주식 Fear  + 크립토 Fear
+      Crypto De-risking     주식 Greed + 크립토 Fear
+      Crypto Solo Overheat  주식 Fear  + 크립토 Greed (위험 패턴)
+      Mixed                 한쪽 이상 중립
+      No Data               데이터 부족
+    """
+    if cnn_fg_value is None or crypto_fg_value is None:
+        return {
+            "cross_asset_state": "No Data",
+            "cross_asset_score": 2,
+            "sentiment_divergence": None,
+        }
+
+    try:
+        cnn = float(cnn_fg_value)
+        crypto = float(crypto_fg_value)
+    except (TypeError, ValueError):
+        return {
+            "cross_asset_state": "No Data",
+            "cross_asset_score": 2,
+            "sentiment_divergence": None,
+        }
+
+    divergence = round(abs(cnn - crypto), 1)
+
+    cnn_greed = cnn > CNN_FG_GREED
+    cnn_fear = cnn < CNN_FG_FEAR
+    crypto_greed = crypto > CRYPTO_FG_GREED
+    crypto_fear = crypto < CRYPTO_FG_FEAR
+
+    if cnn_greed and crypto_greed:
+        state, score = "Risk-On Consensus", 3
+    elif cnn_fear and crypto_fear:
+        state, score = "Risk-Off Consensus", 2
+    elif cnn_greed and crypto_fear:
+        state, score = "Crypto De-risking", 3
+    elif cnn_fear and crypto_greed:
+        state, score = "Crypto Solo Overheat", 4
+    else:
+        state, score = "Mixed", 2
+
+    return {
+        "cross_asset_state": state,
+        "cross_asset_score": score,
+        "sentiment_divergence": divergence,
+    }
+
+
+def _score_btc_funding(funding: dict) -> dict:
+    """
+    [Phase 3 신규] Binance BTC Funding Rate 시그널.
+
+    판정:
+      > +0.05% (8h)  → Long Heavy   (연 54%+)
+      < -0.05%       → Short Heavy
+      |x| < 0.01%    → Normal
+      그 외          → Mild Long / Mild Short
+    """
+    if funding is None or not funding.get("success"):
+        return {
+            "btc_funding_rate": None,
+            "btc_funding_apr": None,
+            "btc_funding_state": "Unknown",
+            "btc_funding_score": 2,
+        }
+
+    rate = funding.get("funding_rate_8h")
+    apr = funding.get("funding_rate_apr")
+
+    if rate is None:
+        return {
+            "btc_funding_rate": None,
+            "btc_funding_apr": None,
+            "btc_funding_state": "Unknown",
+            "btc_funding_score": 2,
+        }
+
+    try:
+        rate_f = float(rate)
+    except (TypeError, ValueError):
+        return {
+            "btc_funding_rate": None,
+            "btc_funding_apr": None,
+            "btc_funding_state": "Unknown",
+            "btc_funding_score": 2,
+        }
+
+    if rate_f >= FUNDING_LONG_HEAVY_THR:
+        state, score = "Long Heavy", 3
+    elif rate_f <= FUNDING_SHORT_HEAVY_THR:
+        state, score = "Short Heavy", 3
+    elif abs(rate_f) < FUNDING_NORMAL_RANGE:
+        state, score = "Normal", 1
+    elif rate_f > 0:
+        state, score = "Mild Long", 2
+    else:
+        state, score = "Mild Short", 2
+
+    return {
+        "btc_funding_rate": round(rate_f, 5),
+        "btc_funding_apr": apr,
+        "btc_funding_state": state,
+        "btc_funding_score": score,
+    }
+
+
+def _score_leverage_overheating(basis_spread, funding_rate) -> dict:
+    """
+    [Phase 3 신규] Crypto Basis + Binance Funding 결합 BTC 레버리지 과열도.
+
+    판정:
+      Long Overheating    Basis > +0.10% AND Funding > +0.05%   (4)
+      Short Overheating   Basis < -0.10% AND Funding < -0.05%   (4)
+      Mild Long           둘 다 양수 (약함)                        (3)
+      Mild Short          둘 다 음수 (약함)                        (3)
+      Divergence          부호 다름                                (3)
+      Normal              둘 다 정상 범위                          (2)
+      No Data             데이터 부족                              (2)
+    """
+    if basis_spread is None or funding_rate is None:
+        return {
+            "leverage_overheating_state": "No Data",
+            "leverage_overheating_score": 2,
+            "leverage_divergence": False,
+        }
+
+    try:
+        b = float(basis_spread)
+        f = float(funding_rate)
+    except (TypeError, ValueError):
+        return {
+            "leverage_overheating_state": "No Data",
+            "leverage_overheating_score": 2,
+            "leverage_divergence": False,
+        }
+
+    # Divergence: 부호 다름
+    if b > 0 and f < 0:
+        return {
+            "leverage_overheating_state": "Divergence (Basis Long, Funding Short)",
+            "leverage_overheating_score": 3,
+            "leverage_divergence": True,
+        }
+    if b < 0 and f > 0:
+        return {
+            "leverage_overheating_state": "Divergence (Basis Short, Funding Long)",
+            "leverage_overheating_score": 3,
+            "leverage_divergence": True,
+        }
+
+    # 강한 롱 과열
+    if b >= BASIS_LONG_HEAVY_THR and f >= FUNDING_LONG_HEAVY_THR:
+        return {
+            "leverage_overheating_state": "Long Overheating",
+            "leverage_overheating_score": 4,
+            "leverage_divergence": False,
+        }
+
+    # 강한 숏 과열
+    if b <= BASIS_SHORT_HEAVY_THR and f <= FUNDING_SHORT_HEAVY_THR:
+        return {
+            "leverage_overheating_state": "Short Overheating",
+            "leverage_overheating_score": 4,
+            "leverage_divergence": False,
+        }
+
+    # 정상 범위
+    if abs(b) < BASIS_NORMAL_RANGE and abs(f) < FUNDING_NORMAL_RANGE:
+        return {
+            "leverage_overheating_state": "Normal",
+            "leverage_overheating_score": 2,
+            "leverage_divergence": False,
+        }
+
+    # 약한 롱
+    if b >= 0 and f >= 0:
+        return {
+            "leverage_overheating_state": "Mild Long",
+            "leverage_overheating_score": 3,
+            "leverage_divergence": False,
+        }
+
+    # 약한 숏
+    return {
+        "leverage_overheating_state": "Mild Short",
+        "leverage_overheating_score": 3,
+        "leverage_divergence": False,
+    }
+
 def _score_tips_bei(fred_data: dict) -> dict:
     """
     [아이템 4] TIPS Breakeven Inflation 시그널 (v1.9.0+)
@@ -1483,15 +1741,29 @@ def compute_market_score(signals: dict) -> dict:
     # v1.1: VIX 30% + 감성 25% + F&G 25% + BTC 20%
     # v1.2: VIX 20% + 감성 15% + F&G 20% + BTC 15% + Vol Term 30%
     #   - Vol Term: 백워데이션이면 구조적 위기 → Risk 대폭 가중
+    # ── risk_score 정정 (Phase 3, 2026-04-29) ────────────────────
+    # 기존: alternative.me crypto F&G가 주식 risk_score에 20% 잘못 사용
+    # 변경: CNN 주식 F&G 사용, crypto F&G 영향 분리
+    cnn_fg_score = signals.get("cnn_fg_score")
     fg_risk_map = {1: 4, 2: 3, 3: 2, 4: 3, 5: 4}
-    fg_risk = fg_risk_map.get(fear_greed_score, 2)
 
+    if cnn_fg_score is not None:
+        cnn_fg_risk = fg_risk_map.get(cnn_fg_score, 2)
+    else:
+        # CNN F&G 미수집 → crypto F&G로 임시 대체 (정확도 저하 인지)
+        crypto_fg_score = signals.get("fear_greed_score", 3)
+        cnn_fg_risk = fg_risk_map.get(crypto_fg_score, 2)
+        logger.warning(
+            "[MarketScore] CNN F&G 미수집 → crypto F&G로 임시 대체 (정확도 저하)"
+        )
+
+    # 정정 가중치: vix 0.25 / sentiment 0.20 / cnn_fg 0.25 / crypto 0.05 / volterm 0.25
     risk_raw = (
-        vix_score * 0.20 +
-        sentiment_score * 0.15 +
-        fg_risk * 0.20 +
-        crypto_risk_score * 0.15 +
-        vol_term_score * 0.30
+        vix_score * 0.25 +
+        sentiment_score * 0.20 +
+        cnn_fg_risk * 0.25 +
+        crypto_risk_score * 0.05 +
+        vol_term_score * 0.25
     )
     risk_score = max(1, min(5, round(risk_raw)))
 
@@ -1533,9 +1805,14 @@ def run_macro_engine(
     etf_prices: dict = None,
     tier2_data: dict = None,
     pcr_data: dict = None,
-    spy_sma_data=None,       # ← v신규 추가 (Priority A)
-    sector_data: dict = None,     # ← Priority B 신규 추가
+    spy_sma_data=None,       # ← Priority A
+    sector_data: dict = None,     # ← Priority B
+    # ── Phase 3 신규 (2026-04-29) ──
+    cnn_fg: dict = None,
+    btc_funding: dict = None,
+    crypto_basis: dict = None,
 ) -> dict:
+    
     """
     시장 스냅샷 + FRED + 뉴스 감성 + 확장 데이터 → 신호 + Market Score 반환.
     ─────────────────────────────────────────────────────────────────────────
@@ -1592,6 +1869,29 @@ def run_macro_engine(
     signals.update(_score_equity_momentum(snapshot))        # T1-3
     signals.update(_score_xlf_gld_relative(etf_prices))    # T1-4
     signals.update(_score_put_call_ratio(pcr_data))        # T1-5 (D-2)
+
+    # ── Phase 3 신규 시그널 (2026-04-29) ────────────────────────
+    signals.update(_score_cnn_fg(cnn_fg))                  # P3-1: 주식 F&G
+    signals.update(_score_btc_funding(btc_funding))        # P3-2: BTC Funding
+
+    # crypto_fg_* alias (명확화 + 후방호환)
+    signals["crypto_fg_value"] = (fear_greed or {}).get("value")
+    signals["crypto_fg_state"] = signals.get("fear_greed_state")
+    signals["crypto_fg_score"] = signals.get("fear_greed_score")
+
+    # 교차검증 1: cross_asset_sentiment (CNN + crypto F&G)
+    signals.update(_score_cross_asset_sentiment(
+        cnn_fg_value=signals.get("cnn_fg_value"),
+        crypto_fg_value=signals.get("crypto_fg_value"),
+    ))                                                      # P3-3
+
+    # 교차검증 2: leverage_overheating (Basis + Funding)
+    _basis_for_lev = (crypto_basis or {}).get("basis_spread")
+    _funding_for_lev = signals.get("btc_funding_rate")
+    signals.update(_score_leverage_overheating(
+        basis_spread=_basis_for_lev,
+        funding_rate=_funding_for_lev,
+    ))                                                      # P3-4
 
     # ── Tier 2 확장 5개 시그널 산출 (2026-04-01 추가) ──
     # 각 함수는 데이터가 None이어도 안전하게 중립값 반환
@@ -1765,6 +2065,13 @@ def run_macro_engine(
         f"[MacroEngine] Tier3: AI={signals.get('ai_momentum_state','N/A')} | "
         f"NasRel={signals.get('nasdaq_rel_state','N/A')} | "
         f"Bank={signals.get('banking_stress_state','N/A')}"
+    )
+    # Phase 3 신규 시그널 로그
+    logger.info(
+        f"[MacroEngine] Phase3: CNN_FG={signals.get('cnn_fg_state')} | "
+        f"CrossAsset={signals.get('cross_asset_state')} | "
+        f"BTC_Funding={signals.get('btc_funding_state')} | "
+        f"Leverage={signals.get('leverage_overheating_state')}"
     )
 
     return {
