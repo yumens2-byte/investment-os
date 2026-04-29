@@ -525,7 +525,7 @@ def run(session: str) -> dict:
     logger.info("[Step 5.7] Phase 3 BTC Funding Rate 수집")
     btc_funding = None
     try:
-        from collectors.binance_funding import get_btc_funding_rate
+        from collectors.crypto_funding import get_btc_funding_rate
         btc_funding = get_btc_funding_rate()
         if btc_funding.get("success"):
             logger.info(
