@@ -53,7 +53,10 @@ def assemble_core_data(
     news_analysis: dict = None,
     crypto_basis: dict = None,
     btc_sentiment: dict = None,
-    spy_sma_data: dict = None,  # ← 신규 추가 (Priority A)
+    spy_sma_data: dict = None,  # ← Priority A
+    # ── Phase 3 신규 (2026-04-29) ──
+    cnn_fg: dict = None,
+    btc_funding: dict = None,
 ) -> dict:
 
   
@@ -126,6 +129,9 @@ def assemble_core_data(
         "trading_signal": trading_signal,
         "output_helpers": output_helpers,
         "spy_sma":        spy_sma_data or {},   # ← return dict에 추가
+        # ── Phase 3 신규 (2026-04-29) ──
+        "cnn_fg":         cnn_fg or {},
+        "btc_funding":    btc_funding or {},
     }
 
 
