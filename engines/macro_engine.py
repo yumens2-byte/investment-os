@@ -1901,7 +1901,7 @@ def compute_market_score(signals: dict) -> dict:
         "financial_stability_score": financial_stability,
         "commodity_pressure_score": oil_score,
     }
-    logger.debug(f"[Macro] Market Score: {score}")
+    logger.info(f"[Macro] Market Score: {score} | raw: growth={growth_raw:.4f} risk={risk_raw:.4f}")
     return score
 
 
