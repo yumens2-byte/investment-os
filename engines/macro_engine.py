@@ -2,7 +2,19 @@
 engines/macro_engine.py
 02_macro_liquidity_engine.md 기준 구현.
 Raw 시장 데이터 → Standard Signal → Market Score 산출.
+
+v1.10.0 (2026-04-30) — 이슈 G + H 통합 패치
+  - 이슈 G: growth_score 가중치 재조정
+    · ai_momentum_score 0.15 → 0.07 (단일 섹터 당일 변동률 노이즈 축소)
+    · momentum_score 0.20 → 0.28 (SP500/NASDAQ 평균 모멘텀 강화)
+  - 이슈 H: risk_score 가중치 재조정 (H-2 채택)
+    · vol_term_score 0.25 → 0.15 (VIX 파생 지표 이중계산 해소)
+    · vix_score 0.25 → 0.35 (직접 변동성 지표 비중 강화)
+  - 이슈 I: 키 충돌 해소 — 본 사이클 보류
+    · risk_engine.py compute_market_score() dead code 여부 확인 후 별도 사이클 진행
 """
+VERSION = "1.10.0"
+
 import logging
 from typing import Optional
 from config.settings import (
@@ -1788,15 +1800,18 @@ def compute_market_score(signals: dict) -> dict:
     # v1.2: VIX 20% + 금리 20% + 모멘텀 30% + Breadth 15% + 실업수당 15%
     # v1.3: VIX 15% + 금리 15% + 모멘텀 20% + Breadth 10% + 실업수당 10%
     #       + AI모멘텀 15% + Nasdaq상대 15%
-    #   - AI모멘텀: SOXX/QQQ 상대강도 (AI 테마 리더십 지속 여부)
-    #   - Nasdaq상대: Growth vs Value 로테이션 방향
+    # v1.10.0 (이슈 G): AI모멘텀 0.15→0.07, 모멘텀 0.20→0.28
+    #   - AI모멘텀(SOXX/QQQ 당일 차이)는 단일 섹터 당일 변동률로 노이즈 위험 큼
+    #   - 시장 전체 모멘텀(SP500/NASDAQ 평균)이 더 신뢰도 높은 직접 지표
+    #   - nasdaq_rel_score(0.15)가 이미 Tech 모멘텀을 보조 반영 중
+    # 가중치 합 검증: 0.15 + 0.15 + 0.28 + 0.10 + 0.10 + 0.07 + 0.15 = 1.00
     growth_raw = (
         vix_score * 0.15 +
         rate_score * 0.15 +
-        momentum_score * 0.20 +
+        momentum_score * 0.28 +
         breadth_score * 0.10 +
         claims_score * 0.10 +
-        ai_momentum_score * 0.15 +
+        ai_momentum_score * 0.07 +
         nasdaq_rel_score * 0.15
     )
     growth_score = max(1, min(5, round(growth_raw)))
@@ -1850,13 +1865,18 @@ def compute_market_score(signals: dict) -> dict:
             "[MarketScore] CNN F&G 미수집 → crypto F&G로 임시 대체 (정확도 저하)"
         )
 
-    # 정정 가중치: vix 0.25 / sentiment 0.20 / cnn_fg 0.25 / crypto 0.05 / volterm 0.25
+    # Phase 3 (2026-04-29): vix 0.25 / sentiment 0.20 / cnn_fg 0.25 / crypto 0.05 / volterm 0.25
+    # v1.10.0 (이슈 H, H-2 채택): vol_term 0.25→0.15, vix 0.25→0.35
+    #   - vol_term_score(VIX/VIX3M 비율)는 vix_score의 파생 지표
+    #   - 동일 25% 가중 시 변동성 지표가 risk_score의 50% 차지 → 이중 계산
+    #   - 차액 10%를 직접 변동성 지표인 VIX로 흡수 (가장 신뢰도 높음)
+    # 가중치 합 검증: 0.35 + 0.20 + 0.25 + 0.05 + 0.15 = 1.00
     risk_raw = (
-        vix_score * 0.25 +
+        vix_score * 0.35 +
         sentiment_score * 0.20 +
         cnn_fg_risk * 0.25 +
         crypto_risk_score * 0.05 +
-        vol_term_score * 0.25
+        vol_term_score * 0.15
     )
     risk_score = max(1, min(5, round(risk_raw)))
 
