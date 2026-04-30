@@ -22,7 +22,7 @@ def collect_youtube_summaries() -> dict:
         {
           "success": True,
           "videos": [
-            {"channel": "소수몽키", "title": "...", "description": "...", "published": "..."},
+            {"channel": "유튜버", "title": "...", "description": "...", "published": "..."},
             ...
           ],
           "total": 5,
