@@ -12,8 +12,19 @@ v1.10.0 (2026-04-30) — 이슈 G + H 통합 패치
     · vix_score 0.25 → 0.35 (직접 변동성 지표 비중 강화)
   - 이슈 I: 키 충돌 해소 — 본 사이클 보류
     · risk_engine.py compute_market_score() dead code 여부 확인 후 별도 사이클 진행
+
+v1.11.0 (2026-04-30) — F-α-1 시그널 4개 신규 편입
+  - inflation_score: cpi_score 신규 편입 (가중치 0.20)
+    · CPI YoY 실측치 → infl_exp(시장 기대) 보조
+    · oil 0.35→0.30, rate 0.30→0.25, infl_exp 0.35→0.25
+  - growth_score: trend_score + labor_score 신규 편입
+    · trend(SPY SMA50/200) 0.07, labor(NFP+실업률) 0.10
+    · momentum 0.28→0.20, breadth 0.10→0.08, claims 0.10→0.08, nasdaq_rel 0.15→0.10
+  - risk_score: pcr_score 신규 편입 (옵션 A U자형 매핑)
+    · pcr_risk_map = {1:3, 2:1, 3:3, 4:4} — 양 끝값 모두 위험으로 인식
+    · vix 0.35→0.30, sentiment 0.20→0.18, pcr_risk 0.07
 """
-VERSION = "1.10.0"
+VERSION = "1.11.0"
 
 import logging
 from typing import Optional
@@ -1794,6 +1805,20 @@ def compute_market_score(signals: dict) -> dict:
     nasdaq_rel_score = signals.get("nasdaq_rel_score", 2)      # T3-2: 1~3
     banking_stress_score = signals.get("banking_stress_score", 1) # T3-3: 1~3
 
+    # ── F-α-1 신규 편입 시그널 (v1.11.0) ──
+    cpi_score = signals.get("cpi_score", 2)            # 1~4: CPI YoY (Cool/Normal/Elevated/Hot)
+    labor_score = signals.get("labor_score", 2)        # 1~4: NFP+실업률 (Strong/Moderate/Weak/JobLoss)
+    trend_score = signals.get("trend_score", 2)        # 1~4: SPY SMA50/200 (Golden/Up/Bear/Death)
+    pcr_score = signals.get("pcr_score", 2)            # 1~4: PCR (Complacency/Neutral/Bearish/ExtremeBearish)
+
+    # PCR 옵션 A (U자형) 매핑 — 양 끝값(과열/공포) 모두 위험으로 인식
+    # pcr=1(과도한 콜, Complacency) = 역설적 위험, pcr=4(과도한 풋, 극단공포) = 직접 위험
+    pcr_risk_map = {1: 3, 2: 1, 3: 3, 4: 4}
+    pcr_risk = pcr_risk_map.get(pcr_score, 2)
+
+    # ═══════════════════════════════════════════════════════
+    # growth_score: 성장 환경
+
     # ═══════════════════════════════════════════════════════
     # growth_score: 성장 환경
     # ═══════════════════════════════════════════════════════
@@ -1801,18 +1826,21 @@ def compute_market_score(signals: dict) -> dict:
     # v1.3: VIX 15% + 금리 15% + 모멘텀 20% + Breadth 10% + 실업수당 10%
     #       + AI모멘텀 15% + Nasdaq상대 15%
     # v1.10.0 (이슈 G): AI모멘텀 0.15→0.07, 모멘텀 0.20→0.28
-    #   - AI모멘텀(SOXX/QQQ 당일 차이)는 단일 섹터 당일 변동률로 노이즈 위험 큼
-    #   - 시장 전체 모멘텀(SP500/NASDAQ 평균)이 더 신뢰도 높은 직접 지표
-    #   - nasdaq_rel_score(0.15)가 이미 Tech 모멘텀을 보조 반영 중
-    # 가중치 합 검증: 0.15 + 0.15 + 0.28 + 0.10 + 0.10 + 0.07 + 0.15 = 1.00
+    # v1.11.0 (F-α-1): trend_score, labor_score 신규 편입
+    #   - trend_score(SPY SMA50/200): 중장기 기술적 추세, 신규 정보 차원
+    #   - labor_score(NFP+실업률): 광범위 노동시장, claims(주간) 보조
+    #   - momentum 0.28→0.20, breadth 0.10→0.08, claims 0.10→0.08, nasdaq_rel 0.15→0.10
+    # 가중치 합 검증: 0.15+0.15+0.20+0.08+0.08+0.07+0.10+0.07+0.10 = 1.00
     growth_raw = (
         vix_score * 0.15 +
         rate_score * 0.15 +
-        momentum_score * 0.28 +
-        breadth_score * 0.10 +
-        claims_score * 0.10 +
+        momentum_score * 0.20 +
+        breadth_score * 0.08 +
+        claims_score * 0.08 +
         ai_momentum_score * 0.07 +
-        nasdaq_rel_score * 0.15
+        nasdaq_rel_score * 0.10 +
+        trend_score * 0.07 +
+        labor_score * 0.10
     )
     growth_score = max(1, min(5, round(growth_raw)))
 
@@ -1821,11 +1849,16 @@ def compute_market_score(signals: dict) -> dict:
     # ═══════════════════════════════════════════════════════
     # v1.1: (Oil + 금리) / 2
     # v1.2: Oil 35% + 금리 30% + 기대인플레 35%
-    #   - 기대인플레: 시장 참가자의 실제 인플레이션 전망 반영
+    # v1.11.0 (F-α-1): cpi_score 신규 편입 (가중치 0.20)
+    #   - cpi(실측치): 실현 인플레이션
+    #   - infl_exp(시장 기대, 선행) + cpi(실측, 후행) 보완 관계
+    #   - oil 0.35→0.30, rate 0.30→0.25, infl_exp 0.35→0.25
+    # 가중치 합 검증: 0.30 + 0.25 + 0.25 + 0.20 = 1.00
     inflation_raw = (
-        oil_score * 0.35 +
-        rate_score * 0.30 +
-        infl_exp_score * 0.35
+        oil_score * 0.30 +
+        rate_score * 0.25 +
+        infl_exp_score * 0.25 +
+        cpi_score * 0.20
     )
     inflation_score = max(1, min(5, round(inflation_raw)))
 
@@ -1867,16 +1900,18 @@ def compute_market_score(signals: dict) -> dict:
 
     # Phase 3 (2026-04-29): vix 0.25 / sentiment 0.20 / cnn_fg 0.25 / crypto 0.05 / volterm 0.25
     # v1.10.0 (이슈 H, H-2 채택): vol_term 0.25→0.15, vix 0.25→0.35
-    #   - vol_term_score(VIX/VIX3M 비율)는 vix_score의 파생 지표
-    #   - 동일 25% 가중 시 변동성 지표가 risk_score의 50% 차지 → 이중 계산
-    #   - 차액 10%를 직접 변동성 지표인 VIX로 흡수 (가장 신뢰도 높음)
-    # 가중치 합 검증: 0.35 + 0.20 + 0.25 + 0.05 + 0.15 = 1.00
+    # v1.11.0 (F-α-1): pcr_risk 신규 편입 (옵션 A U자형 매핑, 가중치 0.07)
+    #   - pcr_risk_map = {1:3, 2:1, 3:3, 4:4} — 양 끝값(과열/공포) 모두 위험 인식
+    #   - vix 0.35→0.30, sentiment 0.20→0.18 (미세 조정)
+    #   - cnn_fg_risk, crypto_risk, vol_term은 이슈 H 직후라 보존
+    # 가중치 합 검증: 0.30 + 0.18 + 0.25 + 0.05 + 0.15 + 0.07 = 1.00
     risk_raw = (
-        vix_score * 0.35 +
-        sentiment_score * 0.20 +
+        vix_score * 0.30 +
+        sentiment_score * 0.18 +
         cnn_fg_risk * 0.25 +
         crypto_risk_score * 0.05 +
-        vol_term_score * 0.15
+        vol_term_score * 0.15 +
+        pcr_risk * 0.07
     )
     risk_score = max(1, min(5, round(risk_raw)))
 
