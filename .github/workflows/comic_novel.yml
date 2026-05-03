@@ -10,7 +10,7 @@ on:
       dry_run:
         description: 'DRY_RUN (true=모의, false=실발행)'
         required: false
-        default: 'true'
+        default: 'false'
 
 env:
   DRY_RUN: ${{ github.event.inputs.dry_run || 'true' }}
