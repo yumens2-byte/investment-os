@@ -257,12 +257,25 @@ def run(mode: str = "tweet", session: str = None) -> dict:
     # ── Step 6-YT: C-16 유튜버 요약 트윗 (morning만) ──────────
     if session_type == "morning":
         try:
-            streamer       = data.get("streamer_consensus", {})
+            streamer = data.get("streamer_consensus_v2") or data.get("streamer_consensus", {})
             streamer_tweet = streamer.get("tweet", "")
             if streamer_tweet:
-                from publishers.x_publisher import publish_tweet as _pub_yt
-                _pub_yt(streamer_tweet)
-                logger.info(f"[Step 6-YT] 유튜버 요약 트윗 발행 ({streamer.get('direction', '?')})")
+                from core.streamer_dedupe import (
+                    check_streamer_duplicate,
+                    record_streamer_publish,
+                )
+                decision = check_streamer_duplicate(streamer, lookback_hours=48)
+                if not decision.get("allow", False):
+                    logger.info(f"[Step 6-YT] 유튜버 요약 트윗 중복 차단: {decision.get('reason', '?')}")
+                    record_streamer_publish(streamer, decision, tweet_id=None)
+                else:
+                    from publishers.x_publisher import publish_tweet as _pub_yt
+                    yt_result = _pub_yt(streamer_tweet)
+                    yt_id = None
+                    if isinstance(yt_result, dict):
+                        yt_id = yt_result.get("tweet_id")
+                    record_streamer_publish(streamer, decision, tweet_id=yt_id)
+                    logger.info(f"[Step 6-YT] 유튜버 요약 트윗 발행 ({streamer.get('direction', '?')})")
         except Exception as e:
             logger.warning(f"[Step 6-YT] 유튜버 트윗 발행 실패 (영향 없음): {e}")
 
