@@ -41,6 +41,9 @@ def build_fingerprints(consensus: dict[str, Any]) -> dict[str, str]:
 def _load_logs() -> list[dict[str, Any]]:
     try:
         if not LOG_PATH.exists():
+            LOG_PATH.parent.mkdir(parents=True, exist_ok=True)
+            LOG_PATH.write_text("[]", encoding="utf-8")
+            logger.info(f"[StreamerDedupe] 로그 파일 초기 생성: {LOG_PATH}")
             return []
         return json.loads(LOG_PATH.read_text(encoding="utf-8"))
     except Exception as e:
