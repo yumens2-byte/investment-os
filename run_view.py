@@ -282,6 +282,8 @@ def run(mode: str = "tweet", session: str = None) -> dict:
                         decision.get("reason", "?"),
                         decision.get("matched_at"),
                     )
+                if not decision.get("allow", False):
+                    logger.info(f"[Step 6-YT] 유튜버 요약 트윗 중복 차단: {decision.get('reason', '?')}")
                     record_streamer_publish(streamer, decision, tweet_id=None)
                 else:
                     from publishers.x_publisher import publish_tweet as _pub_yt
@@ -295,6 +297,7 @@ def run(mode: str = "tweet", session: str = None) -> dict:
                         streamer.get("direction", "?"),
                         yt_id,
                     )
+                    logger.info(f"[Step 6-YT] 유튜버 요약 트윗 발행 ({streamer.get('direction', '?')})")
         except Exception as e:
             logger.warning(f"[Step 6-YT] 유튜버 트윗 발행 실패 (영향 없음): {e}")
 

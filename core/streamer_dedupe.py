@@ -15,6 +15,7 @@ logger = logging.getLogger(__name__)
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 LOG_PATH = REPO_ROOT / "data" / "streamer_publish_log.json"
+LOG_PATH = Path("data/streamer_publish_log.json")
 
 
 def _normalize(text: str) -> str:
@@ -66,6 +67,7 @@ def check_streamer_duplicate(consensus: dict[str, Any], lookback_hours: int = 48
     recent = 0
     for row in reversed(logs):
         scanned += 1
+    for row in reversed(logs):
         try:
             ts = datetime.fromisoformat(row.get("published_at_utc", ""))
             if ts.tzinfo is None:
@@ -105,6 +107,14 @@ def check_streamer_duplicate(consensus: dict[str, Any], lookback_hours: int = 48
         "recent": recent,
         "matched_at": None,
     }
+
+        if row.get("raw_hash") == fp["raw_hash"]:
+            return {"allow": False, "reason": "raw_hash_match", "fingerprints": fp}
+
+        if row.get("topic_hash") == fp["topic_hash"] and row.get("direction", "").lower() == direction:
+            return {"allow": False, "reason": "topic_hash_match", "fingerprints": fp}
+
+    return {"allow": True, "reason": "no_recent_match", "fingerprints": fp}
 
 
 def record_streamer_publish(consensus: dict[str, Any], decision: dict[str, Any], tweet_id: str | None) -> None:
