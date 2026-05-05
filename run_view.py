@@ -265,6 +265,23 @@ def run(mode: str = "tweet", session: str = None) -> dict:
                     record_streamer_publish,
                 )
                 decision = check_streamer_duplicate(streamer, lookback_hours=48)
+                fp = decision.get("fingerprints", {})
+                logger.info(
+                    "[Step 6-YT] dedupe check: allow=%s reason=%s recent=%s scanned=%s raw=%s topic=%s",
+                    decision.get("allow", False),
+                    decision.get("reason", "?"),
+                    decision.get("recent", 0),
+                    decision.get("scanned", 0),
+                    (fp.get("raw_hash", "") or "")[:10],
+                    (fp.get("topic_hash", "") or "")[:10],
+                )
+
+                if not decision.get("allow", False):
+                    logger.info(
+                        "[Step 6-YT] 유튜버 요약 트윗 중복 차단: reason=%s matched_at=%s",
+                        decision.get("reason", "?"),
+                        decision.get("matched_at"),
+                    )
                 if not decision.get("allow", False):
                     logger.info(f"[Step 6-YT] 유튜버 요약 트윗 중복 차단: {decision.get('reason', '?')}")
                     record_streamer_publish(streamer, decision, tweet_id=None)
@@ -275,6 +292,11 @@ def run(mode: str = "tweet", session: str = None) -> dict:
                     if isinstance(yt_result, dict):
                         yt_id = yt_result.get("tweet_id")
                     record_streamer_publish(streamer, decision, tweet_id=yt_id)
+                    logger.info(
+                        "[Step 6-YT] 유튜버 요약 트윗 발행 (%s) tweet_id=%s",
+                        streamer.get("direction", "?"),
+                        yt_id,
+                    )
                     logger.info(f"[Step 6-YT] 유튜버 요약 트윗 발행 ({streamer.get('direction', '?')})")
         except Exception as e:
             logger.warning(f"[Step 6-YT] 유튜버 트윗 발행 실패 (영향 없음): {e}")

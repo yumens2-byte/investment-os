@@ -13,6 +13,8 @@ from typing import Any
 
 logger = logging.getLogger(__name__)
 
+REPO_ROOT = Path(__file__).resolve().parent.parent
+LOG_PATH = REPO_ROOT / "data" / "streamer_publish_log.json"
 LOG_PATH = Path("data/streamer_publish_log.json")
 
 
@@ -61,6 +63,10 @@ def check_streamer_duplicate(consensus: dict[str, Any], lookback_hours: int = 48
     since = now - timedelta(hours=lookback_hours)
 
     logs = _load_logs()
+    scanned = 0
+    recent = 0
+    for row in reversed(logs):
+        scanned += 1
     for row in reversed(logs):
         try:
             ts = datetime.fromisoformat(row.get("published_at_utc", ""))
@@ -71,6 +77,36 @@ def check_streamer_duplicate(consensus: dict[str, Any], lookback_hours: int = 48
 
         if ts < since:
             continue
+        recent += 1
+
+        if row.get("raw_hash") == fp["raw_hash"]:
+            return {
+                "allow": False,
+                "reason": "raw_hash_match",
+                "fingerprints": fp,
+                "scanned": scanned,
+                "recent": recent,
+                "matched_at": row.get("published_at_utc"),
+            }
+
+        if row.get("topic_hash") == fp["topic_hash"] and row.get("direction", "").lower() == direction:
+            return {
+                "allow": False,
+                "reason": "topic_hash_match",
+                "fingerprints": fp,
+                "scanned": scanned,
+                "recent": recent,
+                "matched_at": row.get("published_at_utc"),
+            }
+
+    return {
+        "allow": True,
+        "reason": "no_recent_match",
+        "fingerprints": fp,
+        "scanned": scanned,
+        "recent": recent,
+        "matched_at": None,
+    }
 
         if row.get("raw_hash") == fp["raw_hash"]:
             return {"allow": False, "reason": "raw_hash_match", "fingerprints": fp}
@@ -94,6 +130,9 @@ def record_streamer_publish(consensus: dict[str, Any], decision: dict[str, Any],
             "topic_hash": fp.get("topic_hash"),
             "reason": decision.get("reason", "unknown"),
             "allow": bool(decision.get("allow", False)),
+            "lookback_recent": decision.get("recent", 0),
+            "lookback_scanned": decision.get("scanned", 0),
+            "matched_at": decision.get("matched_at"),
         }
     )
     _save_logs(logs)
