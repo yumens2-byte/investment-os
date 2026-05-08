@@ -348,15 +348,15 @@ def gemini_cross_check(
             f"Risk={r}, Stability={s}, Commodity={c}\n"
             f"- 핵심 시그널: VIX={vix}, Oil={oil}, F&G={fg}, 감성={sent}\n"
             f"- 뉴스 감성: {news_sentiment}, 주요 이슈: {top_issues}\n"
-            f"JSON으로 응답:\n"
+            f'JSON으로 응답 (reason은 30자 이내 한국어):\n'
             f'{{"agree": true/false, "confidence": 0.0~1.0, '
-            f'"reason": "1줄 한국어", "suggested_regime": "레짐명"}}'
+            f'"reason": "30자 이내 한국어", "suggested_regime": "레짐명"}}'
         )
 
         result = call(
             prompt=prompt,
             model="flash-lite",
-            max_tokens=100,
+            max_tokens=200,
             temperature=0.3,
             response_json=True,
         )
