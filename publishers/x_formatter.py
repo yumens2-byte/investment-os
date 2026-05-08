@@ -3,6 +3,20 @@ publishers/x_formatter.py
 JSON Core Data → X 트윗 텍스트 변환.
 출력 형식은 project-summary.html 기준.
 
+v1.5.0 (2026-05-06): morning 세션 AI 톤 보정 P0 개선 (Q4.c — morning 한정)
+  - core/tone_policy.py 연동 (페르소나+톤+규칙+예시 4요소 프롬프트)
+  - core/ai_output_validator.py 연동 (7종 통합 검증 + 어색함 휴리스틱)
+  - db/ai_quality_store.py 연동 (Supabase ai_quality_log 적재)
+  - generate_ai_tweet:
+    * morning 세션  → 신규 v1.5.0 흐름 (3회 retry, 톤 보존, 검증, 적재)
+    * 그 외 세션    → 기존 v1.4.0 흐름 그대로 (Q4.c 백워드 호환 100%)
+    * 외부 시그니처 동일 — run_view.py 무수정
+  - _clean_tweet 확장: 마크다운 헤더, 굵은체, 메타 prefix(결론/요약/트윗/본문/내용/출력/답변),
+                       대괄호 메타라벨, 끝부분 미완결 절단 회복
+  - generate_ai_thread는 v1.4.0 그대로 유지 (D-7 이후 확장 검토)
+  - _select_tone, _NON_PUBLISHABLE_PATTERN, _detect_non_publishable_chars
+    백워드 호환 위해 모두 보존 (non-morning 분기에서 사용)
+
 v1.4.0 (2026-04-11): format_image_tweet에 crypto_basis·btc_sentiment·PCR 직접 출력
   - signals_line 1줄 추가: ₿ Basis: Contango · 소셜 72 · PCR 0.88 Normal
   - 전 세션(morning/close/intraday/full) 적용
@@ -29,11 +43,12 @@ import logging
 import random as _random
 import re as _re
 from typing import Optional
-from config.settings import X_MAX_TWEET_LENGTH, X_HASHTAGS
+from config.settings import X_MAX_TWEET_LENGTH, X_HASHTAGS  # noqa: F401
 
 logger = logging.getLogger(__name__)
 
-VERSION = "1.4.0"
+VERSION = "1.5.0"
+logger.info(f"[XFormatter] v{VERSION} 로드")
 
 
 # ──────────────────────────────────────────────────────────────
@@ -450,6 +465,191 @@ def _select_tone(risk: str, regime: str) -> str:
 def generate_ai_tweet(data: dict, session_label: str = "Market Snapshot") -> str:
     """
     Gemini로 매 세션 다른 톤/표현의 트윗 생성.
+
+    v1.5.0:
+      - morning 세션  → tone_policy 기반 신규 흐름 (페르소나+톤+규칙+예시 4요소)
+      - 그 외 세션    → v1.4.0 인라인 흐름 그대로 (Q4.c 백워드 호환)
+
+    Returns: 트윗 텍스트 (280자 이내)
+    """
+    session = _label_to_session(session_label)
+    if session == "morning":
+        return _generate_ai_tweet_morning_v150(data, session_label, session)
+
+    # Q4.c — non-morning 세션은 v1.4.0 흐름 100% 그대로
+    return _generate_ai_tweet_legacy_v140(data, session_label)
+
+
+def _label_to_session(session_label: str) -> str:
+    """
+    run_view.py가 전달하는 표시 라벨을 세션 식별자로 변환.
+    예: "Morning Brief 🌅" → "morning"
+    매칭 실패 시 'unknown' 반환 → tone_policy.select_persona_tone이 None 반환 →
+    v1.4.0 흐름으로 분기.
+    """
+    if not session_label:
+        return "unknown"
+    label_lower = session_label.lower()
+    if "morning" in label_lower:
+        return "morning"
+    if "intraday" in label_lower:
+        return "intraday"
+    if "close" in label_lower:
+        return "close"
+    if "full" in label_lower:
+        return "full"
+    if "weekly" in label_lower:
+        return "weekly"
+    if "narrative" in label_lower:
+        return "narrative"
+    return "unknown"
+
+
+# ──────────────────────────────────────────────────────────────
+# v1.5.0 신규 흐름 (morning 한정)
+# ──────────────────────────────────────────────────────────────
+
+_MAX_ATTEMPTS_V150 = 3
+_TEMPERATURE_SCHEDULE = (0.85, 0.70, 0.55)   # 1차 → 2차 → 3차 (점진 보수화)
+_MAX_TOKENS_V150 = 350                         # 한국어 200자 + 마진
+
+
+def _generate_ai_tweet_morning_v150(
+    data: dict,
+    session_label: str,
+    session: str,
+) -> str:
+    """morning 세션 신규 흐름 — tone_policy + ai_output_validator + ai_quality_store."""
+    try:
+        from core.gemini_gateway import call, is_available
+        from core.tone_policy import (
+            select_persona_tone,
+            build_tweet_prompt,
+            build_retry_prompt,
+        )
+        from core.ai_output_validator import validate
+        from db.ai_quality_store import log_ai_attempt
+    except ImportError as e:
+        logger.warning(
+            f"[XFormatter] v1.5.0 모듈 import 실패 → v1.4.0 fallback: {e}"
+        )
+        return _generate_ai_tweet_legacy_v140(data, session_label)
+
+    # 1) Gemini 미설정 → 즉시 fallback
+    if not is_available():
+        log_ai_attempt(
+            session=session, mode="tweet", attempt=0,
+            tone_spec=None, output_text=None, validation=None,
+            success=False, fallback_used=True,
+            gemini_meta={"model": None, "key_used": None, "error": "gemini_unavailable"},
+        )
+        return format_market_snapshot_tweet(data, session_label)
+
+    # 2) ToneSpec 결정 (한 번만 — retry 시 동일 객체 재주입 → 톤 보존)
+    risk   = data.get("market_regime", {}).get("market_risk_level", "MEDIUM")
+    regime = data.get("market_regime", {}).get("market_regime", "Unknown")
+    spec = select_persona_tone(risk, regime, session)
+
+    if spec is None:
+        # 매트릭스 누락 — 안전 fallback (이론상 morning에서는 발생 안 함)
+        logger.warning("[XFormatter] ToneSpec None (매트릭스 누락) → v1.4.0 fallback")
+        return _generate_ai_tweet_legacy_v140(data, session_label)
+
+    # 3) 1차 프롬프트
+    sample_tags = _random_hashtags(regime=regime)
+    prompt = build_tweet_prompt(data, spec, session_label, sample_hashtags=sample_tags)
+
+    last_text: Optional[str] = None
+    last_validation = None
+
+    for attempt in range(1, _MAX_ATTEMPTS_V150 + 1):
+        temperature = _TEMPERATURE_SCHEDULE[attempt - 1]
+        gemini_meta_default = {"model": None, "key_used": None, "error": None}
+
+        try:
+            result = call(
+                prompt=prompt,
+                model="flash-lite",
+                max_tokens=_MAX_TOKENS_V150,
+                temperature=temperature,
+            )
+        except Exception as e:
+            logger.warning(f"[XFormatter] Gemini 호출 예외 (attempt={attempt}): {e}")
+            log_ai_attempt(
+                session=session, mode="tweet", attempt=attempt,
+                tone_spec=spec, output_text=None, validation=None,
+                success=False, fallback_used=False,
+                gemini_meta={**gemini_meta_default, "error": str(e)},
+            )
+            continue
+
+        gemini_meta = {
+            "model":    result.get("model"),
+            "key_used": result.get("key_used"),
+            "error":    result.get("error"),
+        }
+
+        if not result.get("success"):
+            log_ai_attempt(
+                session=session, mode="tweet", attempt=attempt,
+                tone_spec=spec, output_text=None, validation=None,
+                success=False, fallback_used=False,
+                gemini_meta=gemini_meta,
+            )
+            continue
+
+        text = _clean_tweet(result.get("text", "") or "")
+        validation = validate(text, spec)
+
+        log_ai_attempt(
+            session=session, mode="tweet", attempt=attempt,
+            tone_spec=spec, output_text=text, validation=validation,
+            success=validation.passed,
+            fallback_used=False,
+            gemini_meta=gemini_meta,
+        )
+
+        if validation.passed:
+            logger.info(
+                f"[XFormatter] v1.5.0 AI 트윗 생성 ({len(text)}자, attempt={attempt}, "
+                f"awk={validation.awkwardness_score:.2f}, tone={spec.tone_name})"
+            )
+            return text
+
+        last_text = text
+        last_validation = validation
+        logger.info(
+            f"[XFormatter] v1.5.0 검증 실패 attempt={attempt} reason={validation.failure_reason} "
+            f"awk={validation.awkwardness_score:.2f} → retry"
+        )
+        prompt = build_retry_prompt(
+            original_output=text,
+            failure_reason=validation.failure_reason or "awkward",
+            spec=spec,
+        )
+
+    # 4) 모든 시도 실패 → fallback
+    logger.warning(
+        f"[XFormatter] v1.5.0 AI 트윗 {_MAX_ATTEMPTS_V150}회 실패 → fallback "
+        f"(last_reason={last_validation.failure_reason if last_validation else 'unknown'})"
+    )
+    log_ai_attempt(
+        session=session, mode="tweet", attempt=_MAX_ATTEMPTS_V150 + 1,
+        tone_spec=spec, output_text=last_text, validation=last_validation,
+        success=False, fallback_used=True,
+        gemini_meta={"model": None, "key_used": None, "error": "all_attempts_failed"},
+    )
+    return format_market_snapshot_tweet(data, session_label)
+
+
+# ──────────────────────────────────────────────────────────────
+# v1.4.0 기존 흐름 (non-morning 세션 보존)
+# 본체는 v1.4.0 generate_ai_tweet과 한 글자도 다르지 않음 — rename only.
+# ──────────────────────────────────────────────────────────────
+
+def _generate_ai_tweet_legacy_v140(data: dict, session_label: str = "Market Snapshot") -> str:
+    """
+    Gemini로 매 세션 다른 톤/표현의 트윗 생성.
     글자수 초과 시 2회 재시도 (요약 요청).
     실패 시 기존 하드코딩 트윗 fallback.
 
@@ -571,26 +771,146 @@ def generate_ai_tweet(data: dict, session_label: str = "Market Snapshot") -> str
     return format_market_snapshot_tweet(data, session_label)
 
 
+# ──────────────────────────────────────────────────────────────
+# AI 응답 후처리 — v1.5.0 확장
+# ──────────────────────────────────────────────────────────────
+
+# 1) 줄 전체가 메타 라벨인 경우 (그 줄 통째로 제거)
+_META_LINE_PATTERNS = (
+    # [긴급 톤], **[긴급 톤]**, [톤: 긴급] 등 라벨 줄
+    _re.compile(r"^\s*\*{0,2}\[?\s*톤\s*[:：]?\s*[^\]\n]*\]?\*{0,2}\s*$"),
+    _re.compile(
+        r"^\s*\*{0,2}\[?\s*(긴급|경계|진지한|신중한|분석적|낙관적|여유로운|유머러스)\s*톤\s*\]?\*{0,2}\s*$"
+    ),
+    # 굵은체로만 이뤄진 한 줄
+    _re.compile(r"^\s*\*{2}[^*\n]+\*{2}\s*$"),
+)
+
+# 2) prefix만 매칭 — 본문 시작에서 잘라냄
+_META_INLINE_PREFIX_PATTERN = _re.compile(
+    r"^\s*\*{0,2}\s*(결론|요약|트윗|본문|내용|출력|답변|결과|막)\s*[:：]\s*"
+)
+
+# 3) 마크다운 헤더 prefix (## 시장 분석 → 시장 분석)
+_MARKDOWN_HEADER_PATTERN = _re.compile(r"^\s*#{1,6}\s+")
+
+# 끝부분 미완결 절단 회복용 — 마지막 문장 경계
+_SENTENCE_END_RE = _re.compile(r'[.!?。…]\s')
+
+
 def _clean_tweet(text: str) -> str:
-    """AI 응답에서 트윗 텍스트만 추출"""
-    import re
+    """
+    v1.5.0: AI 응답에서 트윗 텍스트만 추출 (확장).
+
+    처리 순서:
+      1. 따옴표/백틱 제거
+      2. ``` 블록 제거
+      3. 첫 줄이 메타 라벨이면 줄 제거 (반복, 최대 3회)
+      4. 본문 시작 prefix(결론/요약/트윗/본문/내용/출력/답변/막) 제거
+      5. 본문 시작 마크다운 헤더(#) prefix 제거
+      6. 굵은체(**텍스트**), 인라인 코드(`텍스트`) 마크다운 잔존 제거
+      7. 끝부분 미완결 절단 회복
+
+    v1.4.0 처리(따옴표·블록·톤라벨·"막:")는 모두 보존, 그 외 항목 추가.
+    """
+    if not text:
+        return ""
+
     tweet = text.strip()
-    # 따옴표/백틱 제거
+
+    # 1) 따옴표/백틱 제거
     tweet = tweet.strip('"').strip("'").strip("`")
-    # ```로 감싸진 경우 제거
+
+    # 2) ``` 블록 제거
     if tweet.startswith("```"):
-        tweet = tweet.split("\n", 1)[-1]
+        tweet = tweet.split("\n", 1)[-1] if "\n" in tweet else tweet[3:]
     if tweet.endswith("```"):
         tweet = tweet.rsplit("```", 1)[0]
-    # 톤 라벨이 포함된 첫 줄 제거
-    # 예: "**톤: 긴급**", "**[진지한 톤]**", "[유머러스 톤]"
-    lines = tweet.strip().split("\n")
-    if lines and re.match(r'^\s*\*{0,2}\[?.*톤.*\]?\*{0,2}\s*$', lines[0]):
-        lines = lines[1:]
-    tweet = "\n".join(lines).strip()
-    # "막:" 같은 불필요한 prefix 제거
-    tweet = re.sub(r'^막:\s*', '', tweet)
+    tweet = tweet.strip()
+
+    # 3) 첫 줄 메타 라벨 줄 통째로 제거 (반복)
+    for _ in range(3):
+        if not tweet:
+            break
+        lines = tweet.split("\n")
+        first_line = lines[0]
+        matched = False
+        for pat in _META_LINE_PATTERNS:
+            if pat.search(first_line):
+                lines = lines[1:]
+                tweet = "\n".join(lines).strip()
+                matched = True
+                break
+        if not matched:
+            break
+
+    # 4) 본문 시작 prefix만 제거 (결론:/요약:/트윗:/본문:/내용:/출력:/답변:/막:)
+    tweet = _META_INLINE_PREFIX_PATTERN.sub("", tweet, count=1)
+
+    # 5) 마크다운 헤더 prefix 제거 (## 제목 → 제목)
+    tweet = _MARKDOWN_HEADER_PATTERN.sub("", tweet, count=1)
+
+    # 6) 굵은체/인라인코드 마크다운 잔존 제거
+    tweet = _re.sub(r"\*{2}([^*\n]+)\*{2}", r"\1", tweet)
+    tweet = _re.sub(r"`([^`\n]+)`", r"\1", tweet)
+
+    # 7) 끝부분 미완결 절단 회복
+    tweet = _recover_incomplete_trailing(tweet)
+
     return tweet.strip()
+
+
+def _recover_incomplete_trailing(text: str) -> str:
+    """
+    마지막 어절이 조사/접속어로 끝나면 직전 완결 문장에서 절단.
+    너무 짧아질 위험이 있으면 원문 유지 (>= 70% 보존).
+    """
+    if not text or len(text) < 50:
+        return text
+
+    body = text.rstrip()
+    # 해시태그 라인은 그대로 두고 본문만 검사
+    if "\n" in body:
+        parts = body.rsplit("\n", 1)
+        main_body = parts[0]
+        tail = "\n" + parts[1]
+    else:
+        main_body = body
+        tail = ""
+
+    last_token_match = _re.search(r"\S+$", main_body)
+    if not last_token_match:
+        return text
+
+    last_token = last_token_match.group()
+    cleaned_token = _re.sub(r"[.!?…」』#\s]+$", "", last_token)
+    cleaned_token = _re.sub(
+        r"["
+        "\U0001F300-\U0001F9FF"
+        "\U00002600-\U000027BF"
+        "]+$",
+        "",
+        cleaned_token,
+    )
+    if not cleaned_token:
+        return text
+
+    incomplete = _re.compile(
+        r"(은|는|이|가|을|를|에|에서|와|과|도|만|의|로|으로|및|또는|그리고|하지만|그런데|즉)$"
+    )
+    if not incomplete.search(cleaned_token):
+        return text
+
+    boundary = -1
+    for m in _SENTENCE_END_RE.finditer(main_body):
+        boundary = m.end()
+    if boundary < 0:
+        return text
+
+    truncated = main_body[:boundary].rstrip() + tail
+    if len(truncated) < len(text) * 0.7:
+        return text
+    return truncated
 
 
 # ──────────────────────────────────────────────────────────────
