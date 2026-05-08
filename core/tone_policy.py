@@ -25,7 +25,7 @@ import logging
 from dataclasses import dataclass
 from typing import Optional
 
-VERSION = "1.0.0"
+VERSION = "1.1.0"
 
 logger = logging.getLogger(__name__)
 logger.info(f"[TonePolicy] v{VERSION} 로드")
@@ -102,7 +102,7 @@ _TONE_MORNING_HIGH = ToneSpec(
         "⚠️ 위험 자산 회피 흐름 분명. 채권으로 자금 이동, 수치가 말해줍니다.",
     ),
     emoji_hint="위험 신호 이모지 1개(🚨/⚠️/🔴) + 시장 이모지 0~1개",
-    length_target=(140, 200),
+    length_target=(140, 240),
     hashtag_count_target=(3, 4),
     risk_level="HIGH",
     regime="",
@@ -129,7 +129,7 @@ _TONE_MORNING_MEDIUM = ToneSpec(
         "🔍 혼조세로 출발. 매수·매도 신호 모두 약한 구간이라 관망이 합리적으로 보입니다.",
     ),
     emoji_hint="차분한 이모지 1~2개(📊/🔍/📈/📉)",
-    length_target=(140, 200),
+    length_target=(140, 240),
     hashtag_count_target=(3, 4),
     risk_level="MEDIUM",
     regime="",
@@ -156,7 +156,7 @@ _TONE_MORNING_LOW = ToneSpec(
         "📈 공포지수 낮고 유동성 양호. 성장주 중심 흐름에 무게가 실리는 아침이네요.",
     ),
     emoji_hint="긍정 이모지 1개(🌅/📈/🟢) + 시장 이모지 0~1개",
-    length_target=(140, 200),
+    length_target=(140, 240),
     hashtag_count_target=(3, 4),
     risk_level="LOW",
     regime="",
