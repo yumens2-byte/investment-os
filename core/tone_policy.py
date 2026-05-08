@@ -25,7 +25,7 @@ import logging
 from dataclasses import dataclass
 from typing import Optional
 
-VERSION = "1.1.0"
+VERSION = "1.2.0"
 
 logger = logging.getLogger(__name__)
 logger.info(f"[TonePolicy] v{VERSION} 로드")
@@ -307,7 +307,7 @@ def build_tweet_prompt(
 {_format_examples(spec.example_snippets)}
 
 [작성 조건]
-  - 길이: {spec.length_target[0]}~{spec.length_target[1]}자 (반드시)
+  - 길이: {spec.length_target[0]}~{spec.length_target[1]}자 (절대 초과 금지. {spec.length_target[1]}자 초과 시 즉시 축약할 것)
   - 한국어, 영어 약어/숫자/이모지만 사용 (힌디·아랍·일본어 가나 등 절대 금지)
   - 이모지: {spec.emoji_hint}
   - 해시태그: {spec.hashtag_count_target[0]}~{spec.hashtag_count_target[1]}개, 본문 끝 1줄
@@ -418,7 +418,8 @@ def build_retry_prompt(
     reason_instructions = {
         "length_too_long": (
             f"이전 출력이 {spec.length_target[1]}자를 초과합니다. "
-            f"{spec.length_target[0]}~{spec.length_target[1]}자 이내로 줄이되, 핵심 수치와 해시태그는 유지."
+            f"{spec.length_target[0]}~{spec.length_target[1]}자 이내로 줄이되, "
+            f"핵심 수치·해시태그·이모지({spec.emoji_hint})는 반드시 유지."
         ),
         "length_too_short": (
             f"이전 출력이 {spec.length_target[0]}자에 못 미칩니다. "
