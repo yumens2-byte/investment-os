@@ -32,6 +32,22 @@ v1.1.0 변경사항:
   [패치3] store_daily_alert 단일 위치 통합 — 중복/누락 방지
   [패치4] TG 무료 채널 tweet_for_tg 사용 — X 감정 포맷 유입 차단
   [패치5] B-21A 밈 선생성 + TG 통합 발행 — TG free 중복 발행 제거
+
+v1.1.1 변경사항 (BUGFIX-2026-05-14):
+  [패치6] B-21A X 이미지 발행 정합성 가드 추가
+          기존: meme_path 존재 시 무조건 X 이미지 발행
+          버그: x_eligible=False Alert(VIX_L1, CPI_HOT, PCR, CRYPTO_BASIS 등)도
+                B-21A 이미지가 X에 단독 발행되어 텍스트 없이 이미지만 노출
+          수정: x_eligible=True AND tweet_id ∉ {SKIP_X, FAIL} 인 경우만 X 이미지 발행
+                정합성 가드로 정책 일관성 확보 + 텍스트/이미지 발행 atomic 보장
+          영향: TG 발행 경로는 변경 없음 (TG는 모든 alert 발행 유지)
+
+v1.1.2 변경사항 (BUGFIX-2026-05-14 P2 그룹):
+  [패치7-C] emoji_map 키 PCR → PCR_EXTREME 통일 (이슈 I-06)
+            현재 도달 불가(x_eligible=False)지만 정책 변경 대비 일관성 확보
+  [패치7-D] 운영 메트릭 요약 로그 추가 (개선6)
+            [run_alert] METRICS detected=N sent_x=M tg_only=K by_level={...} by_type={...}
+            GitHub Actions 로그 grep "METRICS"로 일별 집계 — DB 스키마 미변경
 """
 import json
 import logging
@@ -50,7 +66,7 @@ logging.basicConfig(
 )
 logger = logging.getLogger("run_alert")
 
-VERSION = "1.1.0"
+VERSION = "1.1.2"
 
 # ─────────────────────────────────────────────────────────────
 # Step X 전용 상수 + 유틸 함수
@@ -814,19 +830,38 @@ def run() -> dict:
 
         # ── [패치5] B-21A: X 이미지 발행 (TG와 독립, meme_path 재사용) ──
         # TG 통합 발행은 위에서 완료. 여기서는 X 이미지만 발행.
-        if meme_path:
+        # ── [패치6 / BUGFIX-2026-05-14] x_eligible + tweet_id 정합성 가드 ──
+        #     [현상]
+        #       x_eligible=False 인 Alert(예: VIX_L1, CPI_HOT_L1, PCR, CRYPTO_BASIS,
+        #       VIX_COUNTDOWN, ETF_RANK, REGIME_CHANGE, MOVE_SPIKE, SOFR_STRESS,
+        #       SMA200_BREAK_L1, YIELD_SPREAD_DEEP, OIL_L1(급등률만))도
+        #       B-21A 밈 이미지가 X에 단독 발행되어, X 타임라인에
+        #       "이미지만 있고 본문 텍스트는 없는" 비정상 알람이 노출됨.
+        #     [원인]
+        #       기존 코드는 `if meme_path:` 단일 조건으로 X 이미지를 발행.
+        #       케이스 C(x_eligible=False) 또는 X 텍스트 발행 실패(SKIP_X/FAIL)
+        #       상황을 가드하지 못함.
+        #     [정책]
+        #       - x_eligible=True 이고 X 텍스트 발행이 성공한 경우에만 X 이미지 발행
+        #       - 그 외는 TG 이미지만 발행하고 X 이미지는 스킵
+        #       (TG 발행은 위쪽 블록에서 이미 처리 완료 — 영향 없음)
+        _x_image_ok = _x_elig and tweet_id not in ("SKIP_X", "FAIL")
+        if meme_path and _x_image_ok:
             try:
                 from publishers.x_publisher import publish_tweet_with_image
                 _em_map = {
-                    "VIX":         "📊",
-                    "OIL":         "⛽",
-                    "SPY":         "📉",
-                    "CRISIS":      "🚨",
-                    "FED_SHOCK":   "🏦",
-                    "STAGFLATION": "🔥",
-                    "SMA200_BREAK": "📉",
-                    "PCR":         "📊",
-                    "CRYPTO_BASIS": "₿",
+                    "VIX":           "📊",
+                    "OIL":           "⛽",
+                    "SPY":           "📉",
+                    "CRISIS":        "🚨",
+                    "FED_SHOCK":     "🏦",
+                    "STAGFLATION":   "🔥",
+                    "SMA200_BREAK":  "📉",
+                    # P2-C (BUGFIX-2026-05-14): 키 mismatch 수정 (PCR → PCR_EXTREME)
+                    # 실제 AlertSignal.alert_type 은 "PCR_EXTREME"
+                    # 현재는 x_eligible=False라 도달 불가하지만 정책 변경 대비
+                    "PCR_EXTREME":   "📊",
+                    "CRYPTO_BASIS":  "₿",
                 }
                 _em   = _em_map.get(signal.alert_type, "⚡")
                 _hint = ""
@@ -852,8 +887,18 @@ def run() -> dict:
                 pub_r = publish_tweet_with_image(meme_tweet, meme_path)
                 if pub_r.get("success"):
                     logger.info(f"[run_alert] B-21A X 이미지 발행 완료: {signal.alert_type}")
+                else:
+                    logger.warning(
+                        f"[run_alert] B-21A X 이미지 발행 실패: {signal.alert_type}/{signal.level}"
+                    )
             except Exception as e:
                 logger.warning(f"[run_alert] B-21A X 이미지 발행 예외 (영향 없음): {e}")
+        elif meme_path and not _x_image_ok:
+            logger.info(
+                f"[run_alert] B-21A X 이미지 발행 스킵 (정합성 가드): "
+                f"{signal.alert_type}/{signal.level} | "
+                f"x_eligible={_x_elig} tweet_id={tweet_id}"
+            )
 
         results.append({
             "type":       signal.alert_type,
@@ -866,11 +911,38 @@ def run() -> dict:
     # x_eligible Alert 쿨다운 이력 저장 (루프 후 1회)
     _save_x_alert_history(x_history)
 
+    # ── P2-D (BUGFIX-2026-05-14): 운영 메트릭 요약 로그 (DB 스키마 미변경) ──
+    # 목적: GitHub Actions 로그에서 grep "METRICS"로 일별 집계 가능
+    # 별도 메트릭 테이블 신설 없이 기존 daily_alerts 테이블 + 로그 grep 조합
+    # 활용: false positive 비율 추적, alert_type별 임계값 튜닝 근거 확보
+    _metrics = {
+        "by_type":  {},
+        "by_level": {"L1": 0, "L2": 0, "L3": 0},
+        "x_sent":   0,
+        "tg_only":  0,
+    }
+    for _r in results:
+        _t = _r.get("type", "?")
+        _l = _r.get("level", "?")
+        _metrics["by_type"][_t] = _metrics["by_type"].get(_t, 0) + 1
+        if _l in _metrics["by_level"]:
+            _metrics["by_level"][_l] += 1
+        if _r.get("success"):
+            _metrics["x_sent"] += 1
+        else:
+            _metrics["tg_only"] += 1
+    logger.info(
+        f"[run_alert] METRICS detected={len(alerts)} "
+        f"sent_x={_metrics['x_sent']} tg_only={_metrics['tg_only']} "
+        f"by_level={_metrics['by_level']} by_type={_metrics['by_type']}"
+    )
+
     # ── 완료 ────────────────────────────────────────────────────
     summary = {
         "alerts_detected": len(alerts),
         "alerts_sent":     sent_count,
         "results":         results,
+        "metrics":         _metrics,   # P2-D: summary에도 포함 (호출자가 활용 가능)
         "timestamp":       datetime.now(timezone.utc).isoformat(),
     }
 

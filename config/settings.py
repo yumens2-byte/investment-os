@@ -173,6 +173,12 @@ FED_BS_QT_THR = -30.0  # -300억 이하 → QT Active (유동성 축소)
 SOFR_STRESS_THR  = 0.5   # 차이 > 0.5%p → 단기자금 스트레스
 SOFR_TENSION_THR = 0.2   # 차이 > 0.2%p → 긴장 경계
 
+# ─── [BUGFIX-2026-05-14 / P1-A] CRISIS Alert US10Y 임계값 (I-02 해소) ──
+# 기존: engines/alert_engine.py _crisis_alert() 내부 매직 넘버 4.8 사용
+# 변경: config 분리로 다른 alert 임계값과 일관성 확보 + 운영 중 ENV 튜닝 가능
+# 정책: us10y >= US10Y_CRISIS_THR → CRISIS count +1
+US10Y_CRISIS_THR = float(os.getenv("US10Y_CRISIS_THR", "4.8"))
+
 # [A-4 고도화] TLT 4단계 건강도 임계값 (v1.9.0 추가)
 TLT_RALLY_THR  =  0.5   # ≥ +0.5%  → Rally  (채권 강세)
 TLT_STABLE_THR = -0.5   # > -0.5%  → Stable (보합)

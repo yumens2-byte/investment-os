@@ -46,7 +46,7 @@ from dataclasses import dataclass, field
 
 logger = logging.getLogger(__name__)
 
-VERSION = "1.1.1"  # BUG-1/2/3/4 수정
+VERSION = "1.1.2"  # P2-A/B: 연산자 일관성 + VIX_COUNTDOWN prev=None 가드
 
 # ─── Alert 임계값 ───────────────────────────────────────────
 # VIX
@@ -95,6 +95,7 @@ from config.settings import (
     YIELD_SPREAD_DEEP_BP,
     CPI_HOT,
     SOFR_STRESS_THR,
+    US10Y_CRISIS_THR,   # ← P1-A (BUGFIX-2026-05-14): CRISIS us10y 임계값 config 분리
 )
 
 
@@ -352,7 +353,7 @@ def _crisis_alert(snapshot: dict) -> Optional[AlertSignal]:
     crisis_count = 0
     if vix   >= VIX_L2: crisis_count += 1
     if spy   <= SPY_L2: crisis_count += 1
-    if us10y >= 4.8:    crisis_count += 1
+    if us10y >= US10Y_CRISIS_THR: crisis_count += 1   # P1-A: config 분리 (이전 매직넘버 4.8)
 
     if crisis_count >= 3:
         # FIX BUG-4: CRISIS → x_eligible=True
@@ -584,7 +585,11 @@ def _pcr_alert(signals: dict, snapshot: dict) -> Optional[AlertSignal]:
     if pcr <= 0:
         return None
 
-    if pcr > PCR_EXTREME_FEAR:
+    # P2-A (BUGFIX-2026-05-14): 연산자 일관성 — 다른 alert 정책(>= / <=)에 맞춤
+    # 변경 전: pcr > PCR_EXTREME_FEAR (strict)
+    # 변경 후: pcr >= PCR_EXTREME_FEAR (inclusive)
+    # 경계값 1.5 / 0.5 정확 일치 시 발동 — 정책 일관성 확보
+    if pcr >= PCR_EXTREME_FEAR:
         return AlertSignal(
             alert_type="PCR_EXTREME",
             level="L1",
@@ -598,7 +603,7 @@ def _pcr_alert(signals: dict, snapshot: dict) -> Optional[AlertSignal]:
             x_eligible=False,
         )
 
-    if 0 < pcr < PCR_EXTREME_GREED:
+    if 0 < pcr <= PCR_EXTREME_GREED:   # P2-A: < → <= 통일
         return AlertSignal(
             alert_type="PCR_EXTREME",
             level="L1",
@@ -634,7 +639,9 @@ def _crypto_basis_alert(signals: dict, snapshot: dict) -> Optional[AlertSignal]:
     if spread is None:
         return None
 
-    if spread < CRYPTO_BASIS_BACKWARDATION:
+    # P2-A (BUGFIX-2026-05-14): 연산자 일관성 — strict < → inclusive <=
+    # 경계값 -1.0% 정확 일치 시 발동 — 다른 alert 정책과 통일
+    if spread <= CRYPTO_BASIS_BACKWARDATION:
         return AlertSignal(
             alert_type="CRYPTO_BASIS",
             level="L1",
@@ -745,7 +752,9 @@ def _detect_stagflation(tier2_data: dict, snapshot: dict) -> Optional[AlertSigna
     if tlt_chg is None or spy_chg is None:
         return None
 
-    if spy_chg < STAGFLATION_SPY_THR and tlt_chg < STAGFLATION_TLT_THR:
+    # P2-A (BUGFIX-2026-05-14): 연산자 일관성 — strict < → inclusive <=
+    # SPY=-1.0% AND TLT=-1.0% 정확 일치 시 발동 (이전 미발동)
+    if spy_chg <= STAGFLATION_SPY_THR and tlt_chg <= STAGFLATION_TLT_THR:
         return AlertSignal(
             alert_type="STAGFLATION",
             level="L2",
@@ -772,7 +781,8 @@ def _detect_yield_spread_deep(fred_data: dict) -> Optional[AlertSignal]:
     if spread_bp is None:
         return None
 
-    if spread_bp < YIELD_SPREAD_DEEP_BP:
+    # P2-A (BUGFIX-2026-05-14): 연산자 일관성 — strict < → inclusive <=
+    if spread_bp <= YIELD_SPREAD_DEEP_BP:
         us2y     = (fred_data or {}).get("us2y")
         us2y_str = f" | 2Y {us2y:.2f}%" if us2y else ""
         return AlertSignal(
@@ -807,7 +817,9 @@ def _detect_cpi_surprise(fred_data: dict) -> Optional[AlertSignal]:
     if cpi_yoy is None:
         return None
 
-    if cpi_yoy > CPI_HOT:
+    # P2-A (BUGFIX-2026-05-14): 연산자 일관성 — strict > → inclusive >=
+    # CPI=3.5% 정확 일치 시 발동 (BLS 발표값이 소수점 1자리라 정확 일치 가능성 있음)
+    if cpi_yoy >= CPI_HOT:
         core     = (fred_data or {}).get("core_cpi_yoy")
         core_str = f" (Core {core:.2f}%)" if core else ""
         return AlertSignal(
@@ -885,8 +897,18 @@ def _vix_countdown_alert(
     if triggered_level is None:
         return None
 
-    # 이전 VIX가 해당 레벨 미만이었는지 확인 (신규 돌파 여부)
-    prev_vix = (prev_snapshot or {}).get("vix", 0)
+    # P2-B (BUGFIX-2026-05-14): prev_snapshot=None 안전 가드 (이슈 I-03)
+    # 기존: prev_vix = (prev or {}).get("vix", 0) → None 시 0으로 fallback
+    #       → prev=None + vix=25 일 때 0 >= 25 False → 매번 신규 돌파 인식
+    # 변경: prev 정보 없으면 신규 돌파 판정 불가 → 발동 생략 (보수적 처리)
+    #       실제 운영에서 alert_history 쿨다운으로 차단되지만 정책 단계 가드
+    prev_vix = (prev_snapshot or {}).get("vix")
+    if prev_vix is None or prev_vix <= 0:
+        logger.debug(
+            f"[VIX_COUNTDOWN] prev_snapshot 부재 — 신규 돌파 판정 불가, "
+            f"발동 생략 (vix={vix})"
+        )
+        return None
     if prev_vix >= triggered_level:
         return None  # 이미 이 레벨 이상이었음 — 신규 돌파 아님
 
