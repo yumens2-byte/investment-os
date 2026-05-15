@@ -1,0 +1,111 @@
+name: Alert Regression Tests
+
+# ─────────────────────────────────────────────────────────────────────
+# Investment OS — Alert 시스템 회귀 테스트 자동화
+#
+# 트리거:
+#   - PR / push: alert 관련 파일 변경 시
+#   - workflow_dispatch: 수동 실행
+#
+# 검증 범위:
+#   1. test_alert_unit_boundaries.py     — 16종 alert 임계값 boundary (114 케이스)
+#   2. test_alert_integration_full.py    — run_alert_engine 통합 (45 케이스)
+#   3. test_alert_policy_matrix.py       — 정책 docstring ↔ 코드 동기화 (84 케이스)
+#   4. test_b21a_x_image_guard.py        — BUGFIX-2026-05-14 단위 (53 케이스)
+#   5. test_b21a_integration_sim.py      — BUGFIX-2026-05-14 통합 (55 케이스)
+#
+# 하나라도 실패 시 workflow 전체 실패 → PR 머지 차단.
+# ─────────────────────────────────────────────────────────────────────
+
+on:
+  pull_request:
+    paths:
+      - 'engines/alert_engine.py'
+      - 'run_alert.py'
+      - 'config/settings.py'
+      - 'tests/test_alert_**.py'
+      - 'tests/test_b21a_**.py'
+      - '.github/workflows/ci_alert_tests.yml'
+  push:
+    branches: [main]
+    paths:
+      - 'engines/alert_engine.py'
+      - 'run_alert.py'
+      - 'config/settings.py'
+  workflow_dispatch:
+
+jobs:
+  alert-regression:
+    name: Alert 16종 회귀 테스트
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+
+    # ── 더미 환경변수 (테스트 모듈 import 시 config.settings 로드용) ──
+    # 실제 API 호출 없음, DRY_RUN=true 강제
+    env:
+      DRY_RUN: 'true'
+      LOG_LEVEL: 'WARNING'
+      FRED_API_KEY: 'test'
+      X_API_KEY: 'test'
+      X_API_SECRET: 'test'
+      X_ACCESS_TOKEN: 'test'
+      X_ACCESS_TOKEN_SECRET: 'test'
+      TG_BOT_TOKEN: 'test'
+      TG_CHANNEL_ID_FREE: 'test'
+      TG_CHANNEL_ID_PAID: 'test'
+      SUPABASE_URL: 'https://test.supabase.co'
+      SUPABASE_ANON_KEY: 'test'
+
+    steps:
+      - name: 레포 체크아웃
+        uses: actions/checkout@v4
+
+      - name: Python 3.11 셋업
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+
+      - name: 의존성 설치 (테스트 최소 dep만)
+        run: |
+          python -m pip install --upgrade pip
+          # 테스트가 import하는 모듈만: alert_engine, config.settings, run_alert._is_x_cooldown_active
+          # → python-dotenv, supabase, tweepy 등 dep 일부 필요
+          pip install -r requirements.txt
+
+      - name: TR-A — 단위 임계값 테스트 (114 케이스)
+        id: tr_a
+        run: python tests/test_alert_unit_boundaries.py
+
+      - name: TR-B — 통합 시나리오 테스트 (45 케이스)
+        id: tr_b
+        if: ${{ always() && steps.tr_a.outcome != 'cancelled' }}
+        run: python tests/test_alert_integration_full.py
+
+      - name: TR-C — 정책 매트릭스 테스트 (84 케이스)
+        id: tr_c
+        if: ${{ always() && steps.tr_a.outcome != 'cancelled' }}
+        run: python tests/test_alert_policy_matrix.py
+
+      - name: BUGFIX-2026-05-14 단위 (53 케이스)
+        id: bugfix_unit
+        if: ${{ always() && steps.tr_a.outcome != 'cancelled' }}
+        run: python tests/test_b21a_x_image_guard.py
+
+      - name: BUGFIX-2026-05-14 통합 (55 케이스)
+        id: bugfix_integ
+        if: ${{ always() && steps.tr_a.outcome != 'cancelled' }}
+        run: python tests/test_b21a_integration_sim.py
+
+      - name: 종합 결과 요약
+        if: ${{ always() }}
+        run: |
+          echo "════════════════════════════════════════════════════════"
+          echo "Alert 회귀 테스트 결과 요약 (총 351 케이스)"
+          echo "════════════════════════════════════════════════════════"
+          echo "TR-A 단위 임계값            : ${{ steps.tr_a.outcome }}"
+          echo "TR-B 통합 시나리오          : ${{ steps.tr_b.outcome }}"
+          echo "TR-C 정책 매트릭스          : ${{ steps.tr_c.outcome }}"
+          echo "BUGFIX-2026-05-14 단위      : ${{ steps.bugfix_unit.outcome }}"
+          echo "BUGFIX-2026-05-14 통합      : ${{ steps.bugfix_integ.outcome }}"
+          echo "════════════════════════════════════════════════════════"
