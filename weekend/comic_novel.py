@@ -12,7 +12,7 @@ EDT Universe 주간 소설형 에피소드 발행.
   6. Gemini 표지 이미지 생성 (영어 프롬프트, 텍스트 없음)
   7. X 이미지 트윗(표지) + 스레드 + TG 장문 발행
 
-VERSION = "1.2.0"  # Properties 기반 스크립트 + episode_context DB 우선 조회
+VERSION = "1.2.1"  # Claude Sonnet 4.6 모델 전환 + Properties 기반 스크립트
 RPD: +0 Claude API + 1 Gemini (표지 이미지)
 """
 import os
@@ -27,6 +27,7 @@ KST = timezone(timedelta(hours=9))
 NOTION_API_KEY = os.environ.get("NOTION_API_KEY", "")
 HUB_PAGE_ID = "3299208cbdc38183814fdb7cfb1908e9"
 WEEKLY_NOVEL_EP_LIMIT = 5  # 주당 최대 커버 에피소드 수 (5편 고정)
+CLAUDE_NOVEL_MODEL = os.environ.get("CLAUDE_NOVEL_MODEL", "claude-sonnet-4-6")
 
 # ── EDT Universe 캐릭터 정보 (표지 프롬프트용) ──
 CHARACTER_VISUAL = {
@@ -376,7 +377,7 @@ def novelify_episodes(episodes: list) -> dict:
         )
 
         response = client.messages.create(
-            model="claude-sonnet-4-20250514",
+            model=CLAUDE_NOVEL_MODEL,
             max_tokens=4000,
             messages=[{"role": "user", "content": prompt}],
         )
@@ -388,7 +389,7 @@ def novelify_episodes(episodes: list) -> dict:
             logger.warning(f"[ComicNovel] 소설 {len(novel_text)}자 → 짧음, 재시도")
             retry_prompt = prompt + "\n\n주의: 반드시 2500자 이상 작성해주세요. 짧으면 안 됩니다."
             retry_resp = client.messages.create(
-                model="claude-sonnet-4-20250514",
+                model=CLAUDE_NOVEL_MODEL,
                 max_tokens=4000,
                 messages=[{"role": "user", "content": retry_prompt}],
             )
