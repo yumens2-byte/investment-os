@@ -1,0 +1,42 @@
+name: EDT Market Snapshot
+
+# ============================================================
+# EDT Universe 전용 시장데이터 수집 워크플로 v1.0
+# - 기존 investment-os(ICG) 워크플로와 완전 독립 (무접촉)
+# - 스케줄: UTC 21:40 월~금 = KST 06:40 화~토
+#   (미국 종가 확정 후 / ICG 06:30 실행과 10분 오프셋)
+# ============================================================
+
+on:
+  schedule:
+    - cron: '40 21 * * 1-5'
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: 'true 입력 시 Notion 기록 없이 출력만'
+        required: false
+        default: 'false'
+
+jobs:
+  edt-snapshot:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies
+        run: pip install requests yfinance pandas
+
+      - name: Run EDT snapshot collector
+        env:
+          FRED_API_KEY: ${{ secrets.FRED_API_KEY }}
+          NOTION_API_KEY: ${{ secrets.NOTION_API_KEY }}
+          EDT_SNAPSHOT_PAGE_ID: ${{ secrets.EDT_SNAPSHOT_PAGE_ID }}
+          DRY_RUN: ${{ github.event.inputs.dry_run || 'false' }}
+        run: python edt/edt_snapshot.py
