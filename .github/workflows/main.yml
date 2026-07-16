@@ -405,6 +405,9 @@ jobs:
        (github.event_name == 'workflow_dispatch' && github.event.inputs.session == 'alert')
     runs-on: ubuntu-latest
     timeout-minutes: 10
+    concurrency:
+      group: alert-check-${{ github.ref }}
+      cancel-in-progress: false
     env:
       ALERT_TZ: America/New_York
       ALERT_WINDOWS: "09:30,10:30,11:30,12:30,14:30,15:30"
@@ -450,6 +453,16 @@ jobs:
           key: core-data-${{ github.ref }}
           restore-keys: core-data-
 
+      # x_alert_history: Step X 감정 트리거 X 발행 쿨다운 이력 (90분 중복 방지)
+      # 반드시 python main.py alert 실행 전에 복원해야 run_alert.py가 이력을 읽을 수 있다.
+      - name: Restore x_alert_history cache
+        uses: actions/cache@v4
+        with:
+          path: x_alert_history.json
+          key: x-alert-history-${{ github.ref }}
+          restore-keys: |
+            x-alert-history-
+
       - run: pip install -r requirements.txt
       - run: python main.py alert
 
@@ -460,15 +473,6 @@ jobs:
         with:
           path: data/published/alert_history.json
           key: alert-history-${{ github.ref }}-${{ github.run_id }}
-
-      # x_alert_history: Step X 감정 트리거 X 발행 쿨다운 이력 (90분 중복 방지)
-      - name: Restore x_alert_history cache
-        uses: actions/cache@v4
-        with:
-          path: x_alert_history.json
-          key: x-alert-history-${{ github.run_id }}
-          restore-keys: |
-            x-alert-history-
 
       - name: Save x_alert_history cache
         if: always()
