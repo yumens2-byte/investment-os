@@ -12,7 +12,7 @@ EDT Universe 주간 소설형 에피소드 발행.
   6. Gemini 표지 이미지 생성 (영어 프롬프트, 텍스트 없음)
   7. X 이미지 트윗(표지) + 스레드 + TG 장문 발행
 
-VERSION = "1.2.1"  # Claude Sonnet 4.6 모델 전환 + Properties 기반 스크립트
+VERSION = "1.3.0"  # A안: MVP 투표 winner 소설 반영 (mvp_winner 파라미터, 후방 호환)
 RPD: +0 Claude API + 1 Gemini (표지 이미지)
 """
 import os
@@ -22,6 +22,8 @@ import logging
 from datetime import datetime, timezone, timedelta
 
 logger = logging.getLogger(__name__)
+
+VERSION = "1.3.0"  # A안: MVP 투표 winner 소설 반영 (mvp_winner 파라미터, 후방 호환)
 
 KST = timezone(timedelta(hours=9))
 NOTION_API_KEY = os.environ.get("NOTION_API_KEY", "")
@@ -325,10 +327,11 @@ def get_episodes_from_db() -> list:
         return []
 
 
-def novelify_episodes(episodes: list) -> dict:
+def novelify_episodes(episodes: list, mvp_winner: str | None = None) -> dict:
     """
     Claude로 주간 에피소드 합본 소설 생성.
     에피소드 소스: episode_context DB (content 필드) 또는 Notion (page_id로 조회).
+    mvp_winner: A안 — 지난주 독자 투표 MVP 캐릭터명 (None이면 프롬프트 무주입).
     Returns: {success, novel_text, x_thread, tg_html, episode_range, title}
     """
     if not episodes:
@@ -375,6 +378,15 @@ def novelify_episodes(episodes: list) -> dict:
             f"8. 다음 에피소드 예고로 끝내기\n"
             f"9. 소설 본문만 출력. 제목/설명/부연 없이.\n"
         )
+
+        # A안: 지난주 독자 투표 MVP 반영 (winner 없으면 기존 프롬프트 그대로)
+        if mvp_winner:
+            prompt += (
+                f"10. 지난주 독자 투표 MVP는 '{mvp_winner}'입니다. "
+                f"이 캐릭터를 이번 화 활약의 중심에 배치해주세요.\n"
+                f"11. 소설 마지막에 한 문장으로 지난주 MVP 투표 결과"
+                f"('{mvp_winner}' 선정)를 자연스럽게 발표해주세요.\n"
+            )
 
         response = client.messages.create(
             model=CLAUDE_NOVEL_MODEL,
@@ -621,7 +633,17 @@ def publish_novel_episode() -> dict:
             return {"success": False, "error": "이번 주 에피소드 없음"}
 
         # ── Step 2: Claude 소설화 ──
-        novel_data = novelify_episodes(episodes)
+        # A안: 지난주 MVP 투표 winner 조회 (실패해도 소설화는 계속)
+        mvp_winner = None
+        try:
+            from engines.character_vote import get_latest_winner
+            mvp_winner = get_latest_winner()
+            if mvp_winner:
+                logger.info(f"[ComicNovel] 지난주 MVP 반영: {mvp_winner}")
+        except Exception as e:
+            logger.warning(f"[ComicNovel] MVP winner 조회 실패 (무시): {e}")
+
+        novel_data = novelify_episodes(episodes, mvp_winner=mvp_winner)
         if not novel_data.get("success"):
             logger.warning(f"[ComicNovel] 소설화 실패: {novel_data.get('error')}")
             return novel_data

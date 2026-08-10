@@ -66,7 +66,7 @@ logging.basicConfig(
 )
 logger = logging.getLogger("run_alert")
 
-VERSION = "1.1.2"
+VERSION = "1.2.0"  # D안: Alert 사후 리포트 훅 추가 (engines/alert_followup)
 
 # ─────────────────────────────────────────────────────────────
 # Step X 전용 상수 + 유틸 함수
@@ -936,6 +936,14 @@ def run() -> dict:
         f"sent_x={_metrics['x_sent']} tg_only={_metrics['tg_only']} "
         f"by_level={_metrics['by_level']} by_type={_metrics['by_type']}"
     )
+
+    # ── D안: Alert 사후 리포트 (독립 실행 — 실패해도 영향 없음) ──
+    try:
+        from engines.alert_followup import run_followup
+        _fu = run_followup(snapshot)
+        logger.info(f"[run_alert] D안 사후 리포트: {_fu}")
+    except Exception as e:
+        logger.warning(f"[run_alert] D안 사후 리포트 실패 (영향 없음): {e}")
 
     # ── 완료 ────────────────────────────────────────────────────
     summary = {

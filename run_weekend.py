@@ -19,6 +19,8 @@ from datetime import datetime, timezone, timedelta
 
 logger = logging.getLogger(__name__)
 
+VERSION = "1.1.0"  # BUG-V3 수정 + A안(투표 발행/정산) + B안(주간 성적표) 훅 추가
+
 DRY_RUN = os.getenv("DRY_RUN", "true").lower() in ("true", "1")
 
 
@@ -35,7 +37,7 @@ def run(day: str = "auto") -> dict:
     _setup_logging()
 
     logger.info("=" * 50)
-    logger.info(f"[run_weekend] 시작 | day={day} | DRY_RUN={DRY_RUN}")
+    logger.info(f"[run_weekend] v{VERSION} 시작 | day={day} | DRY_RUN={DRY_RUN}")
     logger.info("=" * 50)
 
     # ── 요일 판별 ──
@@ -108,9 +110,11 @@ def _run_saturday() -> dict:
     image_path = result.get("image_path")
 
     try:
-        from publishers.x_publisher import publish_tweet, publish_image_tweet
+        # BUG-V3 수정: publish_image_tweet은 x_publisher에 존재하지 않음
+        #   → 실존 함수 publish_tweet_with_image(text, image_path)로 교체
+        from publishers.x_publisher import publish_tweet, publish_tweet_with_image
         if image_path:
-            x_result = publish_image_tweet(tweet_text, image_path)
+            x_result = publish_tweet_with_image(tweet_text, image_path)
         else:
             x_result = publish_tweet(tweet_text)
         tweet_id = x_result.get("tweet_id", "FAIL")
@@ -121,10 +125,12 @@ def _run_saturday() -> dict:
 
     # ── TG 발행 ──
     try:
-        from publishers.telegram_publisher import send_message, send_image
-        send_message(result["tg_text"])
+        # BUG-V3 수정: send_image는 telegram_publisher에 존재하지 않음
+        #   → 실존 함수 send_photo(image_path, caption, channel)로 교체
+        from publishers.telegram_publisher import send_message, send_photo
+        send_message(result["tg_text"], channel="free")
         if image_path:
-            send_image(image_path)
+            send_photo(image_path, caption="", channel="free")
         logger.info("[run_weekend] TG 발행 완료")
     except Exception as e:
         logger.warning(f"[run_weekend] TG 발행 실패: {e}")
@@ -155,6 +161,22 @@ def _run_saturday() -> dict:
     except Exception as ee:
         logger.warning(f"[run_weekend] C-4 교육 실패 (영향 없음): {ee}")
 
+    # ── A안: 캐릭터 투표 정산 (독립 실행 — 실패해도 영향 없음) ──
+    try:
+        from engines.character_vote import settle_vote
+        sv = settle_vote()
+        logger.info(f"[run_weekend] A안 투표 정산: {sv}")
+    except Exception as e:
+        logger.warning(f"[run_weekend] A안 투표 정산 실패 (영향 없음): {e}")
+
+    # ── B안: 주간 딜레마 성적표 (독립 실행 — 실패해도 영향 없음) ──
+    try:
+        from engines.viral_weekly_report import run_weekly_scoreboard
+        sb = run_weekly_scoreboard()
+        logger.info(f"[run_weekend] B안 주간 성적표: {sb}")
+    except Exception as e:
+        logger.warning(f"[run_weekend] B안 주간 성적표 실패 (영향 없음): {e}")
+
     return {
         "success": True,
         "day": "sat",
@@ -184,9 +206,11 @@ def _run_sunday() -> dict:
     image_path = result.get("image_path")
 
     try:
-        from publishers.x_publisher import publish_tweet, publish_image_tweet
+        # BUG-V3 수정: publish_image_tweet은 x_publisher에 존재하지 않음
+        #   → 실존 함수 publish_tweet_with_image(text, image_path)로 교체
+        from publishers.x_publisher import publish_tweet, publish_tweet_with_image
         if image_path:
-            x_result = publish_image_tweet(tweet_text, image_path)
+            x_result = publish_tweet_with_image(tweet_text, image_path)
         else:
             x_result = publish_tweet(tweet_text)
         tweet_id = x_result.get("tweet_id", "FAIL")
@@ -197,10 +221,12 @@ def _run_sunday() -> dict:
 
     # ── TG 발행 ──
     try:
-        from publishers.telegram_publisher import send_message, send_image
-        send_message(result["tg_text"])
+        # BUG-V3 수정: send_image는 telegram_publisher에 존재하지 않음
+        #   → 실존 함수 send_photo(image_path, caption, channel)로 교체
+        from publishers.telegram_publisher import send_message, send_photo
+        send_message(result["tg_text"], channel="free")
         if image_path:
-            send_image(image_path)
+            send_photo(image_path, caption="", channel="free")
         logger.info("[run_weekend] TG 발행 완료")
     except Exception as e:
         logger.warning(f"[run_weekend] TG 발행 실패: {e}")
@@ -209,7 +235,15 @@ def _run_sunday() -> dict:
     _run_finance_basics()
 
     # ── C-7: EDT Universe 소설형 에피소드 (일요일 22:00) ──
-    _run_comic_novel()
+    novel_tweet_id = _run_comic_novel()
+
+    # ── A안: 캐릭터 MVP 투표 발행 (소설 스레드 말단 연결, 독립 실행) ──
+    try:
+        from engines.character_vote import publish_vote
+        cv = publish_vote(reply_to=novel_tweet_id)
+        logger.info(f"[run_weekend] A안 투표 발행: {cv}")
+    except Exception as e:
+        logger.warning(f"[run_weekend] A안 투표 발행 실패 (영향 없음): {e}")
 
     return {
         "success": True,
@@ -256,7 +290,11 @@ def _setup_logging():
 
 
 def _run_comic_novel():
-    """C-7: 매주 일요일 EDT Universe 소설형 에피소드 발행"""
+    """C-7: 매주 일요일 EDT Universe 소설형 에피소드 발행.
+
+    Returns:
+        str | None: 소설 첫 트윗 ID (A안 투표 연결용). 실패 시 None.
+    """
     try:
         from weekend.comic_novel import publish_novel_episode
         logger.info("[run_weekend] C-7 소설형 에피소드 발행 시작")
@@ -266,10 +304,12 @@ def _run_comic_novel():
                 f"[run_weekend] C-7 완료: {result.get('episode_range')} "
                 f"({result.get('novel_length', 0)}자, 스레드 {result.get('thread_count', 0)}개)"
             )
+            return result.get("tweet_id")
         else:
             logger.warning(f"[run_weekend] C-7 실패: {result.get('error')}")
     except Exception as e:
         logger.warning(f"[run_weekend] C-7 소설 발행 예외 (무시): {e}")
+    return None
 
 
 if __name__ == "__main__":
