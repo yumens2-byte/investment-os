@@ -1,0 +1,157 @@
+name: Prediction League & Data Quiz
+
+# ─────────────────────────────────────────────────────────────────────
+# C안: 주간 예측 리그 (월요일 발제 → 토요일 정산)
+# F안: 데이터 퀴즈 (화/목 발행, 익일 세션에서 정답 공개)
+#
+# ⚠️ cron ↔ if 문자열 상호 일치 필수 (BUG-V1 재발 방지 규약)
+#    아래 cron을 수정하면 각 job의 if 비교 문자열도 반드시 동일하게 수정한다.
+#      OPEN   : "17 11 * * 1"    (월 20:17 KST)
+#      SETTLE : "23 2 * * 6"     (토 11:23 KST)
+#      QUIZ   : "41 10 * * 2,4"  (화/목 19:41 KST — 퀴즈 발행 + 전회차 정답)
+#    :07/:17/:23/:41 등 비정각 분 사용 — GitHub Actions 정각 혼잡 skip 방지
+# ─────────────────────────────────────────────────────────────────────
+
+on:
+  schedule:
+    - cron: "17 11 * * 1"
+    - cron: "23 2 * * 6"
+    - cron: "41 10 * * 2,4"
+  workflow_dispatch:
+    inputs:
+      task:
+        description: "open | settle | quiz | quiz_answer"
+        required: true
+        default: open
+        type: choice
+        options:
+          - open
+          - settle
+          - quiz
+          - quiz_answer
+
+env:
+  X_API_KEY: ${{ secrets.X_API_KEY }}
+  X_API_SECRET: ${{ secrets.X_API_SECRET }}
+  X_ACCESS_TOKEN: ${{ secrets.X_ACCESS_TOKEN }}
+  X_ACCESS_TOKEN_SECRET: ${{ secrets.X_ACCESS_TOKEN_SECRET }}
+  DRY_RUN: ${{ secrets.DRY_RUN }}
+  FORCE_RUN: ${{ secrets.FORCE_RUN || 'false' }}
+  LOG_LEVEL: INFO
+  TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+  TELEGRAM_FREE_CHANNEL_ID: ${{ secrets.TELEGRAM_FREE_CHANNEL_ID }}
+  SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+  SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
+
+concurrency:
+  group: prediction-league
+  cancel-in-progress: false
+
+jobs:
+  # ── C안 발제 (월 20:17 KST) ──────────────────────────────────────
+  league_open:
+    name: C안 예측 리그 발제
+    if: |
+        github.event_name == 'workflow_dispatch' && github.event.inputs.task == 'open' ||
+        github.event_name == 'schedule' && github.event.schedule == '17 11 * * 1'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+      - run: pip install -r requirements.txt
+      - name: Anti-bot random delay (schedule only)
+        if: github.event_name != 'workflow_dispatch'
+        run: |
+          DELAY=$((RANDOM % 300))
+          echo "⏱️ Random delay: ${DELAY}s"
+          sleep $DELAY
+      - name: Run prediction open
+        run: |
+          export PYTHONUNBUFFERED=1
+          python -c "
+          import logging
+          logging.basicConfig(level=logging.INFO,
+              format='%(asctime)s [%(levelname)s] %(name)s — %(message)s')
+          from engines.prediction_league import run_prediction_open
+          print(run_prediction_open())
+          "
+
+  # ── C안 정산 (토 11:23 KST) ──────────────────────────────────────
+  league_settle:
+    name: C안 예측 리그 정산
+    if: |
+        github.event_name == 'workflow_dispatch' && github.event.inputs.task == 'settle' ||
+        github.event_name == 'schedule' && github.event.schedule == '23 2 * * 6'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+      - run: pip install -r requirements.txt
+      - name: Anti-bot random delay (schedule only)
+        if: github.event_name != 'workflow_dispatch'
+        run: |
+          DELAY=$((RANDOM % 300))
+          echo "⏱️ Random delay: ${DELAY}s"
+          sleep $DELAY
+      - name: Run prediction settle
+        run: |
+          export PYTHONUNBUFFERED=1
+          python -c "
+          import logging
+          logging.basicConfig(level=logging.INFO,
+              format='%(asctime)s [%(levelname)s] %(name)s — %(message)s')
+          from engines.prediction_league import run_prediction_settle
+          print(run_prediction_settle())
+          "
+
+  # ── F안 퀴즈 (화/목 19:41 KST — 전회차 정답 공개 후 신규 발행) ──
+  data_quiz:
+    name: F안 데이터 퀴즈 (정답 공개 + 발행)
+    if: |
+        github.event_name == 'workflow_dispatch' && (github.event.inputs.task == 'quiz' || github.event.inputs.task == 'quiz_answer') ||
+        github.event_name == 'schedule' && github.event.schedule == '41 10 * * 2,4'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+      - run: pip install -r requirements.txt
+      - name: Anti-bot random delay (schedule only)
+        if: github.event_name != 'workflow_dispatch'
+        run: |
+          DELAY=$((RANDOM % 300))
+          echo "⏱️ Random delay: ${DELAY}s"
+          sleep $DELAY
+      - name: Answer previous quiz
+        if: github.event_name == 'schedule' || github.event.inputs.task == 'quiz_answer'
+        run: |
+          export PYTHONUNBUFFERED=1
+          python -c "
+          import logging
+          logging.basicConfig(level=logging.INFO,
+              format='%(asctime)s [%(levelname)s] %(name)s — %(message)s')
+          from engines.data_quiz import run_quiz_answer
+          print(run_quiz_answer())
+          "
+      - name: Publish new quiz
+        if: github.event_name == 'schedule' || github.event.inputs.task == 'quiz'
+        run: |
+          export PYTHONUNBUFFERED=1
+          python -c "
+          import logging
+          logging.basicConfig(level=logging.INFO,
+              format='%(asctime)s [%(levelname)s] %(name)s — %(message)s')
+          from engines.data_quiz import run_data_quiz
+          print(run_data_quiz())
+          "
