@@ -19,6 +19,14 @@ on:
     - cron: "41 10 * * 2,4"
   workflow_dispatch:
     inputs:
+      dry_run:
+        description: "DRY_RUN (true=모의, false=실발행). 미입력 시 secrets.DRY_RUN"
+        required: false
+        default: "true"
+        type: choice
+        options:
+          - "true"
+          - "false"
       task:
         description: "open | settle | quiz | quiz_answer"
         required: true
@@ -35,7 +43,9 @@ env:
   X_API_SECRET: ${{ secrets.X_API_SECRET }}
   X_ACCESS_TOKEN: ${{ secrets.X_ACCESS_TOKEN }}
   X_ACCESS_TOKEN_SECRET: ${{ secrets.X_ACCESS_TOKEN_SECRET }}
-  DRY_RUN: ${{ secrets.DRY_RUN }}
+  # dispatch 시 입력값 우선, schedule 시(inputs 없음→빈값) secrets 전역값 사용.
+  # 주의: 단순 inputs.dry_run만 쓰면 schedule에서 빈 문자열 유입 → 판정 불일치 위험
+  DRY_RUN: ${{ github.event.inputs.dry_run || secrets.DRY_RUN }}
   FORCE_RUN: ${{ secrets.FORCE_RUN || 'false' }}
   LOG_LEVEL: INFO
   TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
