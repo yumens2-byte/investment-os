@@ -66,7 +66,41 @@ logging.basicConfig(
 )
 logger = logging.getLogger("run_alert")
 
-VERSION = "1.2.0"  # D안: Alert 사후 리포트 훅 추가 (engines/alert_followup)
+VERSION = "1.3.0"  # FRESHNESS GUARD: core_data 경과 시간 검증 (CACHE-FREEZE 보완)
+
+
+def _check_core_data_freshness(envelope: dict) -> tuple:
+    """
+    FRESHNESS GUARD (2026-08-12, CACHE-FREEZE 보완).
+    core_data.json envelope timestamp 경과 시간 검증.
+
+    Args:
+        envelope: load_core_data() 반환값 (timestamp 키 포함 dict)
+
+    Returns:
+        (fresh: bool, age_hours: float | None, reason: str)
+        - timestamp 누락/파싱 불가 → fresh=False (보수적 처리, age_hours=None)
+        - 경과 > CORE_DATA_MAX_AGE_HOURS → fresh=False
+    """
+    from config.settings import CORE_DATA_MAX_AGE_HOURS
+
+    ts_str = (envelope or {}).get("timestamp", "")
+    if not ts_str:
+        return False, None, "timestamp 누락 — stale 취급 (보수적 처리)"
+
+    try:
+        ts = datetime.fromisoformat(ts_str)
+        if ts.tzinfo is None:
+            ts = ts.replace(tzinfo=timezone.utc)
+    except Exception as e:
+        return False, None, f"timestamp 파싱 불가({e}) — stale 취급 (보수적 처리)"
+
+    age_hours = (datetime.now(timezone.utc) - ts).total_seconds() / 3600
+    if age_hours > CORE_DATA_MAX_AGE_HOURS:
+        return False, age_hours, (
+            f"경과 {age_hours:.1f}h > 허용 {CORE_DATA_MAX_AGE_HOURS:.0f}h"
+        )
+    return True, age_hours, f"경과 {age_hours:.1f}h — 정상"
 
 # ─────────────────────────────────────────────────────────────
 # Step X 전용 상수 + 유틸 함수
@@ -515,7 +549,17 @@ def run() -> dict:
         _cd_val   = _lcd_val()
         _data_val = _cd_val.get("data", {})
 
-        if _data_val:
+        # ── FRESHNESS GUARD (2026-08-12): 경과 시간 검증 ──
+        # CACHE-FREEZE 사고(4개월 stale 데이터가 Validation PASS) 재발 방지.
+        # stale → 기존 _core_valid=False 경로 재사용 (B-5/B-6만 차단, 나머지 Alert 정상)
+        _fresh, _age_h, _fresh_reason = _check_core_data_freshness(_cd_val)
+        if not _fresh:
+            logger.warning(
+                f"[Step 2.5] core_data STALE: {_fresh_reason} — B-5/B-6 차단"
+            )
+            _core_valid = False
+
+        if _core_valid and _data_val:
             _vr = _vd(_data_val)
             if _vr["status"] != "PASS":
                 logger.warning(
