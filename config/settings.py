@@ -23,6 +23,12 @@ X_ACCESS_TOKEN_SECRET = os.getenv("X_ACCESS_TOKEN_SECRET", "")
 DRY_RUN = os.getenv("DRY_RUN", "true").lower() == "true"
 LOG_LEVEL = os.getenv("LOG_LEVEL", "INFO")
 
+# ─── FRESHNESS GUARD (2026-08-12, CACHE-FREEZE 보완) ──────
+# core_data.json envelope timestamp 허용 경과 시간.
+# 초과 시 run_alert Step 2.5에서 B-5/B-6 Alert 차단 (_core_valid=False).
+# 기본 30h: 주말·공휴일 morning 세션 미실행 여유 포함.
+CORE_DATA_MAX_AGE_HOURS = float(os.getenv("CORE_DATA_MAX_AGE_HOURS", "30"))
+
 # ─── 경로 ─────────────────────────────────────────────────
 DATA_DIR = BASE_DIR / "data"
 OUTPUT_DIR = DATA_DIR / "outputs"
