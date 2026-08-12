@@ -439,27 +439,40 @@ jobs:
       #     sleep $DELAY    
 
       # Alert 이력 캐시 복원 (등급 변화 감지 핵심)
+      # FIX CACHE-FREEZE (2026-08-12): actions/cache@v4 full action은 primary key miss 시
+      #   job 종료 post-save로 고정 키 캐시를 생성 → 이후 정확 매치가 restore-keys보다
+      #   우선하여 해당 시점 데이터로 영구 동결됨 (core_data 2026-04-12 동결 사고).
+      #   cache/restore(post-save 없음) + run_id 포함 primary key(항상 miss)로
+      #   restore-keys가 prefix 매치 중 최신 캐시를 선택하도록 변경.
       - name: Restore alert history cache
-        uses: actions/cache@v4
+        uses: actions/cache/restore@v4
         with:
           path: data/published/alert_history.json
-          key: alert-history-${{ github.ref }}
-          restore-keys: alert-history-
+          key: alert-history-${{ github.ref }}-${{ github.run_id }}
+          restore-keys: |
+            alert-history-${{ github.ref }}-
+            alert-history-
 
+      # FIX CACHE-FREEZE (2026-08-12): 동결 방지 — 상단 alert history 주석 참조
       - name: Restore core_data cache
-        uses: actions/cache@v4
+        uses: actions/cache/restore@v4
         with:
           path: data/outputs/core_data.json
-          key: core-data-${{ github.ref }}
-          restore-keys: core-data-
+          key: core-data-${{ github.ref }}-${{ github.run_id }}
+          restore-keys: |
+            core-data-${{ github.ref }}-
+            core-data-
 
       # x_alert_history: Step X 감정 트리거 X 발행 쿨다운 이력 (90분 중복 방지)
       # 반드시 python main.py alert 실행 전에 복원해야 run_alert.py가 이력을 읽을 수 있다.
+      # FIX CACHE-FREEZE (2026-08-12): 동결 방지.
+      #   주의: save 키는 x-alert-history-${{ github.run_id }} (ref 미포함, 기존 사양 유지)
+      #   → restore-keys는 전역 prefix 'x-alert-history-' 단독이어야 실저장분과 매치됨.
       - name: Restore x_alert_history cache
-        uses: actions/cache@v4
+        uses: actions/cache/restore@v4
         with:
           path: x_alert_history.json
-          key: x-alert-history-${{ github.ref }}
+          key: x-alert-history-${{ github.ref }}-${{ github.run_id }}
           restore-keys: |
             x-alert-history-
 
@@ -488,12 +501,15 @@ jobs:
           path: data/published/alert_history.json
           retention-days: 7
 
+      # FIX CACHE-FREEZE (2026-08-12): 동결 방지 — 상단 alert history 주석 참조
       - name: Restore DLQ cache
-        uses: actions/cache@v4
+        uses: actions/cache/restore@v4
         with:
           path: data/published/dlq.json
-          key: dlq-${{ github.ref }}
-          restore-keys: dlq-
+          key: dlq-${{ github.ref }}-${{ github.run_id }}
+          restore-keys: |
+            dlq-${{ github.ref }}-
+            dlq-
 
       - name: Save DLQ cache
         uses: actions/cache/save@v4
