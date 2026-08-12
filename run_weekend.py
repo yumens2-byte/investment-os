@@ -19,7 +19,7 @@ from datetime import datetime, timezone, timedelta
 
 logger = logging.getLogger(__name__)
 
-VERSION = "1.1.0"  # BUG-V3 수정 + A안(투표 발행/정산) + B안(주간 성적표) 훅 추가
+VERSION = "1.1.1"  # A안 투표 발행 훅을 comic_novel로 이동 (정산/B안 훅은 유지)
 
 DRY_RUN = os.getenv("DRY_RUN", "true").lower() in ("true", "1")
 
@@ -234,16 +234,11 @@ def _run_sunday() -> dict:
     # ── C-4B: 매주 일요일 금융 기본 상식 ──
     _run_finance_basics()
 
-    # ── C-7: EDT Universe 소설형 에피소드 (일요일 22:00) ──
-    novel_tweet_id = _run_comic_novel()
-
-    # ── A안: 캐릭터 MVP 투표 발행 (소설 스레드 말단 연결, 독립 실행) ──
-    try:
-        from engines.character_vote import publish_vote
-        cv = publish_vote(reply_to=novel_tweet_id)
-        logger.info(f"[run_weekend] A안 투표 발행: {cv}")
-    except Exception as e:
-        logger.warning(f"[run_weekend] A안 투표 발행 실패 (영향 없음): {e}")
+    # ── C-7: EDT Universe 소설형 에피소드 ──
+    # A안 투표 발행 훅은 publish_novel_episode() 말미로 이동 (2026-08-11 패치).
+    # 사유: 소설 실제 발행은 comic_novel.yml(일 22:17)이 담당할 수 있어,
+    #       이 지점(일 10:00) 훅은 소설 미발행 시 독립 투표가 되는 갭 존재.
+    _run_comic_novel()
 
     return {
         "success": True,

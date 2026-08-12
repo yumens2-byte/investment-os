@@ -75,7 +75,12 @@ def _get_client():
 
 
 def _is_dry_run() -> bool:
-    return os.environ.get("DRY_RUN", "true").lower() != "false"
+    """settings.DRY_RUN(발행 계층)과 동일 규칙 — 발행/DB저장 판정 불일치 방지.
+
+    주의: != "false" 규칙 사용 금지. env가 빈 문자열이면 x_publisher는
+    실발행하는데 DB 저장만 skip되어 정산 불가 고아 트윗이 발생한다.
+    """
+    return os.environ.get("DRY_RUN", "true").lower() == "true"
 
 
 def _is_valid_tweet_id(tweet_id: Any) -> bool:

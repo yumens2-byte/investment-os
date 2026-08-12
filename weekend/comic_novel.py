@@ -12,7 +12,7 @@ EDT Universe 주간 소설형 에피소드 발행.
   6. Gemini 표지 이미지 생성 (영어 프롬프트, 텍스트 없음)
   7. X 이미지 트윗(표지) + 스레드 + TG 장문 발행
 
-VERSION = "1.3.0"  # A안: MVP 투표 winner 소설 반영 (mvp_winner 파라미터, 후방 호환)
+VERSION = "1.3.1"  # A안: 투표 발행 훅을 발행 성공 직후로 이동 (winner 반영 v1.3.0 포함)
 RPD: +0 Claude API + 1 Gemini (표지 이미지)
 """
 import os
@@ -23,7 +23,7 @@ from datetime import datetime, timezone, timedelta
 
 logger = logging.getLogger(__name__)
 
-VERSION = "1.3.0"  # A안: MVP 투표 winner 소설 반영 (mvp_winner 파라미터, 후방 호환)
+VERSION = "1.3.1"  # A안: 투표 발행 훅을 발행 성공 직후로 이동 (winner 반영 v1.3.0 포함)
 
 KST = timezone(timedelta(hours=9))
 NOTION_API_KEY = os.environ.get("NOTION_API_KEY", "")
@@ -701,7 +701,10 @@ def publish_novel_episode() -> dict:
             # 표지 없으면 기존 방식 (텍스트 스레드)
             from publishers.x_publisher import publish_thread
             x_result = publish_thread(x_thread)
-            tweet_id = x_result.get("tweet_id", "FAIL")
+            # 기존 결함 수정(2026-08-11): publish_thread 반환에 단수 "tweet_id" 키 없음
+            #   → "tweet_ids" 첫 요소가 스레드 헤더 트윗 ID (A안 투표 연결에 필요)
+            _ids = x_result.get("tweet_ids") or []
+            tweet_id = str(_ids[0]) if _ids else "FAIL"
             logger.info(f"[ComicNovel] X 스레드 발행 (표지 없음): {tweet_id} ({len(x_thread)}개)")
     except Exception as e:
         logger.warning(f"[ComicNovel] X 발행 실패: {e}")
@@ -730,6 +733,17 @@ def publish_novel_episode() -> dict:
         update_novel_status(today, "published")
     except Exception:
         pass
+
+    # ── Step 4.6: A안 캐릭터 MVP 투표 발행 (독립 실행 — 실패해도 영향 없음) ──
+    # 위치 사유: 소설을 실제 발행한 실행에서만 투표가 그 스레드에 연결되도록
+    #   run_weekend 훅에서 이동 (2026-08-11). publish_vote 내 당일 멱등 가드로
+    #   같은 날 중복 실행(10:00 weekend + 22:17 comic_novel) 시 1회만 발행됨.
+    try:
+        from engines.character_vote import publish_vote
+        _cv = publish_vote(reply_to=tweet_id)
+        logger.info(f"[ComicNovel] A안 투표 발행: {_cv}")
+    except Exception as e:
+        logger.warning(f"[ComicNovel] A안 투표 발행 실패 (영향 없음): {e}")
 
     return {
         "success": True,
