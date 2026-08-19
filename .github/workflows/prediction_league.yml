@@ -51,7 +51,9 @@ env:
   TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
   TELEGRAM_FREE_CHANNEL_ID: ${{ secrets.TELEGRAM_FREE_CHANNEL_ID }}
   SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
-  SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
+  # 이 워크플로는 quiz/prediction 라운드를 INSERT/UPDATE한다. anon key는
+  # RLS에 막히므로 서버 전용 service-role secret을 반드시 사용한다.
+  SUPABASE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
 
 concurrency:
   group: prediction-league
@@ -73,6 +75,12 @@ jobs:
           python-version: "3.11"
           cache: pip
       - run: pip install -r requirements.txt
+      - name: Validate Supabase write credentials
+        run: |
+          if [ -z "$SUPABASE_URL" ] || [ -z "$SUPABASE_KEY" ]; then
+            echo "::error::SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY secrets are required"
+            exit 1
+          fi
       - name: Anti-bot random delay (schedule only)
         if: github.event_name != 'workflow_dispatch'
         run: |
@@ -105,6 +113,12 @@ jobs:
           python-version: "3.11"
           cache: pip
       - run: pip install -r requirements.txt
+      - name: Validate Supabase write credentials
+        run: |
+          if [ -z "$SUPABASE_URL" ] || [ -z "$SUPABASE_KEY" ]; then
+            echo "::error::SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY secrets are required"
+            exit 1
+          fi
       - name: Anti-bot random delay (schedule only)
         if: github.event_name != 'workflow_dispatch'
         run: |
@@ -137,6 +151,12 @@ jobs:
           python-version: "3.11"
           cache: pip
       - run: pip install -r requirements.txt
+      - name: Validate Supabase write credentials
+        run: |
+          if [ -z "$SUPABASE_URL" ] || [ -z "$SUPABASE_KEY" ]; then
+            echo "::error::SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY secrets are required"
+            exit 1
+          fi
       - name: Anti-bot random delay (schedule only)
         if: github.event_name != 'workflow_dispatch'
         run: |
