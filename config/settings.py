@@ -29,6 +29,11 @@ LOG_LEVEL = os.getenv("LOG_LEVEL", "INFO")
 # 기본 30h: 주말·공휴일 morning 세션 미실행 여유 포함.
 CORE_DATA_MAX_AGE_HOURS = float(os.getenv("CORE_DATA_MAX_AGE_HOURS", "30"))
 
+# ─── Alert 상태 백엔드 (T-4, 2026-08-27) ──────────────────
+# file(기본): 파일 판정 | dual: 파일 판정 + DB 병행기록(Shadow) | supabase: DB 판정 + 파일 병행
+# 유효값 검증/강등은 core/alert_state_backend.get_mode()에서 수행 (오입력 → file 강등)
+ALERT_STATE_BACKEND = os.getenv("ALERT_STATE_BACKEND", "file").strip().lower()
+
 # ─── 경로 ─────────────────────────────────────────────────
 DATA_DIR = BASE_DIR / "data"
 OUTPUT_DIR = DATA_DIR / "outputs"
