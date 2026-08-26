@@ -1,5 +1,23 @@
 name: Investment OS Auto Publish
 
+# ─────────────────────────────────────────────────────────────
+# cron ↔ job if 매핑 (규약: cron 수정 시 if 비교 문자열 동일 수정)
+#   '30 21 * * 0-4'      → morning
+#   '0 11 * * 4'         → weekly_thread
+#   '30 9 * * 1-5'       → full_dashboard
+#   '30 2 * * 1-5'       → narrative
+#   '*/10 13-21 * * 1-5' → alert_check
+#
+# 패치 이력:
+#   2026-08-27 alert 고도화 1차 (rev.2026-08-27)
+#     C-1: ALERT_WINDOWS 13:30 누락 보정
+#     T-1: 전 job DLQ restore 순서 정정(run 이전) + cache/restore@v4 패턴 통일
+#     T-2: dispatch dry_run input + DRY_RUN 규약 패턴(inputs || secrets)
+#     T-3: alert_check 안티봇 랜덤 딜레이 재도입(0~120s), timeout 10→12
+#     T-6: alert artifact 확장(alert_history/dlq/x_alert_history)
+#     T-7: job env 중복 제거(workflow env 단일화), x-alert-history 키 표준화
+# ─────────────────────────────────────────────────────────────
+
 on:
   schedule:
     - cron: "30 21 * * 0-4"
@@ -34,6 +52,14 @@ on:
         options:
           - tweet
           - thread
+      dry_run:
+        description: "dry_run (true=실발행 차단, 검증용)"
+        required: false
+        default: "false"
+        type: choice
+        options:
+          - "false"
+          - "true"
   push:
     branches:
       - main
@@ -47,7 +73,8 @@ env:
   X_API_SECRET: ${{ secrets.X_API_SECRET }}
   X_ACCESS_TOKEN: ${{ secrets.X_ACCESS_TOKEN }}
   X_ACCESS_TOKEN_SECRET: ${{ secrets.X_ACCESS_TOKEN_SECRET }}
-  DRY_RUN: ${{ secrets.DRY_RUN }}
+  # 규약(2026-08-11): dispatch input 우선, schedule 시 빈 문자열 → secrets 폴백
+  DRY_RUN: ${{ github.event.inputs.dry_run || secrets.DRY_RUN }}
   FORCE_RUN: ${{ secrets.FORCE_RUN || 'false' }}
   LOG_LEVEL: INFO
   TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
@@ -91,23 +118,7 @@ jobs:
     if: github.event.schedule == '30 21 * * 0-4' || (github.event_name == 'workflow_dispatch' && github.event.inputs.session == 'morning')
     runs-on: ubuntu-latest
     timeout-minutes: 15
-    env:
-      TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
-      TELEGRAM_FREE_CHANNEL_ID: ${{ secrets.TELEGRAM_FREE_CHANNEL_ID }}
-      FRED_API_KEY: ${{ secrets.FRED_API_KEY }}
-      X_API_KEY: ${{ secrets.X_API_KEY }}
-      X_API_SECRET: ${{ secrets.X_API_SECRET }}
-      X_ACCESS_TOKEN: ${{ secrets.X_ACCESS_TOKEN }}
-      X_ACCESS_TOKEN_SECRET: ${{ secrets.X_ACCESS_TOKEN_SECRET }}
-      GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
-      GEMINI_API_SUB_KEY: ${{ secrets.GEMINI_API_SUB_KEY }}
-      GEMINI_API_SUB_SUB_KEY: ${{ secrets.GEMINI_API_SUB_SUB_KEY }}
-      SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
-      SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
-      YOUTUBE_CHANNELS: ${{ secrets.YOUTUBE_CHANNELS }}
-      MULTILINGUAL_ENABLED: ${{ secrets.MULTILINGUAL_ENABLED }}
-      LUNAR_CRUSH_API_KEY: ${{ secrets.LUNAR_CRUSH_API_KEY }}
-      
+    # T-7 (2026-08-27): job env 시크릿 중복 제거 — workflow env 단일 사용
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -143,6 +154,17 @@ jobs:
           path: data/published/rank_history.json
           key: rank-history-${{ github.ref }}
           restore-keys: rank-history-
+      # FIX (2026-08-27 T-1): DLQ restore는 반드시 실행 스텝 이전 —
+      #   run 이후 restore 시 Step 0 재처리 무력화 + 실행 중 enqueue분이
+      #   구버전 캐시로 덮어써져 유실됨. restore 패턴은 CACHE-FREEZE 규약 준수.
+      - name: Restore DLQ cache
+        uses: actions/cache/restore@v4
+        with:
+          path: data/published/dlq.json
+          key: dlq-${{ github.ref }}-${{ github.run_id }}
+          restore-keys: |
+            dlq-${{ github.ref }}-
+            dlq-
       - name: Anti-bot random delay
         run: |
           DELAY=$((RANDOM % 100))
@@ -178,13 +200,6 @@ jobs:
             data/outputs/validation_result.json
           retention-days: 7
 
-      - name: Restore DLQ cache
-        uses: actions/cache@v4
-        with:
-          path: data/published/dlq.json
-          key: dlq-${{ github.ref }}
-          restore-keys: dlq-
-
       - name: Save DLQ cache
         uses: actions/cache/save@v4
         if: always()
@@ -197,19 +212,7 @@ jobs:
     if: github.event.schedule == '30 14 * * 1-5' || (github.event_name == 'workflow_dispatch' && github.event.inputs.session == 'intraday')
     runs-on: ubuntu-latest
     timeout-minutes: 15
-    env:
-      TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
-      TELEGRAM_FREE_CHANNEL_ID: ${{ secrets.TELEGRAM_FREE_CHANNEL_ID }}
-      FRED_API_KEY: ${{ secrets.FRED_API_KEY }}
-      X_API_KEY: ${{ secrets.X_API_KEY }}
-      X_API_SECRET: ${{ secrets.X_API_SECRET }}
-      X_ACCESS_TOKEN: ${{ secrets.X_ACCESS_TOKEN }}
-      X_ACCESS_TOKEN_SECRET: ${{ secrets.X_ACCESS_TOKEN_SECRET }}
-      GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
-      GEMINI_API_SUB_KEY: ${{ secrets.GEMINI_API_SUB_KEY }}
-      GEMINI_API_SUB_SUB_KEY: ${{ secrets.GEMINI_API_SUB_SUB_KEY }}
-      SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
-      SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
+    # T-7 (2026-08-27): job env 시크릿 중복 제거 — workflow env 단일 사용
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -229,6 +232,15 @@ jobs:
           DELAY=$((RANDOM % 100))
           echo "⏱️ Random delay: ${DELAY}s ($((DELAY/60))m $((DELAY%60))s)"
           sleep $DELAY
+      # FIX (2026-08-27 T-1): DLQ restore는 실행 스텝 이전 배치 + CACHE-FREEZE 규약 패턴
+      - name: Restore DLQ cache
+        uses: actions/cache/restore@v4
+        with:
+          path: data/published/dlq.json
+          key: dlq-${{ github.ref }}-${{ github.run_id }}
+          restore-keys: |
+            dlq-${{ github.ref }}-
+            dlq-
       - run: python main.py run all --session intraday --mode tweet
       - name: Restore rank history cache
         uses: actions/cache@v4
@@ -249,13 +261,6 @@ jobs:
           path: data/outputs/core_data.json
           retention-days: 3
 
-      - name: Restore DLQ cache
-        uses: actions/cache@v4
-        with:
-          path: data/published/dlq.json
-          key: dlq-${{ github.ref }}
-          restore-keys: dlq-
-
       - name: Save DLQ cache
         uses: actions/cache/save@v4
         if: always()
@@ -268,19 +273,7 @@ jobs:
     if: github.event.schedule == '30 20 * * 1-5' || (github.event_name == 'workflow_dispatch' && github.event.inputs.session == 'close')
     runs-on: ubuntu-latest
     timeout-minutes: 15
-    env:
-      TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
-      TELEGRAM_FREE_CHANNEL_ID: ${{ secrets.TELEGRAM_FREE_CHANNEL_ID }}
-      FRED_API_KEY: ${{ secrets.FRED_API_KEY }}
-      X_API_KEY: ${{ secrets.X_API_KEY }}
-      X_API_SECRET: ${{ secrets.X_API_SECRET }}
-      X_ACCESS_TOKEN: ${{ secrets.X_ACCESS_TOKEN }}
-      X_ACCESS_TOKEN_SECRET: ${{ secrets.X_ACCESS_TOKEN_SECRET }}
-      GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
-      GEMINI_API_SUB_KEY: ${{ secrets.GEMINI_API_SUB_KEY }}
-      GEMINI_API_SUB_SUB_KEY: ${{ secrets.GEMINI_API_SUB_SUB_KEY }}
-      SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
-      SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
+    # T-7 (2026-08-27): job env 시크릿 중복 제거 — workflow env 단일 사용
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -300,6 +293,15 @@ jobs:
           DELAY=$((RANDOM % 100))
           echo "⏱️ Random delay: ${DELAY}s ($((DELAY/60))m $((DELAY%60))s)"
           sleep $DELAY    
+      # FIX (2026-08-27 T-1): DLQ restore는 실행 스텝 이전 배치 + CACHE-FREEZE 규약 패턴
+      - name: Restore DLQ cache
+        uses: actions/cache/restore@v4
+        with:
+          path: data/published/dlq.json
+          key: dlq-${{ github.ref }}-${{ github.run_id }}
+          restore-keys: |
+            dlq-${{ github.ref }}-
+            dlq-
       - run: python main.py run all --session close --mode ${{ github.event.inputs.mode || 'tweet' }}
       - name: Restore rank history cache
         uses: actions/cache@v4
@@ -320,13 +322,6 @@ jobs:
           path: data/outputs/core_data.json
           retention-days: 3
 
-      - name: Restore DLQ cache
-        uses: actions/cache@v4
-        with:
-          path: data/published/dlq.json
-          key: dlq-${{ github.ref }}
-          restore-keys: dlq-
-
       - name: Save DLQ cache
         uses: actions/cache/save@v4
         if: always()
@@ -339,19 +334,7 @@ jobs:
     if: github.event.schedule == '0 11 * * 4' || (github.event_name == 'workflow_dispatch' && github.event.inputs.session == 'weekly')
     runs-on: ubuntu-latest
     timeout-minutes: 20
-    env:
-      TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
-      TELEGRAM_FREE_CHANNEL_ID: ${{ secrets.TELEGRAM_FREE_CHANNEL_ID }}
-      FRED_API_KEY: ${{ secrets.FRED_API_KEY }}
-      X_API_KEY: ${{ secrets.X_API_KEY }}
-      X_API_SECRET: ${{ secrets.X_API_SECRET }}
-      X_ACCESS_TOKEN: ${{ secrets.X_ACCESS_TOKEN }}
-      X_ACCESS_TOKEN_SECRET: ${{ secrets.X_ACCESS_TOKEN_SECRET }}
-      GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
-      GEMINI_API_SUB_KEY: ${{ secrets.GEMINI_API_SUB_KEY }}
-      GEMINI_API_SUB_SUB_KEY: ${{ secrets.GEMINI_API_SUB_SUB_KEY }}
-      SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
-      SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
+    # T-7 (2026-08-27): job env 시크릿 중복 제거 — workflow env 단일 사용
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -370,6 +353,15 @@ jobs:
           DELAY=$((RANDOM % 100))
           echo "⏱️ Random delay: ${DELAY}s ($((DELAY/60))m $((DELAY%60))s)"
           sleep $DELAY    
+      # FIX (2026-08-27 T-1): DLQ restore는 실행 스텝 이전 배치 + CACHE-FREEZE 규약 패턴
+      - name: Restore DLQ cache
+        uses: actions/cache/restore@v4
+        with:
+          path: data/published/dlq.json
+          key: dlq-${{ github.ref }}-${{ github.run_id }}
+          restore-keys: |
+            dlq-${{ github.ref }}-
+            dlq-
       - run: python main.py run all --session weekly --mode thread
       - name: Restore rank history cache
         uses: actions/cache@v4
@@ -384,13 +376,6 @@ jobs:
           path: data/outputs/
           retention-days: 14
 
-      - name: Restore DLQ cache
-        uses: actions/cache@v4
-        with:
-          path: data/published/dlq.json
-          key: dlq-${{ github.ref }}
-          restore-keys: dlq-
-
       - name: Save DLQ cache
         uses: actions/cache/save@v4
         if: always()
@@ -404,39 +389,23 @@ jobs:
        github.event.schedule == '*/10 13-21 * * 1-5' || 
        (github.event_name == 'workflow_dispatch' && github.event.inputs.session == 'alert')
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    # T-3 (2026-08-27): 안티봇 랜덤 딜레이 최대 120s 흡수분 상향 (10→12)
+    timeout-minutes: 12
     concurrency:
       group: alert-check-${{ github.ref }}
       cancel-in-progress: false
+    # T-7 (2026-08-27): job env는 alert 고유 변수만 유지 — 시크릿은 workflow env 단일 사용
     env:
       ALERT_TZ: America/New_York
-      ALERT_WINDOWS: "09:30,10:30,11:30,12:30,14:30,15:30"
+      # C-1 (2026-08-27): 13:30 윈도우 누락 보정 — cron 13-21 UTC 커버 범위 내 (EDT/EST 검증 완료)
+      ALERT_WINDOWS: "09:30,10:30,11:30,12:30,13:30,14:30,15:30"
       ALERT_GRACE_MINUTES: "20"
-      TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
-      TELEGRAM_FREE_CHANNEL_ID: ${{ secrets.TELEGRAM_FREE_CHANNEL_ID }}
-      FRED_API_KEY: ${{ secrets.FRED_API_KEY }}
-      X_API_KEY: ${{ secrets.X_API_KEY }}
-      X_API_SECRET: ${{ secrets.X_API_SECRET }}
-      X_ACCESS_TOKEN: ${{ secrets.X_ACCESS_TOKEN }}
-      X_ACCESS_TOKEN_SECRET: ${{ secrets.X_ACCESS_TOKEN_SECRET }}
-      GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
-      GEMINI_API_SUB_KEY: ${{ secrets.GEMINI_API_SUB_KEY }}
-      GEMINI_API_SUB_SUB_KEY: ${{ secrets.GEMINI_API_SUB_SUB_KEY }}
-      SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
-      SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:
           python-version: "3.11"
           cache: pip
-
-      # Alert 발생시간 램덤 하게 동작하기 위함
-      # - name: Anti-bot random delay
-      #   run: |
-      #     DELAY=$((RANDOM % 100))
-      #     echo "⏱️ Random delay: ${DELAY}s ($((DELAY/60))m $((DELAY%60))s)"
-      #     sleep $DELAY    
 
       # Alert 이력 캐시 복원 (등급 변화 감지 핵심)
       # FIX CACHE-FREEZE (2026-08-12): actions/cache@v4 full action은 primary key miss 시
@@ -466,17 +435,36 @@ jobs:
       # x_alert_history: Step X 감정 트리거 X 발행 쿨다운 이력 (90분 중복 방지)
       # 반드시 python main.py alert 실행 전에 복원해야 run_alert.py가 이력을 읽을 수 있다.
       # FIX CACHE-FREEZE (2026-08-12): 동결 방지.
-      #   주의: save 키는 x-alert-history-${{ github.run_id }} (ref 미포함, 기존 사양 유지)
-      #   → restore-keys는 전역 prefix 'x-alert-history-' 단독이어야 실저장분과 매치됨.
+      # T-7 (2026-08-27): save 키 표준화 — ref 포함으로 타 캐시와 사양 통일.
+      #   restore-keys 2단: 신규(ref 포함) 우선, 전역 prefix로 구 키(ref 미포함) 전환기 매치.
       - name: Restore x_alert_history cache
         uses: actions/cache/restore@v4
         with:
           path: x_alert_history.json
           key: x-alert-history-${{ github.ref }}-${{ github.run_id }}
           restore-keys: |
+            x-alert-history-${{ github.ref }}-
             x-alert-history-
 
+      # FIX (2026-08-27 T-1): DLQ restore는 실행 스텝 이전 배치 + CACHE-FREEZE 규약 패턴
+      - name: Restore DLQ cache
+        uses: actions/cache/restore@v4
+        with:
+          path: data/published/dlq.json
+          key: dlq-${{ github.ref }}-${{ github.run_id }}
+          restore-keys: |
+            dlq-${{ github.ref }}-
+            dlq-
       - run: pip install -r requirements.txt
+
+      # T-3 (2026-08-27): 안티봇 랜덤 딜레이 재도입 — 상한 120s (grace 20분 대비 안전,
+      #   L2/L3 신속성 유지). X 발행 시각의 cron 정각 패턴 수렴 방지.
+      - name: Anti-bot random delay
+        run: |
+          DELAY=$((RANDOM % 120))
+          echo "⏱️ Random delay: ${DELAY}s"
+          sleep $DELAY
+
       - run: python main.py alert
 
       # Alert 이력 캐시 저장 (다음 실행 시 복원)
@@ -492,24 +480,8 @@ jobs:
         uses: actions/cache/save@v4
         with:
           path: x_alert_history.json
-          key: x-alert-history-${{ github.run_id }}
-
-      - uses: actions/upload-artifact@v4
-        if: always()
-        with:
-          name: alert-${{ github.run_id }}
-          path: data/published/alert_history.json
-          retention-days: 7
-
-      # FIX CACHE-FREEZE (2026-08-12): 동결 방지 — 상단 alert history 주석 참조
-      - name: Restore DLQ cache
-        uses: actions/cache/restore@v4
-        with:
-          path: data/published/dlq.json
-          key: dlq-${{ github.ref }}-${{ github.run_id }}
-          restore-keys: |
-            dlq-${{ github.ref }}-
-            dlq-
+          # T-7 (2026-08-27): ref 포함 표준화 (restore-keys 2단과 짝)
+          key: x-alert-history-${{ github.ref }}-${{ github.run_id }}
 
       - name: Save DLQ cache
         uses: actions/cache/save@v4
@@ -518,25 +490,25 @@ jobs:
           path: data/published/dlq.json
           key: dlq-${{ github.ref }}-${{ github.run_id }}
 
+      # T-6 (2026-08-27): artifact 확장 — 규약(artifact 교차 대조) 대응.
+      #   dlq.json/x_alert_history.json 미존재 실행에서도 전체 실패 방지 (warn).
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: alert-${{ github.run_id }}
+          path: |
+            data/published/alert_history.json
+            data/published/dlq.json
+            x_alert_history.json
+          if-no-files-found: warn
+          retention-days: 7
+
   full_dashboard:
     name: Full Dashboard
     if: github.event.schedule == '30 9 * * 1-5' || (github.event_name == 'workflow_dispatch' && github.event.inputs.session == 'full')
     runs-on: ubuntu-latest
     timeout-minutes: 20
-    env:
-      TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
-      TELEGRAM_FREE_CHANNEL_ID: ${{ secrets.TELEGRAM_FREE_CHANNEL_ID }}
-      TELEGRAM_PAID_CHANNEL_ID: ${{ secrets.TELEGRAM_PAID_CHANNEL_ID }}
-      FRED_API_KEY: ${{ secrets.FRED_API_KEY }}
-      X_API_KEY: ${{ secrets.X_API_KEY }}
-      X_API_SECRET: ${{ secrets.X_API_SECRET }}
-      X_ACCESS_TOKEN: ${{ secrets.X_ACCESS_TOKEN }}
-      X_ACCESS_TOKEN_SECRET: ${{ secrets.X_ACCESS_TOKEN_SECRET }}
-      GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
-      GEMINI_API_SUB_KEY: ${{ secrets.GEMINI_API_SUB_KEY }}
-      GEMINI_API_SUB_SUB_KEY: ${{ secrets.GEMINI_API_SUB_SUB_KEY }}
-      SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
-      SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
+    # T-7 (2026-08-27): job env 시크릿 중복 제거 — workflow env 단일 사용
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -556,6 +528,15 @@ jobs:
           DELAY=$((RANDOM % 100))
           echo "⏱️ Random delay: ${DELAY}s ($((DELAY/60))m $((DELAY%60))s)"
           sleep $DELAY    
+      # FIX (2026-08-27 T-1): DLQ restore는 실행 스텝 이전 배치 + CACHE-FREEZE 규약 패턴
+      - name: Restore DLQ cache
+        uses: actions/cache/restore@v4
+        with:
+          path: data/published/dlq.json
+          key: dlq-${{ github.ref }}-${{ github.run_id }}
+          restore-keys: |
+            dlq-${{ github.ref }}-
+            dlq-
       - run: python main.py run all --session full --mode tweet
       - name: Save weekly log cache
         uses: actions/cache/save@v4
@@ -572,15 +553,6 @@ jobs:
             data/images/
           retention-days: 7
 
-
-          
-      - name: Restore DLQ cache
-        uses: actions/cache@v4
-        with:
-          path: data/published/dlq.json
-          key: dlq-${{ github.ref }}
-          restore-keys: dlq-
-
       - name: Save DLQ cache
         uses: actions/cache/save@v4
         if: always()
@@ -595,20 +567,7 @@ jobs:
      if: github.event.schedule == '30 2 * * 1-5' || (github.event_name == 'workflow_dispatch' && github.event.inputs.session == 'narrative')
      runs-on: ubuntu-latest
      timeout-minutes: 15
-     env:
-       TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
-       TELEGRAM_FREE_CHANNEL_ID: ${{ secrets.TELEGRAM_FREE_CHANNEL_ID }}
-       TELEGRAM_PAID_CHANNEL_ID: ${{ secrets.TELEGRAM_PAID_CHANNEL_ID }}
-       FRED_API_KEY: ${{ secrets.FRED_API_KEY }}
-       X_API_KEY: ${{ secrets.X_API_KEY }}
-       X_API_SECRET: ${{ secrets.X_API_SECRET }}
-       X_ACCESS_TOKEN: ${{ secrets.X_ACCESS_TOKEN }}
-       X_ACCESS_TOKEN_SECRET: ${{ secrets.X_ACCESS_TOKEN_SECRET }}
-       GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
-       GEMINI_API_SUB_KEY: ${{ secrets.GEMINI_API_SUB_KEY }}
-       GEMINI_API_SUB_SUB_KEY: ${{ secrets.GEMINI_API_SUB_SUB_KEY }}
-       SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
-       SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
+     # T-7 (2026-08-27): job env 시크릿 중복 제거 — workflow env 단일 사용
      steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -623,12 +582,15 @@ jobs:
           path: data/published/weekly_log.json
           key: weekly-log-${{ github.ref }}
           restore-keys: weekly-log-
+      # FIX (2026-08-27 T-1): full action 동결 패턴 → CACHE-FREEZE 규약 restore 패턴 교체
       - name: Restore DLQ cache
-        uses: actions/cache@v4
+        uses: actions/cache/restore@v4
         with:
           path: data/published/dlq.json
-          key: dlq-${{ github.ref }}
-          restore-keys: dlq-
+          key: dlq-${{ github.ref }}-${{ github.run_id }}
+          restore-keys: |
+            dlq-${{ github.ref }}-
+            dlq-
       - name: Anti-bot random delay
         run: |
           DELAY=$((RANDOM % 100))
