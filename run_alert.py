@@ -48,6 +48,16 @@ v1.1.2 변경사항 (BUGFIX-2026-05-14 P2 그룹):
   [패치7-D] 운영 메트릭 요약 로그 추가 (개선6)
             [run_alert] METRICS detected=N sent_x=M tg_only=K by_level={...} by_type={...}
             GitHub Actions 로그 grep "METRICS"로 일별 집계 — DB 스키마 미변경
+
+v1.5.0 변경사항 (T-9, 2026-08-27):
+  [패치8] Step 1-M FRED 중복 호출 제거 — Step 1-FRED 수집분(fred_data_alert) 재사용.
+          Step 1-FRED 실패(빈 dict) 시 자체 수집 폴백으로 기존 가용성 보존.
+
+v1.6.0 변경사항 (T-4, 2026-08-27):
+  [패치9] X 감정발행 90분 쿨다운 Supabase 백엔드 연동 (core/alert_state_backend.py)
+          - supabase 모드: DB(channel=x_emotion) 판정, 예외 시 파일 폴백
+          - 파일 이력(x_alert_history.json) 기록은 전 모드 병행 유지 (롤백 보장)
+          - dual/supabase 모드: 발행 성공 시 DB 병행기록 (_record_x_emotion_db)
 """
 import json
 import logging
@@ -66,7 +76,7 @@ logging.basicConfig(
 )
 logger = logging.getLogger("run_alert")
 
-VERSION = "1.4.0"  # FIX COOLDOWN-C: 케이스 C(x_eligible=False) 쿨다운 이력 기록 (1.3.0: FRESHNESS GUARD)
+VERSION = "1.6.0"  # T-4 백엔드 연동 + T-9 FRED 중복 제거 (이력: 1.4.0 COOLDOWN-C)
 
 
 def _check_core_data_freshness(envelope: dict) -> tuple:
@@ -144,7 +154,24 @@ def _is_x_cooldown_active(alert_type: str, history: dict) -> bool:
     """
     쿨다운 체크: 동일 타입의 X 발행이 쿨다운 이내 있으면 True.
     잘못된 날짜 형식은 False 반환 (크래시 없음).
+
+    v1.6.0 (T-4): supabase 모드 → DB(channel=x_emotion) 판정, 예외 시 파일 폴백.
     """
+    from core.alert_state_backend import get_mode
+    if get_mode() == "supabase":
+        try:
+            from core.alert_state_backend import db_fetch_last, parse_db_timestamp
+            row = db_fetch_last(alert_type, channel="x_emotion")
+            if row is None:
+                return False
+            last_dt = parse_db_timestamp(row.get("created_at", ""))
+            return (
+                datetime.now(timezone.utc) - last_dt
+                < timedelta(minutes=_X_ALERT_COOLDOWN_MIN)
+            )
+        except Exception as e:  # noqa: BLE001 — DB 장애 격리, 파일 폴백 설계
+            logger.warning(f"[AlertX] DB 쿨다운 판정 실패 → 파일 폴백: {e}")
+
     last_str = history.get(alert_type)
     if not last_str:
         return False
@@ -153,6 +180,19 @@ def _is_x_cooldown_active(alert_type: str, history: dict) -> bool:
         return datetime.now(timezone.utc) - last_dt < timedelta(minutes=_X_ALERT_COOLDOWN_MIN)
     except Exception:
         return False
+
+
+def _record_x_emotion_db(alert_type: str, level: str) -> None:
+    """
+    v1.6.0 (T-4): X 감정발행 성공 이력 DB 병행기록 (dual/supabase 모드).
+    실패는 로그만 — 파일 이력(x_alert_history.json)이 항상 병행 유지되므로 안전.
+    """
+    try:
+        from core.alert_state_backend import db_record, get_mode
+        if get_mode() in ("dual", "supabase"):
+            db_record(alert_type, level, tweet_id="EMOTION", channel="x_emotion")
+    except Exception as e:  # noqa: BLE001 — 발행 무중단 설계
+        logger.warning(f"[AlertX] x_emotion DB 기록 실패 (파일 이력 유지): {e}")
 
 
 def _format_x_alert_tweet(alert, snapshot: dict) -> str:
@@ -392,7 +432,9 @@ def run() -> dict:
         except Exception:
             pass
 
-        cur_macro     = collect_macro_data()
+        # [패치8 v1.5.0 / T-9] Step 1-FRED 수집분 재사용 — FRED API 중복 호출 제거.
+        # Step 1-FRED 실패(빈 dict) 시 자체 수집 폴백으로 기존 가용성 보존.
+        cur_macro     = fred_data_alert if fred_data_alert else collect_macro_data()
         macro_changes = detect_macro_changes(cur_macro, prev_macro)
 
         try:
@@ -676,6 +718,7 @@ def run() -> dict:
             tweet_id = "EMOTION" if _x_ok else "FAIL"
             if _x_ok:
                 x_history[signal.alert_type] = datetime.now(timezone.utc).isoformat()
+                _record_x_emotion_db(signal.alert_type, signal.level)   # v1.6.0 T-4
                 record_alert(signal.alert_type, signal.level, tweet_id, tweet_for_x)
                 sent_count += 1
                 logger.info(
