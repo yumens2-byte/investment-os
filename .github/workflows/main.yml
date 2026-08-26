@@ -3,7 +3,7 @@ name: Investment OS Auto Publish
 # ─────────────────────────────────────────────────────────────
 # cron ↔ job if 매핑 (규약: cron 수정 시 if 비교 문자열 동일 수정)
 #   '30 21 * * 0-4'      → morning
-#   '0 11 * * 4'         → weekly_thread
+#   '0 11 * * 4'         → weekly_thread (2026-08-27 중지 — cron 주석)
 #   '30 9 * * 1-5'       → full_dashboard
 #   '30 2 * * 1-5'       → narrative
 #   '*/10 13-21 * * 1-5' → alert_check
@@ -16,6 +16,12 @@ name: Investment OS Auto Publish
 #     T-3: alert_check 안티봇 랜덤 딜레이 재도입(0~120s), timeout 10→12
 #     T-6: alert artifact 확장(alert_history/dlq/x_alert_history)
 #     T-7: job env 중복 제거(workflow env 단일화), x-alert-history 키 표준화
+#   2026-08-27 alert 고도화 2차 (rev.2026-08-27-2)
+#     A-1: weekly-log restore 6곳 CACHE-FREEZE 규약 패턴 통일
+#     A-2: weekly_thread Save weekly log 신설 (기록 유실 해소)
+#     A-3: intraday/close/weekly의 run 이후 rank-history restore 3곳 제거(무의미 스텝)
+#     A-4: morning rank-history restore 규약 패턴 통일
+#     F-3: weekly cron 비활성 (세션 중지 방침 정합화)
 # ─────────────────────────────────────────────────────────────
 
 on:
@@ -23,7 +29,8 @@ on:
     - cron: "30 21 * * 0-4"
     # - cron: "30 14 * * 1-5"
     # - cron: "30 20 * * 1-5"
-    - cron: "0 11 * * 4"
+    # F-3 (2026-08-27): weekly 세션 중지 방침 정합화 — cron 비활성 (job if 문자열 불변 유지)
+    # - cron: "0 11 * * 4"
     # - cron: "*/10 13-21 * * 1-5"
     - cron: "30 9 * * 1-5"
     - cron: "30 2 * * 1-5" 
@@ -140,20 +147,25 @@ jobs:
           sudo apt-get install -y --no-install-recommends fonts-nanum
           
       - run: playwright install chromium --with-deps
+      # FIX (2026-08-27 A-1): full action 동결 패턴 → CACHE-FREEZE 규약 restore 패턴
       - name: Restore weekly log cache
-        uses: actions/cache@v4
+        uses: actions/cache/restore@v4
         with:
           path: data/published/weekly_log.json
-          key: weekly-log-${{ github.ref }}
-          restore-keys: weekly-log-
+          key: weekly-log-${{ github.ref }}-${{ github.run_id }}
+          restore-keys: |
+            weekly-log-${{ github.ref }}-
+            weekly-log-
 
-        #수정   
+      # FIX (2026-08-27 A-4): full action 동결 패턴 → CACHE-FREEZE 규약 restore 패턴
       - name: Restore rank history cache
-        uses: actions/cache@v4
+        uses: actions/cache/restore@v4
         with:
           path: data/published/rank_history.json
-          key: rank-history-${{ github.ref }}
-          restore-keys: rank-history-
+          key: rank-history-${{ github.ref }}-${{ github.run_id }}
+          restore-keys: |
+            rank-history-${{ github.ref }}-
+            rank-history-
       # FIX (2026-08-27 T-1): DLQ restore는 반드시 실행 스텝 이전 —
       #   run 이후 restore 시 Step 0 재처리 무력화 + 실행 중 enqueue분이
       #   구버전 캐시로 덮어써져 유실됨. restore 패턴은 CACHE-FREEZE 규약 준수.
@@ -220,12 +232,15 @@ jobs:
           python-version: "3.11"
           cache: pip
       - run: pip install -r requirements.txt
+      # FIX (2026-08-27 A-1): full action 동결 패턴 → CACHE-FREEZE 규약 restore 패턴
       - name: Restore weekly log cache
-        uses: actions/cache@v4
+        uses: actions/cache/restore@v4
         with:
           path: data/published/weekly_log.json
-          key: weekly-log-${{ github.ref }}
-          restore-keys: weekly-log-
+          key: weekly-log-${{ github.ref }}-${{ github.run_id }}
+          restore-keys: |
+            weekly-log-${{ github.ref }}-
+            weekly-log-
       - run: playwright install chromium --with-deps
       - name: Anti-bot random delay
         run: |
@@ -242,12 +257,6 @@ jobs:
             dlq-${{ github.ref }}-
             dlq-
       - run: python main.py run all --session intraday --mode tweet
-      - name: Restore rank history cache
-        uses: actions/cache@v4
-        with:
-          path: data/published/rank_history.json
-          key: rank-history-${{ github.ref }}
-          restore-keys: rank-history-
       - name: Save weekly log cache
         uses: actions/cache/save@v4
         if: always()
@@ -282,12 +291,15 @@ jobs:
           cache: pip
       - run: playwright install chromium --with-deps
       - run: pip install -r requirements.txt
+      # FIX (2026-08-27 A-1): full action 동결 패턴 → CACHE-FREEZE 규약 restore 패턴
       - name: Restore weekly log cache
-        uses: actions/cache@v4
+        uses: actions/cache/restore@v4
         with:
           path: data/published/weekly_log.json
-          key: weekly-log-${{ github.ref }}
-          restore-keys: weekly-log-
+          key: weekly-log-${{ github.ref }}-${{ github.run_id }}
+          restore-keys: |
+            weekly-log-${{ github.ref }}-
+            weekly-log-
       - name: Anti-bot random delay
         run: |
           DELAY=$((RANDOM % 100))
@@ -303,12 +315,6 @@ jobs:
             dlq-${{ github.ref }}-
             dlq-
       - run: python main.py run all --session close --mode ${{ github.event.inputs.mode || 'tweet' }}
-      - name: Restore rank history cache
-        uses: actions/cache@v4
-        with:
-          path: data/published/rank_history.json
-          key: rank-history-${{ github.ref }}
-          restore-keys: rank-history-
       - name: Save weekly log cache
         uses: actions/cache/save@v4
         if: always()
@@ -342,12 +348,15 @@ jobs:
           python-version: "3.11"
           cache: pip
       - run: pip install -r requirements.txt
+      # FIX (2026-08-27 A-1): full action 동결 패턴 → CACHE-FREEZE 규약 restore 패턴
       - name: Restore weekly log cache
-        uses: actions/cache@v4
+        uses: actions/cache/restore@v4
         with:
           path: data/published/weekly_log.json
-          key: weekly-log-${{ github.ref }}
-          restore-keys: weekly-log-
+          key: weekly-log-${{ github.ref }}-${{ github.run_id }}
+          restore-keys: |
+            weekly-log-${{ github.ref }}-
+            weekly-log-
       - name: Anti-bot random delay
         run: |
           DELAY=$((RANDOM % 100))
@@ -363,12 +372,13 @@ jobs:
             dlq-${{ github.ref }}-
             dlq-
       - run: python main.py run all --session weekly --mode thread
-      - name: Restore rank history cache
-        uses: actions/cache@v4
+      # FIX (2026-08-27 A-2): Save 부재로 주간 발행 기록이 매 실행 유실되던 결함 해소
+      - name: Save weekly log cache
+        uses: actions/cache/save@v4
+        if: always()
         with:
-          path: data/published/rank_history.json
-          key: rank-history-${{ github.ref }}
-          restore-keys: rank-history-
+          path: data/published/weekly_log.json
+          key: weekly-log-${{ github.ref }}-${{ github.run_id }}
       - uses: actions/upload-artifact@v4
         if: always()
         with:
@@ -517,12 +527,15 @@ jobs:
           cache: pip
       - run: pip install -r requirements.txt
       - run: python -m playwright install chromium --with-deps
+      # FIX (2026-08-27 A-1): full action 동결 패턴 → CACHE-FREEZE 규약 restore 패턴
       - name: Restore weekly log cache
-        uses: actions/cache@v4
+        uses: actions/cache/restore@v4
         with:
           path: data/published/weekly_log.json
-          key: weekly-log-${{ github.ref }}
-          restore-keys: weekly-log-
+          key: weekly-log-${{ github.ref }}-${{ github.run_id }}
+          restore-keys: |
+            weekly-log-${{ github.ref }}-
+            weekly-log-
       - name: Anti-bot random delay
         run: |
           DELAY=$((RANDOM % 100))
@@ -576,12 +589,15 @@ jobs:
           cache: pip
       - run: pip install -r requirements.txt
       - run: playwright install chromium --with-deps
+      # FIX (2026-08-27 A-1): full action 동결 패턴 → CACHE-FREEZE 규약 restore 패턴
       - name: Restore weekly log cache
-        uses: actions/cache@v4
+        uses: actions/cache/restore@v4
         with:
           path: data/published/weekly_log.json
-          key: weekly-log-${{ github.ref }}
-          restore-keys: weekly-log-
+          key: weekly-log-${{ github.ref }}-${{ github.run_id }}
+          restore-keys: |
+            weekly-log-${{ github.ref }}-
+            weekly-log-
       # FIX (2026-08-27 T-1): full action 동결 패턴 → CACHE-FREEZE 규약 restore 패턴 교체
       - name: Restore DLQ cache
         uses: actions/cache/restore@v4
