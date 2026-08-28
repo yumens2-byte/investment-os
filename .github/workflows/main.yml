@@ -2,10 +2,10 @@ name: Investment OS Auto Publish
 
 # ─────────────────────────────────────────────────────────────
 # cron ↔ job if 매핑 (규약: cron 수정 시 if 비교 문자열 동일 수정)
-#   '30 21 * * 0-4'      → morning
+#   '36 21 * * 0-4'      → morning
 #   '0 11 * * 4'         → weekly_thread (2026-08-27 중지 — cron 주석)
-#   '30 9 * * 1-5'       → full_dashboard
-#   '30 2 * * 1-5'       → narrative
+#   '36 9 * * 1-5'       → full_dashboard
+#   '36 2 * * 1-5'       → narrative
 #   '*/10 13-21 * * 1-5' → alert_check
 #
 # 패치 이력:
