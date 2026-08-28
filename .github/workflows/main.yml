@@ -122,7 +122,7 @@ jobs:
 
   morning:
     name: Morning Brief
-    if: github.event.schedule == '30 21 * * 0-4' || (github.event_name == 'workflow_dispatch' && github.event.inputs.session == 'morning')
+    if: github.event.schedule == '36 21 * * 0-5' || (github.event_name == 'workflow_dispatch' && github.event.inputs.session == 'morning')
     runs-on: ubuntu-latest
     timeout-minutes: 15
     # T-7 (2026-08-27): job env 시크릿 중복 제거 — workflow env 단일 사용
@@ -515,7 +515,7 @@ jobs:
 
   full_dashboard:
     name: Full Dashboard
-    if: github.event.schedule == '30 9 * * 1-5' || (github.event_name == 'workflow_dispatch' && github.event.inputs.session == 'full')
+    if: github.event.schedule == '36 9 * * 1-5' || (github.event_name == 'workflow_dispatch' && github.event.inputs.session == 'full')
     runs-on: ubuntu-latest
     timeout-minutes: 20
     # T-7 (2026-08-27): job env 시크릿 중복 제거 — workflow env 단일 사용
@@ -577,7 +577,7 @@ jobs:
           
   narrative:
      name: AI Narrative
-     if: github.event.schedule == '30 2 * * 1-5' || (github.event_name == 'workflow_dispatch' && github.event.inputs.session == 'narrative')
+     if: github.event.schedule == '36 2 * * 1-5' || (github.event_name == 'workflow_dispatch' && github.event.inputs.session == 'narrative')
      runs-on: ubuntu-latest
      timeout-minutes: 15
      # T-7 (2026-08-27): job env 시크릿 중복 제거 — workflow env 단일 사용
