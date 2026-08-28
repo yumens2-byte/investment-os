@@ -26,14 +26,14 @@ name: Investment OS Auto Publish
 
 on:
   schedule:
-    - cron: "30 21 * * 0-4"
+    - cron: "36 21 * * 0-5"
     # - cron: "30 14 * * 1-5"
     # - cron: "30 20 * * 1-5"
     # F-3 (2026-08-27): weekly 세션 중지 방침 정합화 — cron 비활성 (job if 문자열 불변 유지)
     # - cron: "0 11 * * 4"
     # - cron: "*/10 13-21 * * 1-5"
-    - cron: "30 9 * * 1-5"
-    - cron: "30 2 * * 1-5" 
+    - cron: "36 9 * * 1-5"
+    - cron: "36 2 * * 1-5" 
     # alert 전용: 미국장 시간대를 UTC로 넓게 커버
     - cron: '*/10 13-21 * * 1-5'
   workflow_dispatch:
