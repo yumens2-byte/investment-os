@@ -26,7 +26,7 @@ name: Investment OS Auto Publish
 
 on:
   schedule:
-    - cron: "36 21 * * 0-5"
+    - cron: "36 21 * * 1-5"
     # - cron: "30 14 * * 1-5"
     # - cron: "30 20 * * 1-5"
     # F-3 (2026-08-27): weekly 세션 중지 방침 정합화 — cron 비활성 (job if 문자열 불변 유지)
@@ -122,7 +122,7 @@ jobs:
 
   morning:
     name: Morning Brief
-    if: github.event.schedule == '36 21 * * 0-5' || (github.event_name == 'workflow_dispatch' && github.event.inputs.session == 'morning')
+    if: github.event.schedule == '36 21 * * 1-5' || (github.event_name == 'workflow_dispatch' && github.event.inputs.session == 'morning')
     runs-on: ubuntu-latest
     timeout-minutes: 15
     # T-7 (2026-08-27): job env 시크릿 중복 제거 — workflow env 단일 사용
