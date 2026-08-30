@@ -19,14 +19,52 @@ from config.settings import (
     X_API_KEY, X_API_SECRET,
     X_ACCESS_TOKEN, X_ACCESS_TOKEN_SECRET,
     X_PREMIUM_TWEET_LENGTH,
+    X_THREAD_DELAY_MIN_SEC,
+    X_THREAD_DELAY_MAX_SEC,
+    X_THREAD_DELAY_BUDGET_SEC,
+    X_THREAD_DELAY_FLOOR_SEC,
     DRY_RUN,
 )
 
 logger = logging.getLogger(__name__)
 
+VERSION = "1.1.0"
+
 # Retry 설정
 MAX_RETRIES = 3
 RETRY_WAIT_SEC = 30
+
+
+def _resolve_thread_delay_range(post_count: int) -> tuple[float, float]:
+    """스레드 포스트 수에 맞춘 (하한, 상한) 대기 범위(초).
+
+    평균 대기 × 간격수가 X_THREAD_DELAY_BUDGET_SEC를 넘으면 범위를 비례 축소한다.
+    축소해도 X_THREAD_DELAY_FLOOR_SEC 아래로는 내려가지 않으며,
+    상한은 항상 하한보다 크게 유지해 난수성을 잃지 않는다.
+    """
+    lo = float(X_THREAD_DELAY_MIN_SEC)
+    hi = float(X_THREAD_DELAY_MAX_SEC)
+    if hi < lo:
+        lo, hi = hi, lo
+
+    gaps = max(post_count - 1, 0)
+    if gaps == 0:
+        return lo, hi
+
+    avg = (lo + hi) / 2.0
+    expected = avg * gaps
+    if expected > X_THREAD_DELAY_BUDGET_SEC > 0:
+        scale = X_THREAD_DELAY_BUDGET_SEC / expected
+        lo *= scale
+        hi *= scale
+        logger.info(
+            f"[XPublisher] 대기 예산 초과 → 범위 축소 "
+            f"(posts={post_count}, scale={scale:.3f})"
+        )
+
+    lo = max(lo, X_THREAD_DELAY_FLOOR_SEC)
+    hi = max(hi, lo + 0.5)
+    return lo, hi
 
 
 def _get_v1_api():
@@ -254,9 +292,11 @@ def publish_thread(posts: list, reply_to: str = None) -> dict:
     """
     time.sleep(random.randint(15, 30))  # 트윗 간 쿨다운
 
+    delay_lo, delay_hi = _resolve_thread_delay_range(len(posts))
+
     logger.info(
-        f"[XPublisher] {'[DRY RUN] ' if DRY_RUN else ''}쓰레드 발행 시작 "
-        f"({len(posts)}개 포스트)"
+        f"[XPublisher] v{VERSION} {'[DRY RUN] ' if DRY_RUN else ''}쓰레드 발행 시작 "
+        f"({len(posts)}개 포스트, 간격 {delay_lo:.1f}~{delay_hi:.1f}초)"
     )
 
     if DRY_RUN:
@@ -283,9 +323,11 @@ def publish_thread(posts: list, reply_to: str = None) -> dict:
             break
         tweet_ids.append(tweet_id)
         reply_to = tweet_id
-        # 쓰레드 간 1.5초 대기 (Rate Limit 예방)
+        # 포스트 간 랜덤 대기 (Rate Limit 예방 + 안티봇: 고정 간격 금지)
         if i < len(posts):
-            time.sleep(1.5)
+            delay = random.uniform(delay_lo, delay_hi)
+            logger.info(f"[XPublisher] 다음 포스트까지 {delay:.2f}초 대기")
+            time.sleep(delay)
 
     return {
         "success": len(tweet_ids) == len(posts),

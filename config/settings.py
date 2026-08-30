@@ -425,6 +425,19 @@ X_PREMIUM_TWEET_LENGTH = 25000
 
 X_HASHTAGS = "#ETF #투자 #미국증시"
 
+# ─── X 스레드 포스트 간 발행 간격 (안티봇 랜덤화) ──────────
+# 고정 간격(구 1.5초)은 자동화 탐지의 전형적 신호이므로 매 포스트마다 난수화한다.
+#   MIN/MAX : 포스트 간 대기 시간 범위(초). 사람의 연속 게시 소요에 근사.
+#   BUDGET  : 한 번의 publish_thread() 호출이 대기에 쓸 수 있는 총 예산(초).
+#             포스트 수가 많아 평균 대기 × 간격수가 예산을 넘으면 범위를 비례 축소해
+#             timeout-minutes 짧은 job(main.yml morning/alert_check 등)을 보호한다.
+X_THREAD_DELAY_MIN_SEC = float(os.getenv("X_THREAD_DELAY_MIN_SEC", "9"))
+X_THREAD_DELAY_MAX_SEC = float(os.getenv("X_THREAD_DELAY_MAX_SEC", "34"))
+X_THREAD_DELAY_BUDGET_SEC = float(os.getenv("X_THREAD_DELAY_BUDGET_SEC", "180"))
+
+# 축소 시에도 이 값 아래로는 내려가지 않는다 (기존 동작 하한 = Rate Limit 예방).
+X_THREAD_DELAY_FLOOR_SEC = 1.5
+
 # ─── 중복 검사 ────────────────────────────────────────────
 DUPLICATE_CHECK_COUNT = 10
 
