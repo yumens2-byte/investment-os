@@ -1,14 +1,39 @@
 name: Investment OS Auto Publish
 
-# ─────────────────────────────────────────────────────────────
-# cron ↔ job if 매핑 (규약: cron 수정 시 if 비교 문자열 동일 수정)
-#   '36 21 * * 0-5'      → morning
-#   '0 11 * * 4'         → weekly_thread (2026-08-27 중지 — cron 주석)
-#   '36 9 * * 1-5'       → full_dashboard
-#   '36 2 * * 1-5'       → narrative
-#   '*/10 13-21 * * 1-5' → alert_check
+# ═══════════════════════════════════════════════════════════════════════
+#  ⚠️ cron 작성 규칙 — 수정 전 반드시 읽을 것
+# ═══════════════════════════════════════════════════════════════════════
+#  GitHub Actions cron은 100% UTC 기준이다. (KST 아님)
 #
-# 패치 이력:
+#      KST = UTC + 9h
+#
+#  ┌ UTC 00:00~14:59  →  KST 같은 날짜  →  요일 그대로  (KST 월~금 = 1-5)
+#  └ UTC 15:00~23:59  →  KST 다음 날짜  →  요일 -1일    (KST 월~금 = 0-4)
+#
+#  ※ 반복 사고 원인: UTC 21시대(KST 새벽) cron에 요일 1-5를 그대로 둠
+#     → 실제 동작은 KST 화~토가 되어 월요일 아침 미발화.
+#     (2026-08-31 morning 미실행 사고 원인)
+#
+#  ※ 요일 숫자: 0=일 1=월 2=화 3=수 4=목 5=금 6=토
+#
+#  ※ 규약: cron 문자열 변경 시 아래 3곳을 반드시 동시 수정
+#       ① on.schedule 의 cron
+#       ② 해당 job 의 if 비교 문자열 (완전 일치, 공백까지)
+#       ③ 이 헤더의 매핑표
+#     ②를 누락하면 해당 job은 "완전 미발화"한다. 에러도 안 난다.
+# ═══════════════════════════════════════════════════════════════════════
+#
+#  cron ↔ job if 매핑표 (전 세션 KST 월~금 기준으로 정합화 완료)
+#
+#   '36 21 * * 0-4'      → morning         | KST 월~금 06:36  (UTC 일~목)
+#   '36 2  * * 1-5'      → narrative       | KST 월~금 11:36  (UTC 월~금)
+#   '36 9  * * 1-5'      → full_dashboard  | KST 월~금 18:36  (UTC 월~금)
+#   '*/10 13-14 * * 1-5' → alert_check     | KST 월~금 22:00~23:50 (UTC 월~금)
+#   '*/10 15-21 * * 0-4' → alert_check     | KST 월~금 00:00~06:50 (UTC 일~목)
+#   '0 11 * * 4'         → weekly_thread   | 2026-08-27 중지 (cron 주석 유지)
+#
+# ─────────────────────────────────────────────────────────────
+#  패치 이력:
 #   2026-08-27 alert 고도화 1차 (rev.2026-08-27)
 #     C-1: ALERT_WINDOWS 13:30 누락 보정
 #     T-1: 전 job DLQ restore 순서 정정(run 이전) + cache/restore@v4 패턴 통일
@@ -19,23 +44,51 @@ name: Investment OS Auto Publish
 #   2026-08-27 alert 고도화 2차 (rev.2026-08-27-2)
 #     A-1: weekly-log restore 6곳 CACHE-FREEZE 규약 패턴 통일
 #     A-2: weekly_thread Save weekly log 신설 (기록 유실 해소)
-#     A-3: intraday/close/weekly의 run 이후 rank-history restore 3곳 제거(무의미 스텝)
+#     A-3: intraday/close/weekly의 run 이후 rank-history restore 3곳 제거
 #     A-4: morning rank-history restore 규약 패턴 통일
 #     F-3: weekly cron 비활성 (세션 중지 방침 정합화)
+#   2026-08-31 타임존 정합화 (rev.2026-08-31)
+#     P-1: morning cron 1-5 → 0-4  (KST 화~토 오발화 → KST 월~금 교정)
+#     P-2: morning job if 문자열 동기화
+#     P-3: alert cron 1줄 → 2줄 분리 (KST 자정 넘김 구간 요일 시프트)
+#     P-4: alert job if OR 2조건 확장
+#     P-5: 헤더 매핑표에 KST 환산값 병기 + 환산 규칙 명문화
+#     E-1: morning timeout 15 → 20 (apt+playwright+딜레이 여유 확보)
+#     E-2: morning concurrency 그룹 신설 (alert 21시대와 큐 경합 방지)
+#     E-3: intraday/close/weekly dispatch 옵션 복원 (dead code 해소)
+#     E-4: apt 고정키 캐시 = 의도적 예외임을 명시
+#     D-1: DRY_RUN schedule 폴백 함정 경고 주석
 # ─────────────────────────────────────────────────────────────
 
 on:
   schedule:
-    - cron: "36 21 * * 1-5"
+    # ── morning | KST 월~금 06:36 ────────────────────────────
+    #    UTC 21:36 은 KST 익일 06:36 → 요일 -1일 시프트 필수 (0-4 = UTC 일~목)
+    - cron: "36 21 * * 0-4"
+
+    # ── narrative | KST 월~금 11:36 ──────────────────────────
+    #    UTC 02:36 → KST 같은 날 → 요일 그대로 (1-5)
+    - cron: "36 2 * * 1-5"
+
+    # ── full_dashboard | KST 월~금 18:36 ─────────────────────
+    #    UTC 09:36 → KST 같은 날 → 요일 그대로 (1-5)
+    - cron: "36 9 * * 1-5"
+
+    # ── alert_check | KST 월~금 22:00 ~ 06:50 ────────────────
+    #    KST 자정을 가로지르므로 단일 cron으로 표현 불가 → 2줄 분리 필수.
+    #    (1) UTC 13-14 = KST 당일 22:00~23:50 → 요일 그대로 (1-5)
+    - cron: "*/10 13-14 * * 1-5"
+    #    (2) UTC 15-21 = KST 익일 00:00~06:50 → 요일 -1일 (0-4)
+    - cron: "*/10 15-21 * * 0-4"
+
+    # ── weekly_thread | 2026-08-27 세션 중지 (F-3) ───────────
+    #    job if 문자열은 불변 유지. 재개 시 아래 주석 해제.
+    # - cron: "0 11 * * 4"
+
+    # ── intraday / close | cron 미사용, 수동 dispatch 전용 ───
     # - cron: "30 14 * * 1-5"
     # - cron: "30 20 * * 1-5"
-    # F-3 (2026-08-27): weekly 세션 중지 방침 정합화 — cron 비활성 (job if 문자열 불변 유지)
-    # - cron: "0 11 * * 4"
-    # - cron: "*/10 13-21 * * 1-5"
-    - cron: "36 9 * * 1-5"
-    - cron: "36 2 * * 1-5" 
-    # alert 전용: 미국장 시간대를 UTC로 넓게 커버
-    - cron: '*/10 13-21 * * 1-5'
+
   workflow_dispatch:
     inputs:
       session:
@@ -44,12 +97,15 @@ on:
         default: morning
         type: choice
         options:
+          # E-3 (2026-08-31): intraday/close/weekly 옵션 복원.
+          #   cron은 비활성이지만 job 정의는 살아 있으므로,
+          #   dispatch 옵션이 없으면 호출 경로가 전무한 dead code가 된다.
           - morning
-          #- intraday
-          #- close
+          - intraday
+          - close
           - alert
           - full
-          #- weekly
+          - weekly
           - narrative
       mode:
         description: "mode (alert, full 선택 시 무시됨)"
@@ -81,6 +137,12 @@ env:
   X_ACCESS_TOKEN: ${{ secrets.X_ACCESS_TOKEN }}
   X_ACCESS_TOKEN_SECRET: ${{ secrets.X_ACCESS_TOKEN_SECRET }}
   # 규약(2026-08-11): dispatch input 우선, schedule 시 빈 문자열 → secrets 폴백
+  #
+  # ⚠️ D-1 (2026-08-31) 함정 경고:
+  #   schedule 실행에서는 inputs.dry_run이 항상 빈 문자열이므로 secrets.DRY_RUN이 적용된다.
+  #   따라서 secrets.DRY_RUN 이 'true' 로 설정돼 있으면
+  #     → 수동 실행(기본 false)은 발행됨 / 자동 스케줄은 전부 발행 차단됨
+  #   "수동은 되는데 자동만 안 된다"는 증상이 나오면 이 값을 최우선 확인할 것.
   DRY_RUN: ${{ github.event.inputs.dry_run || secrets.DRY_RUN }}
   FORCE_RUN: ${{ secrets.FORCE_RUN || 'false' }}
   LOG_LEVEL: INFO
@@ -111,7 +173,7 @@ jobs:
         with:
           python-version: "3.11"
           cache: pip
-      
+
       - run: pip install -r requirements.txt
 
       # pilot_test는 외부 API 없이 픽스처로 동작 — Playwright/fonts 불필요
@@ -120,11 +182,23 @@ jobs:
           DRY_RUN: "true"
           LOG_LEVEL: WARNING
 
+  # ═══════════════════════════════════════════════════════════
+  #  morning | KST 월~금 06:36  (cron: 36 21 * * 0-4 / UTC 일~목)
+  # ═══════════════════════════════════════════════════════════
   morning:
     name: Morning Brief
-    if: github.event.schedule == '36 21 * * 1-5' || (github.event_name == 'workflow_dispatch' && github.event.inputs.session == 'morning')
+    # P-2 (2026-08-31): cron 문자열 0-4 동기화. cron과 한 글자라도 다르면 미발화.
+    if: github.event.schedule == '36 21 * * 0-4' || (github.event_name == 'workflow_dispatch' && github.event.inputs.session == 'morning')
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    # E-1 (2026-08-31): apt update/install + playwright --with-deps + 랜덤딜레이(최대 100s)
+    #   누적으로 15분이 타이트 → full(20분)과 동일 수준으로 상향.
+    timeout-minutes: 20
+    # E-2 (2026-08-31): morning(UTC 21:36)은 alert cron(UTC */10 15-21)의
+    #   21:30 / 21:40 실행과 인접 → 러너 큐 경합 방지용 그룹 지정.
+    #   cancel-in-progress: false — 발행 job이므로 중도 취소 금지.
+    concurrency:
+      group: morning-${{ github.ref }}
+      cancel-in-progress: false
     # T-7 (2026-08-27): job env 시크릿 중복 제거 — workflow env 단일 사용
     steps:
       - uses: actions/checkout@v4
@@ -132,9 +206,13 @@ jobs:
         with:
           python-version: "3.11"
           cache: pip
-          
+
       - run: pip install -r requirements.txt
-      # 변경
+
+      # E-4 (2026-08-31): 이 캐시만 고정 키 + full action 사용 = 의도적 예외.
+      #   .deb 패키지는 불변 산출물이라 CACHE-FREEZE(데이터 동결) 문제가 없다.
+      #   데이터 성격 캐시(core_data/rank_history/weekly_log/dlq/alert_*)에는
+      #   절대 이 패턴을 쓰지 말 것 — restore + run_id 키 패턴 사용.
       - name: Cache apt packages
         uses: actions/cache@v4
         with:
@@ -145,8 +223,9 @@ jobs:
         run: |
           sudo apt-get update -qq
           sudo apt-get install -y --no-install-recommends fonts-nanum
-          
+
       - run: playwright install chromium --with-deps
+
       # FIX (2026-08-27 A-1): full action 동결 패턴 → CACHE-FREEZE 규약 restore 패턴
       - name: Restore weekly log cache
         uses: actions/cache/restore@v4
@@ -166,6 +245,7 @@ jobs:
           restore-keys: |
             rank-history-${{ github.ref }}-
             rank-history-
+
       # FIX (2026-08-27 T-1): DLQ restore는 반드시 실행 스텝 이전 —
       #   run 이후 restore 시 Step 0 재처리 무력화 + 실행 중 enqueue분이
       #   구버전 캐시로 덮어써져 유실됨. restore 패턴은 CACHE-FREEZE 규약 준수.
@@ -177,32 +257,36 @@ jobs:
           restore-keys: |
             dlq-${{ github.ref }}-
             dlq-
+
       - name: Anti-bot random delay
         run: |
           DELAY=$((RANDOM % 100))
           echo "⏱️ Random delay: ${DELAY}s ($((DELAY/60))m $((DELAY%60))s)"
-          sleep $DELAY    
+          sleep $DELAY
+
       - run: python main.py run all --session morning --mode tweet
-      #== 26.04.12 추가==
+
       - name: Save core_data cache
         uses: actions/cache/save@v4
         if: always()
         with:
           path: data/outputs/core_data.json
           key: core-data-${{ github.ref }}-${{ github.run_id }}
-          
+
       - name: Save rank history cache
         uses: actions/cache/save@v4
         if: always()
         with:
           path: data/published/rank_history.json
           key: rank-history-${{ github.ref }}-${{ github.run_id }}
+
       - name: Save weekly log cache
         uses: actions/cache/save@v4
         if: always()
         with:
           path: data/published/weekly_log.json
           key: weekly-log-${{ github.ref }}-${{ github.run_id }}
+
       - uses: actions/upload-artifact@v4
         if: always()
         with:
@@ -219,12 +303,15 @@ jobs:
           path: data/published/dlq.json
           key: dlq-${{ github.ref }}-${{ github.run_id }}
 
+  # ═══════════════════════════════════════════════════════════
+  #  intraday | cron 비활성 — workflow_dispatch(session=intraday) 전용
+  #  ※ 재개 시 UTC 14:30 = KST 23:30 (같은 날) → 요일 1-5 그대로.
+  # ═══════════════════════════════════════════════════════════
   intraday:
     name: Intraday Update
     if: github.event.schedule == '30 14 * * 1-5' || (github.event_name == 'workflow_dispatch' && github.event.inputs.session == 'intraday')
     runs-on: ubuntu-latest
     timeout-minutes: 15
-    # T-7 (2026-08-27): job env 시크릿 중복 제거 — workflow env 단일 사용
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -232,7 +319,7 @@ jobs:
           python-version: "3.11"
           cache: pip
       - run: pip install -r requirements.txt
-      # FIX (2026-08-27 A-1): full action 동결 패턴 → CACHE-FREEZE 규약 restore 패턴
+      # FIX (2026-08-27 A-1): CACHE-FREEZE 규약 restore 패턴
       - name: Restore weekly log cache
         uses: actions/cache/restore@v4
         with:
@@ -247,7 +334,7 @@ jobs:
           DELAY=$((RANDOM % 100))
           echo "⏱️ Random delay: ${DELAY}s ($((DELAY/60))m $((DELAY%60))s)"
           sleep $DELAY
-      # FIX (2026-08-27 T-1): DLQ restore는 실행 스텝 이전 배치 + CACHE-FREEZE 규약 패턴
+      # FIX (2026-08-27 T-1): DLQ restore는 실행 스텝 이전 배치
       - name: Restore DLQ cache
         uses: actions/cache/restore@v4
         with:
@@ -269,7 +356,6 @@ jobs:
           name: intraday-${{ github.run_id }}
           path: data/outputs/core_data.json
           retention-days: 3
-
       - name: Save DLQ cache
         uses: actions/cache/save@v4
         if: always()
@@ -277,12 +363,16 @@ jobs:
           path: data/published/dlq.json
           key: dlq-${{ github.ref }}-${{ github.run_id }}
 
+  # ═══════════════════════════════════════════════════════════
+  #  close | cron 비활성 — workflow_dispatch(session=close) 전용
+  #  ※ 재개 시 UTC 20:30 = KST 익일 05:30 → 요일 반드시 0-4 로 변경할 것.
+  #    (현재 if 문자열의 1-5 는 과거 값이며, cron 재개 시 0-4로 동시 수정 필요)
+  # ═══════════════════════════════════════════════════════════
   close:
     name: Close Summary
     if: github.event.schedule == '30 20 * * 1-5' || (github.event_name == 'workflow_dispatch' && github.event.inputs.session == 'close')
     runs-on: ubuntu-latest
     timeout-minutes: 15
-    # T-7 (2026-08-27): job env 시크릿 중복 제거 — workflow env 단일 사용
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -291,7 +381,7 @@ jobs:
           cache: pip
       - run: playwright install chromium --with-deps
       - run: pip install -r requirements.txt
-      # FIX (2026-08-27 A-1): full action 동결 패턴 → CACHE-FREEZE 규약 restore 패턴
+      # FIX (2026-08-27 A-1): CACHE-FREEZE 규약 restore 패턴
       - name: Restore weekly log cache
         uses: actions/cache/restore@v4
         with:
@@ -304,8 +394,8 @@ jobs:
         run: |
           DELAY=$((RANDOM % 100))
           echo "⏱️ Random delay: ${DELAY}s ($((DELAY/60))m $((DELAY%60))s)"
-          sleep $DELAY    
-      # FIX (2026-08-27 T-1): DLQ restore는 실행 스텝 이전 배치 + CACHE-FREEZE 규약 패턴
+          sleep $DELAY
+      # FIX (2026-08-27 T-1): DLQ restore는 실행 스텝 이전 배치
       - name: Restore DLQ cache
         uses: actions/cache/restore@v4
         with:
@@ -327,7 +417,6 @@ jobs:
           name: close-${{ github.run_id }}
           path: data/outputs/core_data.json
           retention-days: 3
-
       - name: Save DLQ cache
         uses: actions/cache/save@v4
         if: always()
@@ -335,12 +424,15 @@ jobs:
           path: data/published/dlq.json
           key: dlq-${{ github.ref }}-${{ github.run_id }}
 
+  # ═══════════════════════════════════════════════════════════
+  #  weekly_thread | F-3(2026-08-27) 세션 중지 — dispatch 전용
+  #  ※ 재개 시 UTC 11:00 = KST 20:00 (같은 날) → 요일 4(목) 그대로 유효.
+  # ═══════════════════════════════════════════════════════════
   weekly_thread:
     name: Weekly Thread
     if: github.event.schedule == '0 11 * * 4' || (github.event_name == 'workflow_dispatch' && github.event.inputs.session == 'weekly')
     runs-on: ubuntu-latest
     timeout-minutes: 20
-    # T-7 (2026-08-27): job env 시크릿 중복 제거 — workflow env 단일 사용
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -348,7 +440,7 @@ jobs:
           python-version: "3.11"
           cache: pip
       - run: pip install -r requirements.txt
-      # FIX (2026-08-27 A-1): full action 동결 패턴 → CACHE-FREEZE 규약 restore 패턴
+      # FIX (2026-08-27 A-1): CACHE-FREEZE 규약 restore 패턴
       - name: Restore weekly log cache
         uses: actions/cache/restore@v4
         with:
@@ -361,8 +453,8 @@ jobs:
         run: |
           DELAY=$((RANDOM % 100))
           echo "⏱️ Random delay: ${DELAY}s ($((DELAY/60))m $((DELAY%60))s)"
-          sleep $DELAY    
-      # FIX (2026-08-27 T-1): DLQ restore는 실행 스텝 이전 배치 + CACHE-FREEZE 규약 패턴
+          sleep $DELAY
+      # FIX (2026-08-27 T-1): DLQ restore는 실행 스텝 이전 배치
       - name: Restore DLQ cache
         uses: actions/cache/restore@v4
         with:
@@ -385,7 +477,6 @@ jobs:
           name: weekly-${{ github.run_id }}
           path: data/outputs/
           retention-days: 14
-
       - name: Save DLQ cache
         uses: actions/cache/save@v4
         if: always()
@@ -393,10 +484,20 @@ jobs:
           path: data/published/dlq.json
           key: dlq-${{ github.ref }}-${{ github.run_id }}
 
+  # ═══════════════════════════════════════════════════════════
+  #  alert_check | KST 월~금 22:00 ~ 06:50
+  #    cron A: */10 13-14 * * 1-5  → KST 당일 22:00~23:50
+  #    cron B: */10 15-21 * * 0-4  → KST 익일 00:00~06:50
+  #  ※ KST 자정을 가로지르므로 2줄 분리가 필수. 한 줄로 합치면
+  #     반드시 어느 한쪽 요일이 어긋난다.
+  # ═══════════════════════════════════════════════════════════
   alert_check:
     name: Alert Check
+    # P-4 (2026-08-31): cron 2분할에 맞춰 OR 2조건으로 확장.
+    #   두 문자열 모두 on.schedule의 cron과 완전 일치해야 한다.
     if: |
-       github.event.schedule == '*/10 13-21 * * 1-5' || 
+       github.event.schedule == '*/10 13-14 * * 1-5' ||
+       github.event.schedule == '*/10 15-21 * * 0-4' ||
        (github.event_name == 'workflow_dispatch' && github.event.inputs.session == 'alert')
     runs-on: ubuntu-latest
     # T-3 (2026-08-27): 안티봇 랜덤 딜레이 최대 120s 흡수분 상향 (10→12)
@@ -407,7 +508,8 @@ jobs:
     # T-7 (2026-08-27): job env는 alert 고유 변수만 유지 — 시크릿은 workflow env 단일 사용
     env:
       ALERT_TZ: America/New_York
-      # C-1 (2026-08-27): 13:30 윈도우 누락 보정 — cron 13-21 UTC 커버 범위 내 (EDT/EST 검증 완료)
+      # C-1 (2026-08-27): 13:30 윈도우 누락 보정 — cron 커버 범위 내 (EDT/EST 검증 완료)
+      # ※ 이 값은 ET(뉴욕) 기준 시각이며 cron(UTC) / KST와 별개 축이다. 혼동 주의.
       ALERT_WINDOWS: "09:30,10:30,11:30,12:30,13:30,14:30,15:30"
       ALERT_GRACE_MINUTES: "20"
     steps:
@@ -444,9 +546,7 @@ jobs:
 
       # x_alert_history: Step X 감정 트리거 X 발행 쿨다운 이력 (90분 중복 방지)
       # 반드시 python main.py alert 실행 전에 복원해야 run_alert.py가 이력을 읽을 수 있다.
-      # FIX CACHE-FREEZE (2026-08-12): 동결 방지.
       # T-7 (2026-08-27): save 키 표준화 — ref 포함으로 타 캐시와 사양 통일.
-      #   restore-keys 2단: 신규(ref 포함) 우선, 전역 prefix로 구 키(ref 미포함) 전환기 매치.
       - name: Restore x_alert_history cache
         uses: actions/cache/restore@v4
         with:
@@ -456,7 +556,7 @@ jobs:
             x-alert-history-${{ github.ref }}-
             x-alert-history-
 
-      # FIX (2026-08-27 T-1): DLQ restore는 실행 스텝 이전 배치 + CACHE-FREEZE 규약 패턴
+      # FIX (2026-08-27 T-1): DLQ restore는 실행 스텝 이전 배치
       - name: Restore DLQ cache
         uses: actions/cache/restore@v4
         with:
@@ -465,10 +565,11 @@ jobs:
           restore-keys: |
             dlq-${{ github.ref }}-
             dlq-
+
       - run: pip install -r requirements.txt
 
-      # T-3 (2026-08-27): 안티봇 랜덤 딜레이 재도입 — 상한 120s (grace 20분 대비 안전,
-      #   L2/L3 신속성 유지). X 발행 시각의 cron 정각 패턴 수렴 방지.
+      # T-3 (2026-08-27): 안티봇 랜덤 딜레이 — 상한 120s (grace 20분 대비 안전).
+      #   X 발행 시각의 cron 정각 패턴 수렴 방지.
       - name: Anti-bot random delay
         run: |
           DELAY=$((RANDOM % 120))
@@ -477,7 +578,6 @@ jobs:
 
       - run: python main.py alert
 
-      # Alert 이력 캐시 저장 (다음 실행 시 복원)
       - name: Save alert history cache
         uses: actions/cache/save@v4
         if: always()
@@ -501,7 +601,6 @@ jobs:
           key: dlq-${{ github.ref }}-${{ github.run_id }}
 
       # T-6 (2026-08-27): artifact 확장 — 규약(artifact 교차 대조) 대응.
-      #   dlq.json/x_alert_history.json 미존재 실행에서도 전체 실패 방지 (warn).
       - uses: actions/upload-artifact@v4
         if: always()
         with:
@@ -513,12 +612,15 @@ jobs:
           if-no-files-found: warn
           retention-days: 7
 
+  # ═══════════════════════════════════════════════════════════
+  #  full_dashboard | KST 월~금 18:36  (cron: 36 9 * * 1-5 / UTC 월~금)
+  #  ※ UTC 09:36 은 15시 미만 → KST 같은 날 → 요일 시프트 불필요.
+  # ═══════════════════════════════════════════════════════════
   full_dashboard:
     name: Full Dashboard
     if: github.event.schedule == '36 9 * * 1-5' || (github.event_name == 'workflow_dispatch' && github.event.inputs.session == 'full')
     runs-on: ubuntu-latest
     timeout-minutes: 20
-    # T-7 (2026-08-27): job env 시크릿 중복 제거 — workflow env 단일 사용
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -527,7 +629,7 @@ jobs:
           cache: pip
       - run: pip install -r requirements.txt
       - run: python -m playwright install chromium --with-deps
-      # FIX (2026-08-27 A-1): full action 동결 패턴 → CACHE-FREEZE 규약 restore 패턴
+      # FIX (2026-08-27 A-1): CACHE-FREEZE 규약 restore 패턴
       - name: Restore weekly log cache
         uses: actions/cache/restore@v4
         with:
@@ -540,8 +642,8 @@ jobs:
         run: |
           DELAY=$((RANDOM % 100))
           echo "⏱️ Random delay: ${DELAY}s ($((DELAY/60))m $((DELAY%60))s)"
-          sleep $DELAY    
-      # FIX (2026-08-27 T-1): DLQ restore는 실행 스텝 이전 배치 + CACHE-FREEZE 규약 패턴
+          sleep $DELAY
+      # FIX (2026-08-27 T-1): DLQ restore는 실행 스텝 이전 배치
       - name: Restore DLQ cache
         uses: actions/cache/restore@v4
         with:
@@ -565,23 +667,23 @@ jobs:
             data/outputs/core_data.json
             data/images/
           retention-days: 7
-
       - name: Save DLQ cache
         uses: actions/cache/save@v4
         if: always()
         with:
           path: data/published/dlq.json
           key: dlq-${{ github.ref }}-${{ github.run_id }}
-          
 
-          
+  # ═══════════════════════════════════════════════════════════
+  #  narrative | KST 월~금 11:36  (cron: 36 2 * * 1-5 / UTC 월~금)
+  #  ※ UTC 02:36 은 15시 미만 → KST 같은 날 → 요일 시프트 불필요.
+  # ═══════════════════════════════════════════════════════════
   narrative:
-     name: AI Narrative
-     if: github.event.schedule == '36 2 * * 1-5' || (github.event_name == 'workflow_dispatch' && github.event.inputs.session == 'narrative')
-     runs-on: ubuntu-latest
-     timeout-minutes: 15
-     # T-7 (2026-08-27): job env 시크릿 중복 제거 — workflow env 단일 사용
-     steps:
+    name: AI Narrative
+    if: github.event.schedule == '36 2 * * 1-5' || (github.event_name == 'workflow_dispatch' && github.event.inputs.session == 'narrative')
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:
@@ -589,7 +691,7 @@ jobs:
           cache: pip
       - run: pip install -r requirements.txt
       - run: playwright install chromium --with-deps
-      # FIX (2026-08-27 A-1): full action 동결 패턴 → CACHE-FREEZE 규약 restore 패턴
+      # FIX (2026-08-27 A-1): CACHE-FREEZE 규약 restore 패턴
       - name: Restore weekly log cache
         uses: actions/cache/restore@v4
         with:
@@ -598,7 +700,7 @@ jobs:
           restore-keys: |
             weekly-log-${{ github.ref }}-
             weekly-log-
-      # FIX (2026-08-27 T-1): full action 동결 패턴 → CACHE-FREEZE 규약 restore 패턴 교체
+      # FIX (2026-08-27 T-1): CACHE-FREEZE 규약 restore 패턴 교체
       - name: Restore DLQ cache
         uses: actions/cache/restore@v4
         with:
@@ -611,7 +713,7 @@ jobs:
         run: |
           DELAY=$((RANDOM % 100))
           echo "⏱️ Random delay: ${DELAY}s ($((DELAY/60))m $((DELAY%60))s)"
-          sleep $DELAY    
+          sleep $DELAY
       - run: python main.py run all --session narrative --mode tweet
       - name: Save weekly log cache
         uses: actions/cache/save@v4
