@@ -23,7 +23,8 @@ from typing import Optional
 
 logger = logging.getLogger(__name__)
 
-VERSION = "v3.1.0"
+VERSION = "v3.2.0"
+logger.info(f"[HtmlDash] {VERSION} 로드")
 
 REGIME_COLOR = {
     "Risk-On": "#22ee88", "Risk-Off": "#ff4466", "Oil Shock": "#ffbb00",
@@ -707,10 +708,31 @@ body{{width:1080px;overflow:hidden;background:#070b11;font-family:'Barlow',sans-
 </html>"""
 
 
-def _build_html(data: dict, dt_utc: datetime, session: str = "full") -> str:
-    """F-2: 세션별 HTML 디스패처"""
+def _build_html(
+    data: dict,
+    dt_utc: datetime,
+    session: str = "full",
+    variant: Optional[str] = None,
+) -> str:
+    """
+    F-2: 세션별 HTML 디스패처.
+
+    v3.2.0 (N-3): variant 파라미터 추가.
+      - variant="full"    → 강제로 full 레이아웃
+      - variant="compact" → 강제로 compact 레이아웃
+      - variant=None      → 기존 세션 기반 분기 (동작 무변경)
+
+    narrative 세션의 이미지 레이아웃 로테이션(narrative_visual.py)에서
+    같은 세션으로 서로 다른 레이아웃을 뽑기 위해 사용한다.
+    """
+    label = SESSION_LABELS.get(session, "Full <em>Brief</em>")
+
+    if variant == "full":
+        return _build_full_html(data, dt_utc, session_label=label)
+    if variant == "compact":
+        return _build_compact_html(data, dt_utc, session)
+
     if session in ("full", "weekly", "narrative"):
-        label = SESSION_LABELS.get(session, "Full <em>Brief</em>")
         return _build_full_html(data, dt_utc, session_label=label)
     else:
         return _build_compact_html(data, dt_utc, session)
@@ -743,7 +765,17 @@ def _render(url: str, out_path: str) -> bool:
         with concurrent.futures.ThreadPoolExecutor(max_workers=1) as ex:
             return ex.submit(asyncio.run, _render_async(url, out_path)).result()
 
-def build_html_dashboard(data: dict, session: str = "full", dt_utc: Optional[datetime] = None, output_dir: Optional[Path] = None) -> Optional[str]:
+def build_html_dashboard(
+    data: dict,
+    session: str = "full",
+    dt_utc: Optional[datetime] = None,
+    output_dir: Optional[Path] = None,
+    variant: Optional[str] = None,
+) -> Optional[str]:
+    """
+    v3.2.0 (N-3): variant 인자 추가.
+      variant=None이면 기존 동작과 완전히 동일하다(회귀 없음).
+    """
     try:
         if dt_utc is None: dt_utc = datetime.now(timezone.utc)
         if output_dir is None:
@@ -753,10 +785,15 @@ def build_html_dashboard(data: dict, session: str = "full", dt_utc: Optional[dat
             except Exception:
                 output_dir = Path("data/images")
         output_dir = Path(output_dir); output_dir.mkdir(parents=True, exist_ok=True)
-        fname = f"dashboard_{session}_{dt_utc.strftime('%Y%m%d_%H%M')}.png"
+        # variant가 지정되면 파일명에 포함 — 같은 세션의 다른 레이아웃이
+        # 같은 분(minute)에 생성될 때 서로 덮어쓰지 않도록 한다.
+        suffix = f"_{variant}" if variant else ""
+        fname = f"dashboard_{session}{suffix}_{dt_utc.strftime('%Y%m%d_%H%M')}.png"
         fpath = str(output_dir / fname)
-        logger.info(f"[HtmlDash] {VERSION} HTML 빌드 시작 — session={session}")
-        html = _build_html(data, dt_utc, session=session)
+        logger.info(
+            f"[HtmlDash] {VERSION} HTML 빌드 시작 — session={session} variant={variant or '-'}"
+        )
+        html = _build_html(data, dt_utc, session=session, variant=variant)
         with tempfile.NamedTemporaryFile(mode="w", suffix=".html", delete=False, encoding="utf-8") as f:
             f.write(html); tmp_path = f.name
         logger.info("[HtmlDash] Playwright 렌더링 시작")

@@ -8,13 +8,22 @@ Gemini 1순위 / HTML+Playwright fallback ($0).
 크기: 1200×675 (X 이미지 최적화)
 
 ※ Gemini 이미지 생성 시 한글 렌더링 깨짐 → 프롬프트 전체 영어
-※ HTML fallback 시 한글 유지 (시스템 폰트 fonts-noto-cjk 사용)
+※ HTML fallback 시 한글 유지 (시스템 폰트 사용)
+
+변경이력:
+  v1.1.0 (2026-09-06) N-3 이미지 변칙화.
+    - VERSION 상수 신설 (공통 지침서 규약)
+    - Gemini 프롬프트 Style 절을 4종 풀에서 랜덤 선택 (F-4)
+    - HTML fallback 팔레트 3종 로테이션 (F-5)
 """
 import logging
 import os
+import random
 import tempfile
 from datetime import date
 from pathlib import Path
+
+VERSION = "1.1.0"
 
 logger = logging.getLogger(__name__)
 
@@ -27,6 +36,34 @@ _GEMINI_ENGLISH_ONLY = (
     "Do NOT render any Korean, Chinese, Japanese, or other CJK characters."
 )
 
+# ── v1.1.0 (N-3): Gemini 스타일 풀 — 매일 동일 화풍 반복 방지 ──
+_GEMINI_STYLE_POOL: tuple[str, ...] = (
+    "Dark cinematic, vibrant neon colors, clean composition, professional.",
+    "Bold comic book style, halftone dot shading, thick ink outlines, high contrast.",
+    "Minimal flat vector illustration, limited palette, generous negative space.",
+    "Retro arcade pixel art, CRT scanline texture, saturated 8-bit palette.",
+)
+
+# ── v1.1.0 (N-3): HTML fallback 팔레트 로테이션 ──
+#   (배경 그라디언트, 좌측 오버레이, 우측 오버레이)
+_HTML_PALETTE_POOL: tuple[dict, ...] = (
+    {
+        "bg": "linear-gradient(135deg, #0a1628 0%, #1a1a2e 100%)",
+        "left": "linear-gradient(180deg, #10b98122 0%, transparent 60%)",
+        "right": "linear-gradient(180deg, #ef444422 0%, transparent 60%)",
+    },
+    {
+        "bg": "linear-gradient(160deg, #111827 0%, #0f172a 55%, #1e1b4b 100%)",
+        "left": "radial-gradient(circle at 50% 25%, #22d3ee2b 0%, transparent 65%)",
+        "right": "radial-gradient(circle at 50% 25%, #f9731630 0%, transparent 65%)",
+    },
+    {
+        "bg": "linear-gradient(120deg, #12100e 0%, #1f1c18 50%, #0b0b0d 100%)",
+        "left": "linear-gradient(200deg, #84cc1626 0%, transparent 62%)",
+        "right": "linear-gradient(160deg, #e11d4826 0%, transparent 62%)",
+    },
+)
+
 
 def generate_vs_card(core_data: dict) -> str | None:
     """
@@ -35,6 +72,8 @@ def generate_vs_card(core_data: dict) -> str | None:
     Returns:
         이미지 파일 경로 (str) 또는 None
     """
+    logger.info(f"[VSCard] v{VERSION} 시작")
+
     if not core_data:
         logger.info("[VSCard] core_data 없음 → 스킵")
         return None
@@ -87,9 +126,12 @@ def _generate_vs_via_gemini(top_etf, worst_etf, top_alloc, worst_alloc,
             return None
 
         # ── 프롬프트 전체 영어 (한글 렌더링 방지) ──
+        # v1.1.0 (N-3): Style 절만 4종 풀에서 랜덤 — 나머지 구성은 유지
+        style_line = random.choice(_GEMINI_STYLE_POOL)
+        logger.info(f"[VSCard] Gemini style variant: {style_line[:40]}")
         prompt = (
             f"Create a dramatic 1200x675 VS battle card for financial ETF comparison. "
-            f"Style: Dark cinematic, vibrant neon colors, clean composition, professional. "
+            f"Style: {style_line} "
             f"Left side (GREEN): A heroic golden bull warrior labeled 'MAX BULLHORN' with "
             f"'{top_etf} {top_alloc}%' and '{top_stance}' badge in green. "
             f"Right side (RED): A menacing dark bear villain labeled 'BARON BEARSWORTH' with "
@@ -165,14 +207,18 @@ def _build_vs_html(top_etf, worst_etf, top_alloc, worst_alloc,
         max_svg = '<div style="font-size:80px;">🐂</div>'
         baron_svg = '<div style="font-size:80px;">🐻</div>'
 
+    # v1.1.0 (N-3): 팔레트 3종 로테이션 — 매일 동일 배경 반복 방지
+    palette = random.choice(_HTML_PALETTE_POOL)
+    logger.info(f"[VSCard] HTML palette variant: {palette['bg'][:32]}")
+
     return f"""<!DOCTYPE html>
 <html><head><meta charset="utf-8">
 <style>
 * {{ margin:0; padding:0; box-sizing:border-box; }}
 body {{
   width:1200px; height:675px;
-  background: linear-gradient(135deg, #0a1628 0%, #1a1a2e 100%);
-  font-family: -apple-system, 'Segoe UI', sans-serif; color:#fff;
+  background: {palette['bg']};
+  font-family: 'NanumGothic', 'Noto Sans CJK KR', -apple-system, 'Segoe UI', sans-serif; color:#fff;
   overflow:hidden; position:relative;
 }}
 .container {{ display:flex; height:100%; }}
@@ -180,8 +226,8 @@ body {{
   flex:1; display:flex; flex-direction:column;
   align-items:center; justify-content:center; padding:30px;
 }}
-.left {{ background: linear-gradient(180deg, #10b98122 0%, transparent 60%); }}
-.right {{ background: linear-gradient(180deg, #ef444422 0%, transparent 60%); }}
+.left {{ background: {palette['left']}; }}
+.right {{ background: {palette['right']}; }}
 .center {{
   width:200px; display:flex; flex-direction:column;
   align-items:center; justify-content:center; position:relative;

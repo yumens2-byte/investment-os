@@ -85,7 +85,10 @@ def sample_spec():
 class TestTonePolicy:
 
     def test_version_loaded(self):
-        assert TONE_VERSION == "1.0.0"
+        # 기존에는 "1.0.0"을 하드코딩해 v1.1.0 이후 상시 실패 상태였다.
+        #   → major 계열만 고정하고 minor/patch 상승은 허용한다.
+        assert TONE_VERSION.startswith("1.")
+        assert TONE_VERSION >= "1.3.0"
 
     def test_morning_high_returns_spec(self):
         spec = select_persona_tone("HIGH", "Risk-Off", "morning")
@@ -106,10 +109,48 @@ class TestTonePolicy:
         assert spec.tone_name == "밝은 시작"
         assert spec.risk_level == "LOW"
 
-    def test_non_morning_returns_none(self):
-        """Q4.c — morning 외 세션은 None 반환."""
-        for session in ("intraday", "close", "full", "narrative", "weekly"):
+    def test_unsupported_session_returns_none(self):
+        """v1.3.0 — _SUPPORTED_SESSIONS(morning, narrative) 밖은 None 반환."""
+        for session in ("intraday", "close", "full", "weekly"):
             assert select_persona_tone("HIGH", "Risk-Off", session) is None
+
+    def test_narrative_high_returns_spec(self):
+        """v1.3.0 (N-2) — narrative HIGH 셀."""
+        spec = select_persona_tone("HIGH", "Risk-Off", "narrative")
+        assert spec is not None
+        assert spec.session == "narrative"
+        assert spec.tone_name == "냉정 해부"
+        assert spec.risk_level == "HIGH"
+
+    def test_narrative_medium_returns_spec(self):
+        spec = select_persona_tone("MEDIUM", "Transition", "narrative")
+        assert spec is not None
+        assert spec.tone_name == "차분 해설"
+        assert spec.risk_level == "MEDIUM"
+
+    def test_narrative_low_returns_spec(self):
+        spec = select_persona_tone("LOW", "Risk-On", "narrative")
+        assert spec is not None
+        assert spec.tone_name == "여유 해설"
+        assert spec.risk_level == "LOW"
+
+    def test_narrative_length_target_wider_than_morning(self):
+        """narrative는 장문 해설 목적이라 morning보다 길이 타깃이 크다."""
+        narr = select_persona_tone("MEDIUM", "Transition", "narrative")
+        morn = select_persona_tone("MEDIUM", "Transition", "morning")
+        assert narr.length_target[1] > morn.length_target[1]
+
+    def test_narrative_unknown_risk_falls_back_to_medium(self):
+        spec = select_persona_tone("BOGUS", "Risk-On", "narrative")
+        assert spec is not None
+        assert spec.risk_level == "MEDIUM"
+        assert spec.session == "narrative"
+
+    def test_morning_cells_unchanged(self):
+        """회귀 가드 — morning 3셀은 v1.2.0과 동일해야 한다."""
+        assert select_persona_tone("HIGH", "Risk-Off", "morning").tone_name == "긴급 경계"
+        assert select_persona_tone("MEDIUM", "Risk-On", "morning").tone_name == "차분 점검"
+        assert select_persona_tone("LOW", "Risk-On", "morning").tone_name == "밝은 시작"
 
     def test_unknown_risk_falls_back_to_medium(self):
         spec = select_persona_tone("UNKNOWN_RISK", "Risk-On", "morning")

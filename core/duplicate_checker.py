@@ -2,12 +2,22 @@
 core/duplicate_checker.py
 X 발행 직전 중복 검사.
 history.json에 최근 발행 이력을 저장하고, 동일 내용 재발행을 차단한다.
+
+변경이력:
+  v1.1.0 (2026-09-06) R-1: is_duplicate()에 skip_regime_hash 인자 추가.
+    배경 — regime_hash는 regime+risk+Top3 ETF 조합이므로 같은 날 실행되는
+    morning과 narrative가 동일 해시를 갖는다. history.json 캐시(NB-4)를
+    활성화하면 narrative가 morning 이력에 걸려 상시 차단된다.
+    narrative는 '동일 시장 상태를 다른 관점으로 재해설'하는 것이 세션
+    목적이므로 regime_hash 검사만 우회하고 content_hash 검사는 유지한다.
 """
 import hashlib
 import json
 import logging
 from datetime import datetime, timezone
 from config.settings import HISTORY_FILE, DUPLICATE_CHECK_COUNT
+
+VERSION = "1.1.0"
 
 logger = logging.getLogger(__name__)
 
@@ -53,7 +63,7 @@ def _compute_regime_hash(data: dict) -> str:
     return hashlib.sha256(combined.encode()).hexdigest()[:12]
 
 
-def is_duplicate(tweet_text: str, data: dict) -> bool:
+def is_duplicate(tweet_text: str, data: dict, skip_regime_hash: bool = False) -> bool:
     """
     중복 발행 여부 판단.
     True = 중복 → 발행 차단.
@@ -62,6 +72,14 @@ def is_duplicate(tweet_text: str, data: dict) -> bool:
     비교 기준:
       1. 트윗 본문 해시 (완전 동일)
       2. 레짐+리스크+Top ETF 해시 (동일 시장 상태 재발행 방지)
+
+    Args:
+        tweet_text:       검사 대상 본문
+        data:             core_data.json의 data 필드
+        skip_regime_hash: True면 2번 기준을 건너뛴다 (v1.1.0, R-1).
+                          narrative 세션 전용. 같은 날 morning과 regime_hash가
+                          동일해 상시 차단되는 문제를 피하기 위한 것으로,
+                          본문 해시 검사는 그대로 유지된다.
     """
     history = _load_history()
     recent = history[-DUPLICATE_CHECK_COUNT:]
@@ -73,9 +91,12 @@ def is_duplicate(tweet_text: str, data: dict) -> bool:
         if record.get("content_hash") == content_hash:
             logger.warning(f"[DupChecker] 콘텐츠 중복 감지: hash={content_hash}")
             return True
-        if record.get("regime_hash") == regime_hash:
+        if not skip_regime_hash and record.get("regime_hash") == regime_hash:
             logger.warning(f"[DupChecker] 레짐 중복 감지: hash={regime_hash}")
             return True
+
+    if skip_regime_hash:
+        logger.info("[DupChecker] regime_hash 검사 생략 (narrative 세션)")
 
     return False
 

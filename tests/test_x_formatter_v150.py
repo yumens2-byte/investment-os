@@ -88,7 +88,8 @@ def fake_ai_output_valid():
 # ════════════════════════════════════════════════════════════
 
 def test_version_loaded():
-    assert XF_VERSION == "1.5.0"
+    # 하드코딩 시 patch 버전 상승마다 깨지므로 계열만 고정한다.
+    assert XF_VERSION.startswith("1.5.")
 
 
 # ════════════════════════════════════════════════════════════

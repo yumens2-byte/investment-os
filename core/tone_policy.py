@@ -8,16 +8,18 @@ AI 톤 정책 단일 진입점 (x_formatter v1.5.0~).
   - 톤별 (페르소나 + 작문규칙 + 금지표현 + 예시) 4요소 패키지 제공
   - retry 시 동일 ToneSpec 재주입 → 톤 손실 방지
 
-Q4.c 단계: morning 세션에만 신규 톤 매트릭스 적용.
-           다른 세션은 select_persona_tone()이 None 반환 → x_formatter는
+지원 세션: morning, narrative.
+           그 외 세션은 select_persona_tone()이 None 반환 → x_formatter는
            기존 v1.4.0 인라인 로직 사용.
 
 확장 계획:
-  - D-7 검증 후 intraday/close/full/narrative 셀 추가
-  - alert_formatter / narrative_engine 등 다른 모듈도 동일 인터페이스로 흡수 가능
+  - D-7 검증 후 intraday/close/full 셀 추가
+  - alert_formatter 등 다른 모듈도 동일 인터페이스로 흡수 가능
 
 변경이력:
   v1.0.0 (2026-05-06) 신설. morning 3셀(HIGH/MEDIUM/LOW) 정의.
+  v1.3.0 (2026-09-06) N-2: narrative 3셀 추가 + _SUPPORTED_SESSIONS 도입.
+                      morning 3셀은 무변경 (회귀 없음).
 """
 from __future__ import annotations
 
@@ -25,7 +27,7 @@ import logging
 from dataclasses import dataclass
 from typing import Optional
 
-VERSION = "1.2.0"
+VERSION = "1.3.0"
 
 logger = logging.getLogger(__name__)
 logger.info(f"[TonePolicy] v{VERSION} 로드")
@@ -163,11 +165,118 @@ _TONE_MORNING_LOW = ToneSpec(
     session="morning",
 )
 
+# ─────────────────────────────────────────────────────────────
+# 톤 매트릭스 (N-2 — narrative 3셀)
+#   morning 대비 차이:
+#     - 페르소나가 '브리핑 진행자'가 아니라 '해설가' — 사후 분석 성격
+#     - 길이 타깃 확대 (220~420자). X Premium 장문 해설이 목적
+#     - 해시태그 3~5개
+# ─────────────────────────────────────────────────────────────
+
+_PERSONA_NARRATIVE = "시장 내러티브 해설가"
+
+_TONE_NARRATIVE_HIGH = ToneSpec(
+    persona=f"{_PERSONA_NARRATIVE} — 위험 구조 해부",
+    tone_name="냉정 해부",
+    voice_rules=(
+        "감정을 싣지 말고 위험이 '어디서' 왔는지 구조를 설명",
+        "레짐 전환 근거를 수치와 함께 최소 1개 명시",
+        "명령형('팔아라', '사라')과 투자 권유 절대 금지",
+        "'~로 보입니다', '~신호입니다' 같은 관찰자 어미 유지",
+        "마지막 줄은 단정이 아니라 지켜볼 지표 1개로 마무리",
+    ),
+    forbidden=_GLOBAL_FORBIDDEN + (
+        "확실히", "지금 진입", "패닉",
+        "ㅋㅋ", "ㅎㅎ",
+        "폭망", "나락", "지옥",
+    ),
+    example_snippets=(
+        "변동성이 먼저 움직였습니다. VIX가 30선을 넘으면서 채권으로 자금이 이동했고, 주식 내부에서도 방어 섹터가 상대적으로 버텼습니다.",
+        "이번 하락은 금리보다 신용 쪽 신호에 가깝습니다. 스프레드 확대가 먼저였고 지수는 뒤따랐습니다.",
+    ),
+    emoji_hint="이모지 0~1개. 없어도 무방",
+    length_target=(220, 420),
+    hashtag_count_target=(3, 5),
+    risk_level="HIGH",
+    regime="",
+    session="narrative",
+)
+
+_TONE_NARRATIVE_MEDIUM = ToneSpec(
+    persona=f"{_PERSONA_NARRATIVE} — 균형 관찰자",
+    tone_name="차분 해설",
+    voice_rules=(
+        "상승·하락 어느 쪽으로도 결론 내지 않고 관찰 사실을 서술",
+        "'~인 반면', '다만' 같은 대비 접속으로 양면을 함께 제시",
+        "수치를 먼저 두고 해석을 뒤에 붙이는 순서",
+        "감정 표현 최소화, 과장 부사 제거",
+        "조건부 표현('~라면', '~할 경우')을 최소 1회 사용",
+    ),
+    forbidden=_GLOBAL_FORBIDDEN + (
+        "확실히", "분명히", "당연히",
+        "폭발", "쓰나미",
+        "지금 사야", "지금이 기회",
+    ),
+    example_snippets=(
+        "지수는 보합이지만 내부는 조용하지 않습니다. 대형주가 지수를 지탱하는 동안 시장 참여도는 오히려 낮아졌습니다.",
+        "금리는 진정됐고 유가는 눌렸습니다. 다만 두 흐름이 같은 방향을 보고 있다고 말하기엔 아직 이릅니다.",
+    ),
+    emoji_hint="이모지 0~2개(📊/🔍/📈/📉)",
+    length_target=(220, 420),
+    hashtag_count_target=(3, 5),
+    risk_level="MEDIUM",
+    regime="",
+    session="narrative",
+)
+
+_TONE_NARRATIVE_LOW = ToneSpec(
+    persona=f"{_PERSONA_NARRATIVE} — 우호 환경 해설가",
+    tone_name="여유 해설",
+    voice_rules=(
+        "긍정적이되 들뜨지 않게. '안정', '양호', '우호적' 수준의 어휘",
+        "왜 환경이 우호적인지 원인을 최소 1개 짚기",
+        "미래 단정 금지('계속 오를 것', '강세 지속')",
+        "좋은 국면일수록 놓치기 쉬운 지표 1개를 함께 언급",
+        "부드러운 어미로 마무리",
+    ),
+    forbidden=_GLOBAL_FORBIDDEN + (
+        "ㅋ", "ㅎ",
+        "확실한 수익", "보장된",
+        "강세 지속", "계속 오를", "계속 상승",
+    ),
+    example_snippets=(
+        "공포지수가 낮게 유지되면서 위험 자산에 우호적인 구간이 이어지고 있습니다. 다만 이런 국면일수록 유동성 지표를 같이 보는 편이 좋습니다.",
+        "금리 부담이 줄면서 성장주 쪽으로 무게가 실렸습니다. 시장 폭도 나쁘지 않아 상승이 소수 종목에만 기댄 형태는 아닙니다.",
+    ),
+    emoji_hint="이모지 0~2개(🌤/📈/🟢)",
+    length_target=(220, 420),
+    hashtag_count_target=(3, 5),
+    risk_level="LOW",
+    regime="",
+    session="narrative",
+)
+
+# ─────────────────────────────────────────────────────────────
+# 매트릭스 등록
+# ─────────────────────────────────────────────────────────────
+
+# 톤 매트릭스가 정의된 세션 — 이 집합 밖이면 select_persona_tone()이 None 반환
+_SUPPORTED_SESSIONS: frozenset[str] = frozenset({"morning", "narrative"})
+
+# 세션별 안전 fallback (매트릭스 누락 시)
+_SESSION_FALLBACK: dict[str, ToneSpec] = {
+    "morning":   _TONE_MORNING_MEDIUM,
+    "narrative": _TONE_NARRATIVE_MEDIUM,
+}
+
 # (risk_level, session) → ToneSpec
 _TONE_MATRIX: dict[tuple[str, str], ToneSpec] = {
     ("HIGH",   "morning"): _TONE_MORNING_HIGH,
     ("MEDIUM", "morning"): _TONE_MORNING_MEDIUM,
     ("LOW",    "morning"): _TONE_MORNING_LOW,
+    ("HIGH",   "narrative"): _TONE_NARRATIVE_HIGH,
+    ("MEDIUM", "narrative"): _TONE_NARRATIVE_MEDIUM,
+    ("LOW",    "narrative"): _TONE_NARRATIVE_LOW,
 }
 
 
@@ -183,18 +292,19 @@ def select_persona_tone(
     """
     리스크/레짐/세션을 입력받아 ToneSpec 결정.
 
-    Q4.c 단계: morning이 아니면 None 반환 → x_formatter는 v1.4.0 로직 사용.
+    v1.3.0: _SUPPORTED_SESSIONS(morning, narrative) 밖이면 None 반환
+            → x_formatter는 v1.4.0 로직 사용.
 
     Args:
         risk_level: "HIGH" | "MEDIUM" | "LOW" (그 외 입력은 MEDIUM으로 안전 처리)
         regime:     market_regime 원문 (Risk-On/Risk-Off/Liquidity Crisis 등)
-        session:    "morning" | "intraday" | "close" | "full" | "narrative"
+        session:    "morning" | "narrative" | "intraday" | "close" | "full"
 
     Returns:
         ToneSpec or None.
     """
-    if session != "morning":
-        # Q4.c: 다른 세션은 미적용 — D-7 이후 확장 예정
+    if session not in _SUPPORTED_SESSIONS:
+        # 미지원 세션 — D-7 이후 확장 예정
         return None
 
     risk_norm = risk_level if risk_level in ("HIGH", "MEDIUM", "LOW") else "MEDIUM"
@@ -203,9 +313,9 @@ def select_persona_tone(
     if base_spec is None:
         # 매트릭스 누락 — 안전 fallback (개발 시점에만 발생 가능)
         logger.warning(
-            f"[TonePolicy] 매트릭스 누락 risk={risk_level} session={session} → MEDIUM/morning"
+            f"[TonePolicy] 매트릭스 누락 risk={risk_level} session={session} → MEDIUM 폴백"
         )
-        base_spec = _TONE_MORNING_MEDIUM
+        base_spec = _SESSION_FALLBACK.get(session, _TONE_MORNING_MEDIUM)
 
     # regime은 적재 메타로만 사용 (톤 자체는 risk×session 결정)
     return ToneSpec(

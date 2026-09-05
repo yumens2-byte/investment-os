@@ -19,6 +19,8 @@ import tempfile
 from datetime import date
 from pathlib import Path
 
+VERSION = "1.1.0"
+
 logger = logging.getLogger(__name__)
 
 SCORE_COLORS = {1: "#10b981", 2: "#34d399", 3: "#f59e0b", 4: "#f97316", 5: "#ef4444"}
@@ -346,4 +348,56 @@ def _render_html(html: str, prefix: str) -> str | None:
 
     except Exception as e:
         logger.warning(f"[CardNews] {prefix} 렌더링 실패: {e}")
+        return None
+
+
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+# v1.1.0 (N-3): 단일 카드 공개 진입점
+#   publishers/narrative_visual.py가 프라이빗 함수(_card1_market,
+#   _render_html)를 직접 호출하지 않도록 하기 위한 래퍼.
+#   generate_cards()의 카드 1장 처리 로직과 동일하다.
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+_CARD_BUILDERS = {
+    1: (_card1_market, "시장 현황"),
+    2: (_card2_etf, "ETF 전략"),
+    3: (_card3_news, "AI 뉴스 분석"),
+}
+
+
+def generate_single_card(core_data: dict, card_no: int = 1) -> str | None:
+    """
+    카드뉴스 3장 중 1장만 생성한다.
+
+    Args:
+        core_data: core_data.json의 data 필드
+        card_no:   1(시장 현황) | 2(ETF 전략) | 3(AI 뉴스 분석)
+
+    Returns:
+        이미지 파일 경로 (str) 또는 None
+    """
+    logger.info(f"[CardNews] v{VERSION} 단일 카드 생성 시작 — card_no={card_no}")
+
+    if not core_data:
+        logger.info("[CardNews] core_data 없음 → 스킵")
+        return None
+
+    entry = _CARD_BUILDERS.get(card_no)
+    if entry is None:
+        logger.warning(f"[CardNews] 지원하지 않는 card_no={card_no} → 스킵")
+        return None
+
+    builder, label = entry
+
+    try:
+        # 1순위: Gemini 이미지 (프롬프트 영어)
+        gemini_path = _generate_card_via_gemini(core_data, card_no, label)
+        if gemini_path:
+            return gemini_path
+
+        # 2순위: HTML fallback (한글 유지)
+        logger.info(f"[CardNews] Card {card_no} Gemini 실패 → HTML fallback")
+        return _render_html(builder(core_data), f"card{card_no}")
+    except Exception as e:
+        logger.warning(f"[CardNews] Card {card_no} 단일 생성 실패: {e}")
         return None

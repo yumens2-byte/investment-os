@@ -22,6 +22,23 @@ v1.30.0 (2026-04-13):
   - Step 6에 len(posts)>1 조건 추가 (tweet→스레드 자동 전환 대응)
   - full 세션: 이미지 트윗 고정 — 감성 미적용 유지
   - result에 posts_count 추가
+
+v1.31.0 (2026-09-06) — N-1 narrative 발행 구조 재편:
+  [배경] narrative 세션이 X에 3건을 연속 발행했고, 그중 2건은 본문이
+         완전히 동일했다(D-1). 발행 간 딜레이도 0초였다(D-2).
+           ① Step 6      : publish_tweet_with_image(Market Snapshot + 대시보드)
+           ② Step 6-TG   : publish_tweet(narrative)
+           ③ Step 6-TG   : publish_tweet_with_image(narrative ← ②와 동일 문자열)
+  [변경]
+    - Step 3  : narrative 분기 신설. generate_narrative → build_narrative_posts
+                로 posts를 구성하고, 결과를 로컬에 보관한다(Gemini 재호출 방지).
+    - Step 4  : narrative는 is_duplicate(skip_regime_hash=True) — R-1.
+    - Step 5.5: narrative는 narrative_visual.select_visual()로 이미지 로테이션.
+    - Step 6  : 무변경. len(posts)>1 경로가 '이미지+스레드'를 그대로 처리.
+    - Step 6-TG: narrative 분기의 X 발행 3줄 제거. 텔레그램 발행만 유지.
+  [결과] X 발행 3건 → 1스레드(최대 2트윗), 동일 본문 중복 0건,
+         발행 간 딜레이는 publish_thread의 기존 랜덤 대기를 사용.
+  - result에 narrative_source / visual_variant 추가
 """
 import argparse
 import logging
@@ -36,6 +53,8 @@ logging.basicConfig(
     datefmt="%Y-%m-%d %H:%M:%S",
 )
 logger = logging.getLogger("run_view")
+
+VERSION = "1.31.0"
 
 
 def _resolve_session_type(data: dict, session: str | None) -> str:
@@ -52,6 +71,9 @@ def _session_label(session_type: str) -> str:
         "close": "Close Summary 🔔",
         "postmarket": "Market Snapshot 📊",
         "full": "Full Brief 📊",
+        # v1.31.0 (F-8): narrative 키 누락으로 "Market Snapshot 📊"이 쓰이던 문제 정정.
+        #   이 라벨은 x_formatter._label_to_session()이 세션을 역판정하는 근거이기도 하다.
+        "narrative": "Market Narrative 📝",
     }
     return session_labels.get(session_type, "Market Snapshot 📊")
 
@@ -97,7 +119,7 @@ def run(mode: str = "tweet", session: str = None) -> dict:
     session: 외부에서 강제 지정 시 output_helpers보다 우선 (full 세션용)
     """
     logger.info(f"{'='*50}")
-    logger.info(f"[run_view] 시작 — mode={mode} | DRY_RUN={DRY_RUN}")
+    logger.info(f"[run_view] v{VERSION} 시작 — mode={mode} | DRY_RUN={DRY_RUN}")
     logger.info(f"{'='*50}")
 
     # ── Step 0: DLQ 재처리 (B-17) ────────────────────────────
@@ -159,8 +181,32 @@ def run(mode: str = "tweet", session: str = None) -> dict:
     session_type = _resolve_session_type(data, session)
     session_label = _session_label(session_type)
 
+    # narrative 결과 보관용 — Step 6-TG에서 재사용해 Gemini 재호출을 막는다.
+    narr_result: dict = {}
+
+    # narrative: AI 시장 해설을 그대로 X 포스트로 구성 (v1.31.0, N-1)
+    #   Step 6-TG에서 별도로 X 발행하던 경로를 여기로 통합했다.
+    if session_type == "narrative":
+        from engines.narrative_engine import (
+            build_narrative_posts, generate_narrative,
+        )
+        narr_result    = generate_narrative(data)
+        narrative_text = narr_result.get("narrative", "")
+        posts          = build_narrative_posts(data, narrative_text)
+
+        if not posts:
+            logger.error("[Step 3] narrative 포스트 생성 실패 — 발행 차단")
+            return {
+                "success": False,
+                "reason":  "narrative_empty",
+            }
+
+        primary_text     = posts[0]
+        # narrative는 본문 자체가 콘텐츠이므로 별도 이미지 캡션을 쓰지 않는다.
+        image_tweet_text = None
+
     # full: 이미지 트윗 고정 — 감성 미적용 (이미지가 메인)
-    if session_type == "full":
+    elif session_type == "full":
         primary_text     = format_image_tweet(data, "full")
         image_tweet_text = primary_text
         posts            = [primary_text]
@@ -190,7 +236,11 @@ def run(mode: str = "tweet", session: str = None) -> dict:
     logger.info("[Step 4] 중복 검사")
     from core.duplicate_checker import is_duplicate, record_published
 
-    if is_duplicate(primary_text, data):
+    # R-1 (v1.31.0): narrative는 같은 날 morning과 regime_hash가 동일해
+    #   상시 차단되므로 레짐 기준 검사만 우회한다. 본문 해시 검사는 유지.
+    _skip_regime = (session_type == "narrative")
+
+    if is_duplicate(primary_text, data, skip_regime_hash=_skip_regime):
         logger.warning("[run_view] 중복 감지 — 발행 차단")
         return {
             "success":      False,
@@ -207,11 +257,22 @@ def run(mode: str = "tweet", session: str = None) -> dict:
     # ── Step 5.5: 이미지 생성 ───────────────────────────────────
     logger.info("[Step 5.5] 대시보드 이미지 생성")
     image_path = None
+    visual_variant = ""
     try:
-        from publishers.image_generator import generate_image
-        image_path = generate_image(data=data, session=session_type)
+        if session_type == "narrative":
+            # N-3: narrative는 고정 레이아웃 1종 대신 후보 로테이션 사용.
+            #   'none'이 뽑히면 의도적으로 이미지 없이 텍스트만 발행한다.
+            from publishers.narrative_visual import select_visual
+            image_path, visual_variant = select_visual(data)
+            logger.info(f"[Step 5.5] narrative visual variant={visual_variant}")
+        else:
+            from publishers.image_generator import generate_image
+            image_path = generate_image(data=data, session=session_type)
+
         if image_path:
             logger.info(f"[Step 5.5] 이미지 생성 완료: {image_path}")
+        elif session_type == "narrative" and visual_variant == "none":
+            logger.info("[Step 5.5] narrative 이미지 없음(의도) — 텍스트만 발행")
         else:
             logger.warning("[Step 5.5] 이미지 생성 실패 — 텍스트만 발행")
     except Exception as e:
@@ -378,38 +439,30 @@ def run(mode: str = "tweet", session: str = None) -> dict:
             #     logger.warning(f"[Step 6-TG] B-21B 카드뉴스 실패: {ce}")
 
         elif session_type == "narrative":
+            # v1.31.0 (N-1): X 발행은 Step 3+6에서 이미 1스레드로 처리했다.
+            #   기존에 여기서 수행하던 publish_tweet / publish_tweet_with_image
+            #   2건은 Step 6과 합쳐 총 3건·본문 중복 2건을 만들던 원인(D-1)이라
+            #   제거했다. 이 분기는 텔레그램 발행만 담당한다.
+            #   generate_narrative()는 Step 3에서 이미 호출했으므로 그 결과를
+            #   재사용한다 — Gemini 호출 횟수는 1회로 유지된다.
             try:
-                from engines.narrative_engine import (
-                    generate_narrative, format_narrative_tweet, format_narrative_telegram,
-                )
-                narr           = generate_narrative(data)
-                narrative_text = narr.get("narrative", "")
-                source         = narr.get("source", "fallback")
+                from engines.narrative_engine import format_narrative_telegram
+
+                narrative_text = narr_result.get("narrative", "")
+                source         = narr_result.get("source", "fallback")
 
                 if narrative_text:
-                    from publishers.x_publisher import publish_tweet as _pub_narr
-                    tweet = format_narrative_tweet(narrative_text)
-                    _pub_narr(tweet)
-
-                    # B-21C: VS 배틀 카드
-                    try:
-                        from comic.vs_card_generator import generate_vs_card
-                        vs_path = generate_vs_card(data)
-                        if vs_path:
-                            from publishers.x_publisher import publish_tweet_with_image as _pub_vs
-                            _pub_vs(format_narrative_tweet(narrative_text), vs_path)
-                            logger.info("[Step 6-TG] B-21C VS 카드 발행 완료")
-                    except Exception as ve:
-                        logger.warning(f"[Step 6-TG] B-21C VS 카드 생성 실패 (영향 없음): {ve}")
-
                     tg_text = format_narrative_telegram(narrative_text, data)
                     send_message(tg_text, channel="free")
                     send_message(tg_text, channel="paid")
-                    logger.info(f"[Step 6-TG] AI 내러티브 발행 완료 (source={source})")
+                    logger.info(
+                        f"[Step 6-TG] AI 내러티브 TG 발행 완료 "
+                        f"(source={source}, visual={visual_variant or '-'})"
+                    )
                 else:
-                    logger.warning("[Step 6-TG] AI 내러티브 비어있음 — 스킵")
+                    logger.warning("[Step 6-TG] AI 내러티브 비어있음 — TG 스킵")
             except Exception as e:
-                logger.warning(f"[Step 6-TG] AI 내러티브 발행 실패 (영향 없음): {e}")
+                logger.warning(f"[Step 6-TG] AI 내러티브 TG 발행 실패 (영향 없음): {e}")
 
             # C-5: 오늘의 시장 역사 — 현재 비활성
             # try:
@@ -485,6 +538,12 @@ def run(mode: str = "tweet", session: str = None) -> dict:
         "posts_count":  len(posts),
         "timestamp":    datetime.now(timezone.utc).isoformat(),
     }
+
+    # v1.31.0: narrative 세션 진단 정보
+    if session_type == "narrative":
+        result["narrative_source"] = narr_result.get("source", "")
+        result["narrative_variant"] = narr_result.get("variant_meta", {})
+        result["visual_variant"] = visual_variant
 
     logger.info(f"{'='*50}")
     logger.info(

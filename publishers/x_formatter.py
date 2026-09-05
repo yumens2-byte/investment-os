@@ -47,7 +47,7 @@ from config.settings import X_MAX_TWEET_LENGTH, X_HASHTAGS  # noqa: F401
 
 logger = logging.getLogger(__name__)
 
-VERSION = "1.5.0"
+VERSION = "1.5.1"
 logger.info(f"[XFormatter] v{VERSION} 로드")
 
 
@@ -166,6 +166,16 @@ SESSION_TAGS = {
     "close":    "#마감",
     "weekly":   "#주간분석",
 }
+
+# v1.5.1 (N-2): narrative는 단일 고정 태그 대신 풀에서 랜덤 선택.
+#   narrative_engine v1.1.0이 "#ETF #투자 #미국증시 #AI분석"을 매일 고정
+#   발행하던 문제(F-2) 해소용.
+_NARRATIVE_TAG_POOL = [
+    "#AI시장해설",
+    "#시장해설",
+    "#마켓코멘트",
+    "#오늘의시장",
+]
 REGIME_TAGS = {
     "Risk-On":          "#RiskOn #성장주",
     "Risk-Off":         "#RiskOff #방어",
@@ -206,7 +216,11 @@ def _random_hashtags(regime: str = "", session: str = "") -> str:
     regime_tag = REGIME_TAGS.get(regime, "")
 
     # 세션 태그 (있으면 추가)
-    session_tag = SESSION_TAGS.get(session, "")
+    # v1.5.1: narrative는 고정 태그가 아니라 4종 풀에서 랜덤 선택
+    if session == "narrative":
+        session_tag = _random.choice(_NARRATIVE_TAG_POOL)
+    else:
+        session_tag = SESSION_TAGS.get(session, "")
 
     # 추가 태그 (16종 중 1개 랜덤)
     extra = _random.choice(_EXTRA_TAGS_POOL)
@@ -219,6 +233,23 @@ def _random_hashtags(regime: str = "", session: str = "") -> str:
     parts.append(extra)
 
     return " ".join(parts).strip()
+
+
+def build_hashtags(regime: str = "", session: str = "") -> str:
+    """
+    해시태그 생성 공개 진입점 (v1.5.1 신설).
+
+    engines/narrative_engine.py 등 외부 모듈이 프라이빗 함수
+    _random_hashtags()를 직접 호출하지 않도록 하기 위한 래퍼다.
+
+    Args:
+        regime:  market_regime 원문 (예: "Risk-Off")
+        session: "morning" | "narrative" | "intraday" | "close" | "weekly"
+
+    Returns:
+        str: 공백으로 구분된 해시태그 문자열
+    """
+    return _random_hashtags(regime=regime, session=session)
 
 
 # ──────────────────────────────────────────────────────────────
@@ -388,6 +419,8 @@ def format_image_tweet(data: dict, session: str = "morning") -> str:
         "intraday": "Intraday Briefing",
         "close":    "Close Summary",
         "weekly":   "Weekly Review",
+        # v1.5.1 (F-8): narrative 키 누락으로 "Market Snapshot"이 표기되던 문제 정정
+        "narrative": "Market Narrative",
     }
     session_lbl = session_labels.get(session, "Market Snapshot")
 
