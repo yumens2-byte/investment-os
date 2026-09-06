@@ -5,7 +5,7 @@
 
 | 항목 | 값 |
 |---|---|
-| 시스템 버전 | `SYSTEM_VERSION = v1.20.0` (`config/settings.py`) |
+| 시스템 버전 | `config/settings.py`의 `SYSTEM_VERSION` 상수가 유일한 정본 |
 | 코드네임 | EDT Investment |
 | Runtime | Python 3.11 + GitHub Actions (ubuntu-latest) |
 | 저장소 | Public |
@@ -196,6 +196,10 @@ python tests/test_b21a_integration_sim.py
 ## 개발 규약
 
 - 모든 모듈은 파일 상단에 `VERSION` 상수를 두고, 수정 시 갱신하며 실행 시작 로그에 출력합니다.
+- **시스템 버전은 `config/settings.py`의 `SYSTEM_VERSION`이 유일한 정본입니다.**
+  이 값은 대시보드 이미지 푸터와 `core_data.json`의 `version` 필드에 그대로 렌더되므로,
+  README·문서·테스트에 버전 숫자를 하드코딩하지 않습니다. 상수를 상향할 때는
+  `full_test.py`와 `pilot_test.py`의 단언 2곳을 반드시 함께 수정해야 합니다.
 - 배포 전 `ruff check` + `pytest`를 **각 2회 연속 PASS**시킵니다.
 - 부분 diff보다 **전체 파일 교체**를 사용합니다 (웹 에디터 붙여넣기 들여쓰기 오류 방지).
 - 캐시는 **CACHE-FREEZE 규약**을 따릅니다. `actions/cache/restore@v4`는 실행 스텝 **이전**,
