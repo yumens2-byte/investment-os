@@ -170,7 +170,7 @@ class TestBuildNarrativePosts:
 class TestVisualRotation:
 
     def test_version(self):
-        assert VISUAL_VERSION == "1.0.0"
+        assert VISUAL_VERSION == "1.1.0"
 
     def test_weights_cover_five_candidates(self):
         assert set(VISUAL_WEIGHTS) == {
@@ -257,6 +257,46 @@ class TestVisualRotation:
 
         assert variant == "vs_card"
         assert path == "/tmp/ok.png"
+
+    def test_card_market_forces_html(self, sample_data):
+        """v1.1.0 — card_market은 Gemini를 건너뛰고 HTML로만 생성해야 한다."""
+        called = {}
+
+        def _spy(core_data, card_no=1, force_html=False):
+            called["card_no"] = card_no
+            called["force_html"] = force_html
+            return "/tmp/card1.png"
+
+        with patch("comic.card_news_generator.generate_single_card", _spy):
+            path = narrative_visual._make_card_market(sample_data)
+
+        assert path == "/tmp/card1.png"
+        assert called["card_no"] == 1
+        assert called["force_html"] is True
+
+    def test_generate_single_card_html_skips_gemini(self, sample_data):
+        """force_html=True면 Gemini 경로가 호출되지 않아야 한다."""
+        from comic import card_news_generator as cng
+
+        gemini_called = []
+
+        with patch.object(
+            cng, "_generate_card_via_gemini",
+            side_effect=lambda *a, **k: gemini_called.append(1) or "/tmp/gem.png",
+        ), patch.object(cng, "_render_html", return_value="/tmp/html.png"):
+            path = cng.generate_single_card(sample_data, card_no=1, force_html=True)
+
+        assert path == "/tmp/html.png"
+        assert gemini_called == []
+
+    def test_generate_single_card_default_keeps_gemini_first(self, sample_data):
+        """force_html 미지정 시 기존 Gemini 우선 동작 유지 (코믹 파이프라인 회귀 가드)."""
+        from comic import card_news_generator as cng
+
+        with patch.object(
+            cng, "_generate_card_via_gemini", return_value="/tmp/gem.png"
+        ), patch.object(cng, "_render_html", return_value="/tmp/html.png"):
+            assert cng.generate_single_card(sample_data, card_no=1) == "/tmp/gem.png"
 
     def test_none_variant_short_circuits(self, sample_data):
         with patch.object(

@@ -22,6 +22,11 @@ narrative 세션 전용 이미지 후보 로테이션 선택기.
 
 변경이력:
   v1.0.0 (2026-09-06) 신설.
+  v1.1.0 (2026-09-06) card_market을 HTML 전용으로 고정.
+    dry_run 실측에서 Gemini 생성 카드에 텍스트 오타 2건과 레이더 축 라벨
+    임의 생성이 확인됐다(축 6개 중 4개가 실제 Market Score 키와 무관).
+    투자 정보 콘텐츠는 정확도가 화풍보다 우선하므로 force_html=True로 호출한다.
+    ※ vs_card는 dry_run에서 텍스트·수치 모두 정확해 Gemini 우선 유지(마스터 판단).
 """
 from __future__ import annotations
 
@@ -31,7 +36,7 @@ import random
 from pathlib import Path
 from typing import Optional
 
-VERSION = "1.0.0"
+VERSION = "1.1.0"
 
 logger = logging.getLogger(__name__)
 
@@ -144,8 +149,9 @@ def _make_vs_card(data: dict) -> Optional[str]:
 
 
 def _make_card_market(data: dict) -> Optional[str]:
+    # v1.1.0: force_html=True — Gemini 텍스트 렌더 오류 회피
     from comic.card_news_generator import generate_single_card
-    return generate_single_card(data, card_no=1)
+    return generate_single_card(data, card_no=1, force_html=True)
 
 
 _GENERATORS = {

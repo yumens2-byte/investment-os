@@ -19,7 +19,7 @@ import tempfile
 from datetime import date
 from pathlib import Path
 
-VERSION = "1.1.0"
+VERSION = "1.2.0"
 
 logger = logging.getLogger(__name__)
 
@@ -365,18 +365,36 @@ _CARD_BUILDERS = {
 }
 
 
-def generate_single_card(core_data: dict, card_no: int = 1) -> str | None:
+def generate_single_card(
+    core_data: dict,
+    card_no: int = 1,
+    force_html: bool = False,
+) -> str | None:
     """
     카드뉴스 3장 중 1장만 생성한다.
 
     Args:
-        core_data: core_data.json의 data 필드
-        card_no:   1(시장 현황) | 2(ETF 전략) | 3(AI 뉴스 분석)
+        core_data:  core_data.json의 data 필드
+        card_no:    1(시장 현황) | 2(ETF 전략) | 3(AI 뉴스 분석)
+        force_html: True면 Gemini 경로를 건너뛰고 HTML로만 생성한다 (v1.2.0).
+
+    v1.2.0 (2026-09-06) — force_html 신설 배경:
+      2026-09-06 narrative dry_run 실측에서 Gemini 생성 카드에
+      텍스트 오타 2건(Volablity / Liquiblity)과 레이더 축 라벨 임의 생성이
+      확인됐다. 축 6개 중 4개가 실제 Market Score 키와 무관한 값
+      (Momentum / Value 등)으로 바뀌어 출력됐다.
+      Gemini 이미지 모델의 텍스트 렌더 한계이므로 프롬프트로 교정할 수 없다.
+      narrative 세션은 투자 정보 콘텐츠를 발행하므로 정확도가 화풍보다
+      우선한다 → narrative_visual은 force_html=True로 호출한다.
+      ※ generate_cards()(코믹 파이프라인)는 기존 Gemini 우선 동작을 유지한다.
 
     Returns:
         이미지 파일 경로 (str) 또는 None
     """
-    logger.info(f"[CardNews] v{VERSION} 단일 카드 생성 시작 — card_no={card_no}")
+    logger.info(
+        f"[CardNews] v{VERSION} 단일 카드 생성 시작 — "
+        f"card_no={card_no} force_html={force_html}"
+    )
 
     if not core_data:
         logger.info("[CardNews] core_data 없음 → 스킵")
@@ -390,6 +408,11 @@ def generate_single_card(core_data: dict, card_no: int = 1) -> str | None:
     builder, label = entry
 
     try:
+        if force_html:
+            # v1.2.0: Gemini 경로 생략 — 텍스트 정확도 우선
+            logger.info(f"[CardNews] Card {card_no} force_html=True → HTML 직행")
+            return _render_html(builder(core_data), f"card{card_no}")
+
         # 1순위: Gemini 이미지 (프롬프트 영어)
         gemini_path = _generate_card_via_gemini(core_data, card_no, label)
         if gemini_path:
