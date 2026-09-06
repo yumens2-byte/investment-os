@@ -730,6 +730,15 @@ jobs:
     name: AI Narrative
     if: github.event.schedule == '36 2 * * 1-5' || (github.event_name == 'workflow_dispatch' && github.event.inputs.session == 'narrative')
     runs-on: ubuntu-latest
+    # NB-6 (2026-09-06): concurrency 그룹 신설.
+    #   narrative는 data/published/narrative_visual_history.json 캐시로
+    #   '직전 2회 사용 variant 제외' 로테이션을 판정한다. 동시 실행이 붙으면
+    #   뒤 실행이 앞 실행의 save 이전 캐시를 restore해 이력이 동결되고
+    #   같은 variant가 연속 선택된다 (2026-09-06 dry_run 4회차에서 실측).
+    #   cancel-in-progress=false — 진행 중 발행을 끊지 않고 큐잉한다.
+    concurrency:
+      group: narrative-${{ github.ref }}
+      cancel-in-progress: false
     # NB-3 (2026-09-06): NB-2로 랜덤 딜레이 상한이 899s(약 15분)로 올라갔다.
     #   여기에 apt/playwright 설치 + 파이프라인 실행이 더해지므로 15분으로는
     #   타임아웃이 확정된다. NB-2와 NB-3은 절대 분리 배포하지 말 것.
