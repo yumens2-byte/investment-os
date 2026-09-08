@@ -240,7 +240,12 @@ def run(mode: str = "tweet", session: str = None) -> dict:
     #   상시 차단되므로 레짐 기준 검사만 우회한다. 본문 해시 검사는 유지.
     _skip_regime = (session_type == "narrative")
 
-    if is_duplicate(primary_text, data, skip_regime_hash=_skip_regime):
+    if is_duplicate(
+        primary_text,
+        data,
+        skip_regime_hash=_skip_regime,
+        session=session_type,
+    ):
         logger.warning("[run_view] 중복 감지 — 발행 차단")
         return {
             "success":      False,
@@ -525,7 +530,9 @@ def run(mode: str = "tweet", session: str = None) -> dict:
     # ── Step 7: 이력 기록 ──────────────────────────────────────
     if pub_result.get("success"):
         logger.info("[Step 7] 발행 이력 기록")
-        record_published(primary_text, data, tweet_id=str(tweet_id))
+        record_published(
+            primary_text, data, tweet_id=str(tweet_id), session=session_type
+        )
 
     result = {
         "success":      pub_result.get("success", False),

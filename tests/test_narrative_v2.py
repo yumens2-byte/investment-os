@@ -316,22 +316,32 @@ class TestVisualRotation:
 class TestDuplicateCheckerSkipRegime:
 
     def _history(self, content_hash: str, regime_hash: str) -> list[dict]:
-        return [{"content_hash": content_hash, "regime_hash": regime_hash}]
+        return [{
+            "content_hash": content_hash,
+            "regime_hash": regime_hash,
+            "session": "narrative",
+            "publication_date": "2026-09-08",
+        }]
 
     def test_regime_hash_blocks_by_default(self, sample_data):
         from core import duplicate_checker as dc
 
         rh = dc._compute_regime_hash(sample_data)
-        with patch.object(dc, "_load_history", return_value=self._history("x", rh)):
-            assert dc.is_duplicate("완전히 새로운 본문", sample_data) is True
+        with patch.object(dc, "_load_history", return_value=self._history("x", rh)), \
+                patch.object(dc, "_publication_date", return_value="2026-09-08"):
+            assert dc.is_duplicate(
+                "완전히 새로운 본문", sample_data, session="narrative"
+            ) is True
 
     def test_skip_regime_hash_allows(self, sample_data):
         from core import duplicate_checker as dc
 
         rh = dc._compute_regime_hash(sample_data)
-        with patch.object(dc, "_load_history", return_value=self._history("x", rh)):
+        with patch.object(dc, "_load_history", return_value=self._history("x", rh)), \
+                patch.object(dc, "_publication_date", return_value="2026-09-08"):
             assert dc.is_duplicate(
-                "완전히 새로운 본문", sample_data, skip_regime_hash=True
+                "완전히 새로운 본문", sample_data,
+                skip_regime_hash=True, session="narrative"
             ) is False
 
     def test_content_hash_still_blocks_when_skipping(self, sample_data):
@@ -339,8 +349,11 @@ class TestDuplicateCheckerSkipRegime:
 
         text = "동일한 본문입니다."
         ch = dc._compute_content_hash(text)
-        with patch.object(dc, "_load_history", return_value=self._history(ch, "zzz")):
-            assert dc.is_duplicate(text, sample_data, skip_regime_hash=True) is True
+        with patch.object(dc, "_load_history", return_value=self._history(ch, "zzz")), \
+                patch.object(dc, "_publication_date", return_value="2026-09-08"):
+            assert dc.is_duplicate(
+                text, sample_data, skip_regime_hash=True, session="narrative"
+            ) is True
 
 
 # ════════════════════════════════════════════════════════════
