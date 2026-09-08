@@ -72,6 +72,10 @@ name: Investment OS Auto Publish
 #             is_duplicate(skip_regime_hash=True)를 사용한다 (R-1).
 #     NB-5: narrative artifact에 data/images/ 추가 (NB-1 렌더 실물 검증용)
 #     ※ 본 리비전은 cron 문자열과 job if 문자열을 일절 변경하지 않았다.
+#   2026-09-08 발행 중복/요일 정합화
+#     publish history는 세션+KST 발행일 범위에서만 재실행을 차단한다.
+#     또한 휴장일 판정도 runner UTC가 아닌 KST 날짜를 사용해 월요일 morning을
+#     일요일로 오인해 스킵하지 않도록 한다.
 # ─────────────────────────────────────────────────────────────
 
 on:

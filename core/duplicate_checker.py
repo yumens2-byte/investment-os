@@ -15,9 +15,10 @@ import hashlib
 import json
 import logging
 from datetime import datetime, timezone
+from zoneinfo import ZoneInfo
 from config.settings import HISTORY_FILE, DUPLICATE_CHECK_COUNT
 
-VERSION = "1.1.0"
+VERSION = "1.2.0"
 
 logger = logging.getLogger(__name__)
 
@@ -63,7 +64,32 @@ def _compute_regime_hash(data: dict) -> str:
     return hashlib.sha256(combined.encode()).hexdigest()[:12]
 
 
-def is_duplicate(tweet_text: str, data: dict, skip_regime_hash: bool = False) -> bool:
+def _publication_date(now: datetime | None = None) -> str:
+    """Return the publication calendar date used by the KST workflows."""
+    current = now or datetime.now(timezone.utc)
+    if current.tzinfo is None:
+        current = current.replace(tzinfo=timezone.utc)
+    return current.astimezone(ZoneInfo("Asia/Seoul")).date().isoformat()
+
+
+def _record_matches_run(record: dict, session: str, publication_date: str) -> bool:
+    """Limit deduplication to a rerun of the same session on the same KST day.
+
+    Old records intentionally do not match.  They predate session/date metadata and
+    treating them as global matches would keep blocking the first run after deploy.
+    """
+    return (
+        record.get("session") == session
+        and record.get("publication_date") == publication_date
+    )
+
+
+def is_duplicate(
+    tweet_text: str,
+    data: dict,
+    skip_regime_hash: bool = False,
+    session: str | None = None,
+) -> bool:
     """
     중복 발행 여부 판단.
     True = 중복 → 발행 차단.
@@ -83,11 +109,17 @@ def is_duplicate(tweet_text: str, data: dict, skip_regime_hash: bool = False) ->
     """
     history = _load_history()
     recent = history[-DUPLICATE_CHECK_COUNT:]
+    session_type = session or data.get("output_helpers", {}).get(
+        "session_type", "postmarket"
+    )
+    publication_date = _publication_date()
 
     content_hash = _compute_content_hash(tweet_text)
     regime_hash = _compute_regime_hash(data)
 
     for record in recent:
+        if not _record_matches_run(record, session_type, publication_date):
+            continue
         if record.get("content_hash") == content_hash:
             logger.warning(f"[DupChecker] 콘텐츠 중복 감지: hash={content_hash}")
             return True
@@ -101,14 +133,24 @@ def is_duplicate(tweet_text: str, data: dict, skip_regime_hash: bool = False) ->
     return False
 
 
-def record_published(tweet_text: str, data: dict, tweet_id: str = "DRY_RUN") -> None:
+def record_published(
+    tweet_text: str,
+    data: dict,
+    tweet_id: str = "DRY_RUN",
+    session: str | None = None,
+) -> None:
     """
     발행 성공 후 이력 기록.
     tweet_id: 실제 X 트윗 ID 또는 DRY_RUN.
     """
     history = _load_history()
+    session_type = session or data.get("output_helpers", {}).get(
+        "session_type", "postmarket"
+    )
     record = {
         "timestamp": datetime.now(timezone.utc).isoformat(),
+        "publication_date": _publication_date(),
+        "session": session_type,
         "tweet_id": tweet_id,
         "content_hash": _compute_content_hash(tweet_text),
         "regime_hash": _compute_regime_hash(data),

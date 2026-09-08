@@ -11,7 +11,8 @@ main.py, comic/pipeline.py 시작 시 호출하여 휴무일이면 스킵.
 """
 import logging
 import os
-from datetime import date
+from datetime import date, datetime
+from zoneinfo import ZoneInfo
 
 logger = logging.getLogger(__name__)
 
@@ -59,7 +60,7 @@ def is_us_market_holiday(check_date: date = None) -> tuple[bool, str]:
         예: (True, "Good Friday") 또는 (False, "")
     """
     if check_date is None:
-        check_date = date.today()
+        check_date = datetime.now(ZoneInfo("Asia/Seoul")).date()
 
     date_str = check_date.isoformat()
     holiday_name = ALL_HOLIDAYS.get(date_str, "")
@@ -83,7 +84,10 @@ def should_skip_market_session(check_date: date = None) -> tuple[bool, str]:
         return False, ""
 
     if check_date is None:
-        check_date = date.today()
+        # GitHub's morning cron runs on the previous UTC date (Sunday for KST
+        # Monday).  Workflow eligibility must therefore use its business timezone,
+        # not the runner's UTC date, or every Monday morning is seen as a weekend.
+        check_date = datetime.now(ZoneInfo("Asia/Seoul")).date()
 
     # 주말 체크 (토=5, 일=6)
     weekday = check_date.weekday()
