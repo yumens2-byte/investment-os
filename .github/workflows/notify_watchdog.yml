@@ -1,0 +1,103 @@
+# =============================================================================
+# Pipeline Watchdog (Telegram Internal notifications)  VERSION 1.1.0
+#
+# Sends an alert when one of the production workflows below completes with a
+# non-success conclusion. A manual dispatch provides a smoke test for secrets
+# and Telegram delivery without requiring an actual pipeline failure.
+#
+# Required repository secrets:
+#   TELEGRAM_BOT_TOKEN
+#   TELEGRAM_PAID_CHANNEL_ID
+#
+# Security: workflow_run can have stronger permissions and secret access than
+# the workflow that triggered it. Do not check out or execute the triggering
+# workflow's ref in this job.
+#
+# Limitation: workflow_run only observes runs that GitHub actually starts, so a
+# dropped scheduled event cannot be detected by this watchdog.
+# =============================================================================
+name: "🐕‍🦺 Watchdog"
+
+"on":
+  workflow_run:
+    # These values must exactly match each workflow's top-level display name.
+    workflows:
+      - Investment OS Auto Publish
+      - "🎨 Comic Daily Pipeline"
+      - "📚 Comic Weekly Pipeline"
+      - "📝 Comic Novel (Sunday)"
+      - EDT Market Snapshot
+      - Prediction League & Data Quiz
+      - Viral Content
+      - "📊 Viral Daily Report"
+      - "📊 Viral Performance Tracker"
+      - Weekend Content
+    types:
+      - completed
+  workflow_dispatch:
+
+# This job only calls Telegram and does not need repository or GitHub API access.
+permissions: {}
+
+jobs:
+  notify:
+    # Successful production runs stay silent; manual runs always test delivery.
+    if: ${{ github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion != 'success' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Send Telegram (Internal)
+        env:
+          BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          CHAT_ID: ${{ secrets.TELEGRAM_PAID_CHANNEL_ID }}
+          WF_NAME: ${{ github.event.workflow_run.name || 'Pipeline Watchdog smoke test' }}
+          WF_CONCLUSION: ${{ github.event.workflow_run.conclusion || 'test' }}
+          WF_EVENT: ${{ github.event.workflow_run.event || 'workflow_dispatch' }}
+          WF_URL: ${{ github.event.workflow_run.html_url || format('{0}/{1}/actions/runs/{2}', github.server_url, github.repository, github.run_id) }}
+          REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+
+          if [ -z "${BOT_TOKEN}" ] || [ -z "${CHAT_ID}" ]; then
+            echo "::error::TELEGRAM_BOT_TOKEN or TELEGRAM_PAID_CHANNEL_ID is not configured"
+            exit 1
+          fi
+
+          case "${WF_CONCLUSION}" in
+            failure)   ICON="🚨" ;;
+            cancelled) ICON="⛔" ;;
+            timed_out) ICON="⏱️" ;;
+            test)      ICON="🧪" ;;
+            *)         ICON="⚠️" ;;
+          esac
+
+          TS=$(TZ=Asia/Seoul date '+%Y-%m-%d %H:%M KST')
+          TEXT=$(printf '%s Pipeline Watchdog alert\nRepository: %s\nWorkflow: %s\nConclusion: %s\nTrigger: %s\nTime: %s\nLogs: %s' \
+            "${ICON}" "${REPO}" "${WF_NAME}" "${WF_CONCLUSION}" "${WF_EVENT}" "${TS}" "${WF_URL}")
+
+          HTTP=$(curl --silent --show-error --fail-with-body \
+            --retry 3 --retry-all-errors --retry-delay 2 \
+            --connect-timeout 5 --max-time 20 \
+            -o /tmp/tg_resp.json -w '%{http_code}' \
+            -X POST "https://api.telegram.org/bot${BOT_TOKEN}/sendMessage" \
+            --data-urlencode chat_id="${CHAT_ID}" \
+            --data-urlencode disable_web_page_preview=true \
+            --data-urlencode text="${TEXT}")
+
+          echo "[watchdog] telegram http=${HTTP}"
+          if [ "${HTTP}" != "200" ]; then
+            echo "::error::Telegram delivery failed (http=${HTTP})"
+            cat /tmp/tg_resp.json
+            exit 1
+          fi
+
+          # Verify API-level success as well as the HTTP status so a malformed
+          # Telegram response cannot leave the watchdog falsely green.
+          python - <<'PY'
+          import json
+
+          with open("/tmp/tg_resp.json", encoding="utf-8") as response_file:
+              response = json.load(response_file)
+          if response.get("ok") is not True:
+              raise SystemExit("Telegram API response did not contain ok=true")
+          PY
