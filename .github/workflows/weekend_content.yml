@@ -26,7 +26,7 @@ jobs:
   weekend_content:
     name: Weekend Content
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 30
     env:
       DRY_RUN: ${{ secrets.DRY_RUN || 'true' }}
       FORCE_RUN: ${{ secrets.FORCE_RUN || 'false' }}
