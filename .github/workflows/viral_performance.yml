@@ -7,15 +7,15 @@ on:
   workflow_dispatch:
     inputs:
       force_mode:
-        description: 'Force mode override (override repo VIRAL_AUTO_DELETE)'
+        description: 'Force mode override (repository_default uses repo variable/policy)'
         type: choice
         options:
-          - ''
+          - 'repository_default'
           - 'off'
           - 'monitor'
           - 'dry_run'
           - 'full'
-        default: ''
+        default: 'repository_default'
 
 # 동시 실행 방지 (cron 30분 + 수동 dispatch 충돌 방지)
 concurrency:
@@ -29,8 +29,9 @@ jobs:
     timeout-minutes: 10
 
     env:
-      # 모드: workflow_dispatch input > repo Variables > policy YAML 기본값
-      VIRAL_AUTO_DELETE: ${{ github.event.inputs.force_mode || vars.VIRAL_AUTO_DELETE || 'monitor' }}
+      # 모드: 명시적인 dispatch override > repo Variables > monitor.
+      # choice input에는 빈 문자열을 둘 수 없으므로 repository_default를 sentinel로 사용한다.
+      VIRAL_AUTO_DELETE: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.force_mode != 'repository_default' && github.event.inputs.force_mode || vars.VIRAL_AUTO_DELETE || 'monitor' }}
 
       # X API
       X_API_KEY: ${{ secrets.X_API_KEY }}

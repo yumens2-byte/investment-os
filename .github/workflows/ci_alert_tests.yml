@@ -26,15 +26,46 @@ on:
       - 'tests/test_alert_**.py'
       - 'tests/test_b21a_**.py'
       - '.github/workflows/ci_alert_tests.yml'
+      - '.github/workflows/*.yml'
+      - 'tests/test_watchdog_workflow.py'
+      - 'tests/test_workflow_operations.py'
   push:
     branches: [main]
     paths:
       - 'engines/alert_engine.py'
       - 'run_alert.py'
       - 'config/settings.py'
+      - '.github/workflows/*.yml'
+      - 'tests/test_watchdog_workflow.py'
+      - 'tests/test_workflow_operations.py'
   workflow_dispatch:
 
 jobs:
+  workflow-guardrails:
+    name: Workflow 운영 가드레일
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: 레포 체크아웃
+        uses: actions/checkout@v4
+
+      - name: Python 3.11 셋업
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Watchdog 및 운영 정책 회귀 테스트
+        run: |
+          python -m pip install pytest
+          pytest -q tests/test_watchdog_workflow.py tests/test_workflow_operations.py
+
+      - name: GitHub Actions 정적 검사
+        run: |
+          docker run --rm \
+            -v "$PWD:/repo" \
+            -w /repo \
+            rhysd/actionlint:1.7.7
+
   alert-regression:
     name: Alert 16종 회귀 테스트
     runs-on: ubuntu-latest
