@@ -63,3 +63,14 @@ def test_watchdog_guardrails_are_connected_to_ci() -> None:
     assert text.count("- '.github/workflows/*.yml'") == 2
     assert "pytest -q tests/test_watchdog_workflow.py tests/test_workflow_operations.py" in text
     assert "rhysd/actionlint:1.7.7" in text
+
+
+def test_viral_performance_choice_has_non_empty_default_sentinel() -> None:
+    """GitHub choice inputs reject empty options; a named sentinel preserves fallback."""
+    text = (WORKFLOWS / "viral_performance.yml").read_text(encoding="utf-8")
+
+    assert "          - ''" not in text
+    assert "default: ''" not in text
+    assert "- 'repository_default'" in text
+    assert "default: 'repository_default'" in text
+    assert "github.event.inputs.force_mode != 'repository_default'" in text

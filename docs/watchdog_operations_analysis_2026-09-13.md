@@ -216,6 +216,7 @@ workflow_dispatch
 - [x] `tests/test_watchdog_workflow.py`를 PR CI에 연결하고 관련 path filter 추가 (2026-09-13)
 - [x] `comic_novel.yml` 포함 모든 운영 job에 `timeout-minutes` 명시 (2026-09-13)
 - [x] 15분 random delay를 사용하는 Daily Comic·Weekend Content timeout을 30분으로 상향 (2026-09-13)
+- [x] Viral Performance의 빈 choice option을 `repository_default` sentinel로 교체해 actionlint 오류 제거 (2026-09-13)
 - [ ] 수동 watchdog smoke test 실행 후 내부 채널 수신 증적 남기기
 - [ ] 각 workflow의 실제 최근 30일 성공률과 평균/95백분위 실행 시간을 기준선으로 기록
 

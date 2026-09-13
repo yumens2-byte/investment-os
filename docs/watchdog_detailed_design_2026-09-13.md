@@ -19,6 +19,7 @@
 4. 모든 workflow에 대한 `actionlint` CI 추가
 5. 모든 운영 job의 timeout 존재 여부를 검증하는 회귀 테스트 추가
 6. 상세설계, 검증 기준, 배포·rollback 절차 작성
+7. Viral Performance의 빈 choice option을 명시적 `repository_default` sentinel로 교정
 
 ### 이번 릴리스에 포함하지 않음
 
@@ -42,6 +43,7 @@
 | WD-F-003 | 모든 운영 job에 실행 상한과 의도적 delay 이상의 여유를 둔다 | 모든 job에 timeout 존재, 15분 delay job은 30분 이상 | 완료 |
 | WD-F-004 | workflow 변경 시 정적 검사를 수행한다 | `.github/workflows/*.yml` 변경이 CI를 trigger하고 actionlint 실행 | 완료 |
 | WD-F-005 | watchdog 정책 변경 시 회귀 테스트를 수행한다 | 두 guardrail 테스트 파일이 CI에서 실행 | 완료 |
+| WD-F-006 | workflow_dispatch choice가 GitHub 문법에 맞아야 한다 | 빈 option/default 없이 repository fallback 유지 | 완료 |
 | WD-F-101 | 예정 실행 누락을 감지한다 | 기대 시각+grace 이후 run 부재 시 incident 1건 생성 | 설계 완료 |
 | WD-F-102 | 결과물 신선도와 발행 건수를 감시한다 | health contract 위반 시 DEGRADED/FAILED 생성 | 설계 완료 |
 | WD-F-103 | 동일 장애를 중복 통지하지 않는다 | incident key당 OPEN 알림 1회 | 설계 완료 |
@@ -130,6 +132,7 @@ PR과 main push 모두 동일하게 적용한다.
 | `test_long_random_delays_have_runtime_headroom` | 의도적 delay가 timeout을 소진하는 구성 | 정상 실행의 무작위 timeout |
 | `test_watchdog_guardrails_are_connected_to_ci` | 테스트 파일만 존재하고 자동 실행되지 않는 상태 | 정책 drift가 PR에서 미탐지 |
 | 기존 watchdog 3 tests | 감시 목록, 최소 권한, Telegram 계약 | 중앙 실패 감지 약화 |
+| `test_viral_performance_choice_has_non_empty_default_sentinel` | 빈 choice option 재발과 fallback 손실 | actionlint 실패 또는 잘못된 실행 모드 |
 
 ---
 
@@ -412,6 +415,7 @@ OPEN/ACKNOWLEDGED ── maintenance policy ──> SUPPRESSED ── expiry ─
 | CI workflow guardrail | `.github/workflows/ci_alert_tests.yml` | 구현 |
 | 기존 watchdog 정책 테스트 | `tests/test_watchdog_workflow.py` | 기존/CI 연결 |
 | 공통 workflow 운영 테스트 | `tests/test_workflow_operations.py` | 신규 |
+| Viral Performance choice 교정 | `.github/workflows/viral_performance.yml` | 구현 |
 
 ---
 
@@ -423,6 +427,7 @@ OPEN/ACKNOWLEDGED ── maintenance policy ──> SUPPRESSED ── expiry ─
 - [x] workflow 변경이 watchdog/운영 테스트와 actionlint를 trigger한다.
 - [x] guardrail 테스트가 로컬에서 통과한다.
 - [x] 상세설계와 rollback/runbook이 저장소에 있다.
+- [x] Viral Performance 수동 입력은 유효한 sentinel을 사용하면서 repository fallback을 보존한다.
 - [ ] GitHub-hosted CI에서 actionlint image 실행이 확인되었다.
 - [ ] Daily Comic/Comic Novel dry-run 실행이 확인되었다.
 - [ ] Telegram 수동 smoke test 수신 증적이 남았다.
