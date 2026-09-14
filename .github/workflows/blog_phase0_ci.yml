@@ -1,23 +1,66 @@
-name: Naver Blog Phase 0 CI
+name: Naver Blog Compatibility CI
 
 # CI-only verification workflow; production watchdog monitoring is intentionally excluded.
 on:
   pull_request:
     paths:
       - "blog/**"
+      - "blog_main.py"
       - "main.py"
-      - "tests/test_naver_blog_phase0.py"
+      - "tests/test_naver_blog_*.py"
       - ".github/workflows/blog_phase0_ci.yml"
   workflow_dispatch:
 
 permissions:
   contents: read
 
+env:
+  DRY_RUN: "true"
+  LOG_LEVEL: "WARNING"
+  FRED_API_KEY: "test"
+  X_API_KEY: "test"
+  X_API_SECRET: "test"
+  X_ACCESS_TOKEN: "test"
+  X_ACCESS_TOKEN_SECRET: "test"
+  TG_BOT_TOKEN: "test"
+  TG_CHANNEL_ID_FREE: "test"
+  TG_CHANNEL_ID_PAID: "test"
+  SUPABASE_URL: "https://test.supabase.co"
+  SUPABASE_ANON_KEY: "test"
+  MPLBACKEND: "Agg"
+
 jobs:
-  test:
-    name: PREPARE_ONLY unit tests
+  blog-isolation:
+    name: Blog unit and isolation guards
     runs-on: ubuntu-latest
     timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+      - run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+      - name: Blog unit and cross-pipeline isolation tests
+        run: |
+          python -m pytest -q             tests/test_naver_blog_phase0.py             tests/test_naver_blog_compatibility.py
+      - name: Existing main entrypoint must match PR base
+        run: |
+          git fetch origin "$GITHUB_BASE_REF"
+          git diff --exit-code "origin/$GITHUB_BASE_REF" -- main.py
+      - name: Both CLI entrypoints load independently
+        run: |
+          python main.py --help
+          python blog_main.py --help
+
+  repository-regression:
+    name: Entire pytest repository regression
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -25,6 +68,29 @@ jobs:
           python-version: "3.11"
           cache: pip
       - run: |
-          python -m pip install pytest
+          python -m pip install --upgrade pip
           pip install -r requirements.txt
-      - run: python -m pytest -q tests/test_naver_blog_phase0.py
+      - name: Run every pytest-discoverable test
+        run: python -m pytest -q
+
+  legacy-script-regression:
+    name: Legacy pipeline script regression
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+      - run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+      - name: Tier 1 exhaustive script
+        run: python test_tier1_signals.py
+      - name: Tier 2 exhaustive script
+        run: python test_tier2_signals.py
+      - name: Existing end-to-end mock pipeline
+        run: python test_e2e_pipeline.py
+      - name: Existing pilot rounds
+        run: python main.py test
