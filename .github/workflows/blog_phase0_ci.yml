@@ -1,5 +1,6 @@
 name: Naver Blog Phase 0 CI
 
+# CI-only verification workflow; production watchdog monitoring is intentionally excluded.
 on:
   pull_request:
     paths:
