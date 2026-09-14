@@ -59,7 +59,7 @@ jobs:
           python blog_main.py --help
 
   repository-regression:
-    name: Entire pytest repository regression
+    name: Entire maintained pytest suite
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
@@ -72,46 +72,86 @@ jobs:
           python -m pip install --upgrade pip
           python -m pip install pytest
           pip install -r requirements.txt
-      - name: Run every pytest-discoverable test
-        run: python -m pytest -q
+      - name: Run every maintained pytest test
+        run: python -m pytest -q tests
 
-  legacy-script-regression:
-    name: Legacy pipeline script regression
+  baseline-compatibility:
+    name: Main versus PR full compatibility comparison
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 30
     steps:
-      - uses: actions/checkout@v4
+      - name: Check out PR branch
+        uses: actions/checkout@v4
+        with:
+          path: candidate
+      - name: Check out base branch
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.base_ref || 'main' }}
+          path: baseline
       - uses: actions/setup-python@v5
         with:
           python-version: "3.11"
           cache: pip
-      - run: |
+          cache-dependency-path: candidate/requirements.txt
+      - name: Install shared test dependencies
+        run: |
           python -m pip install --upgrade pip
           python -m pip install pytest
-          pip install -r requirements.txt
-      - name: Tier 1 exhaustive script
-        id: tier1
-        continue-on-error: true
-        run: python test_tier1_signals.py
-      - name: Tier 2 exhaustive script
-        id: tier2
-        if: ${{ always() }}
-        continue-on-error: true
-        run: python test_tier2_signals.py
-      - name: Existing end-to-end mock pipeline
-        id: e2e
-        if: ${{ always() }}
-        continue-on-error: true
-        run: python test_e2e_pipeline.py
-      - name: Existing pilot rounds
-        id: pilot
-        if: ${{ always() }}
-        continue-on-error: true
-        run: python main.py test
-      - name: Record legacy script outcomes
-        if: ${{ always() }}
+          pip install -r candidate/requirements.txt
+      - name: Compare every maintained existing pytest test
         run: |
-          echo "tier1=${{ steps.tier1.outcome }}"
-          echo "tier2=${{ steps.tier2.outcome }}"
-          echo "e2e=${{ steps.e2e.outcome }}"
-          echo "pilot=${{ steps.pilot.outcome }}"
+          set +e
+          (
+            cd baseline
+            python -m pytest -q tests
+          ) > /tmp/baseline-pytest.log 2>&1
+          baseline_rc=$?
+          (
+            cd candidate
+            python -m pytest -q tests               --ignore=tests/test_naver_blog_phase0.py               --ignore=tests/test_naver_blog_compatibility.py
+          ) > /tmp/candidate-pytest.log 2>&1
+          candidate_rc=$?
+          set -e
+          tail -n 5 /tmp/baseline-pytest.log
+          tail -n 5 /tmp/candidate-pytest.log
+          test "$baseline_rc" -eq "$candidate_rc"
+      - name: Compare all legacy exhaustive scripts
+        run: |
+          scripts="full_test.py test_tier1_signals.py test_tier2_signals.py test_e2e_pipeline.py"
+          for script in $scripts; do
+            set +e
+            (
+              cd baseline
+              python "$script"
+            ) > "/tmp/baseline-$script.log" 2>&1
+            baseline_rc=$?
+            (
+              cd candidate
+              python "$script"
+            ) > "/tmp/candidate-$script.log" 2>&1
+            candidate_rc=$?
+            set -e
+
+            echo "=== $script: baseline=$baseline_rc candidate=$candidate_rc ==="
+            grep -E "전수 테스트 결과:|테스트 결과:|📊 결과:|Round [12]:"               "/tmp/baseline-$script.log" | tail -n 4 || true
+            grep -E "전수 테스트 결과:|테스트 결과:|📊 결과:|Round [12]:"               "/tmp/candidate-$script.log" | tail -n 4 || true
+            test "$baseline_rc" -eq "$candidate_rc"
+          done
+      - name: Compare existing pilot CLI
+        run: |
+          set +e
+          (
+            cd baseline
+            python main.py test
+          ) > /tmp/baseline-pilot.log 2>&1
+          baseline_rc=$?
+          (
+            cd candidate
+            python main.py test
+          ) > /tmp/candidate-pilot.log 2>&1
+          candidate_rc=$?
+          set -e
+          tail -n 10 /tmp/baseline-pilot.log
+          tail -n 10 /tmp/candidate-pilot.log
+          test "$baseline_rc" -eq "$candidate_rc"
