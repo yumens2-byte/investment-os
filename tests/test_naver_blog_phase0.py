@@ -171,3 +171,21 @@ def test_prepare_from_file_materializes_idempotent_package(tmp_path) -> None:
     assert manifest["publish_mode"] == "PREPARE_ONLY"
     assert manifest["approval"]["level"] == "RECOMMENDED"
     assert manifest["validation"]["status"] == "PASS"
+
+
+def test_cli_exposes_prepare_only_blog_command() -> None:
+    from main import build_parser
+
+    args = build_parser().parse_args([
+        "blog",
+        "prepare",
+        "--session",
+        "morning",
+        "--dry-run",
+        "false",
+    ])
+
+    assert args.command == "blog"
+    assert args.blog_action == "prepare"
+    assert args.session == "morning"
+    assert args.dry_run == "false"
