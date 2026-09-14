@@ -174,10 +174,9 @@ def test_prepare_from_file_materializes_idempotent_package(tmp_path) -> None:
 
 
 def test_cli_exposes_prepare_only_blog_command() -> None:
-    from main import build_parser
+    from blog_main import build_parser
 
     args = build_parser().parse_args([
-        "blog",
         "prepare",
         "--session",
         "morning",
@@ -185,7 +184,6 @@ def test_cli_exposes_prepare_only_blog_command() -> None:
         "false",
     ])
 
-    assert args.command == "blog"
-    assert args.blog_action == "prepare"
+    assert args.command == "prepare"
     assert args.session == "morning"
     assert args.dry_run == "false"
