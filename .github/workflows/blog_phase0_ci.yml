@@ -1,0 +1,27 @@
+name: Naver Blog Phase 0 CI
+
+on:
+  pull_request:
+    paths:
+      - "blog/**"
+      - "main.py"
+      - "tests/test_naver_blog_phase0.py"
+      - ".github/workflows/blog_phase0_ci.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    name: PREPARE_ONLY unit tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+      - run: pip install -r requirements.txt
+      - run: pytest -q tests/test_naver_blog_phase0.py
