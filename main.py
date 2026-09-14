@@ -10,6 +10,8 @@ main.py — Investment OS 단일 진입점
   python main.py run view   [--mode tweet|thread]
   python main.py run all    [--session morning|intraday|close|full|auto] [--mode tweet|thread]
 
+  python main.py blog prepare [--session morning] [--dry-run true|false]
+
   python main.py schedule            ← 데몬 모드 (scheduler.py 동등)
   python main.py schedule --now morning
 
@@ -86,6 +88,35 @@ def cmd_run_all(session: str, mode: str) -> int:
 
     rc_view = cmd_run_view(mode, session=session)
     return rc_view
+
+
+def cmd_blog_prepare(
+    session: str,
+    core_data: str | None,
+    output_dir: str | None,
+    dry_run: bool,
+) -> int:
+    """네이버 블로그 PREPARE_ONLY 패키지 생성."""
+    from blog.service import prepare_from_file
+    from config.settings import CORE_DATA_FILE
+
+    source_path = Path(core_data) if core_data else CORE_DATA_FILE
+    logger.info(
+        f"[main] ▶ blog prepare "
+        f"(session={session}, dry_run={dry_run}, source={source_path})"
+    )
+    try:
+        result = prepare_from_file(
+            source_path,
+            session=session,
+            output_dir=output_dir,
+            dry_run=dry_run,
+        )
+        _print_result("blog prepare", result)
+        return 0 if result.get("success") else 2
+    except Exception as e:
+        logger.critical(f"[main] blog prepare 실패: {e}", exc_info=True)
+        return 1
 
 
 def cmd_schedule(run_now: str | None) -> int:
@@ -273,6 +304,38 @@ def build_parser() -> argparse.ArgumentParser:
                     choices=["tweet", "thread"],
                     default="tweet")
 
+    # ── blog ────────────────────────────────────────────────────
+    blog = sub.add_parser(
+        "blog",
+        help="네이버 블로그 PREPARE_ONLY 패키지 생성",
+    )
+    blog_sub = blog.add_subparsers(dest="blog_action", required=True)
+    blog_prepare = blog_sub.add_parser(
+        "prepare",
+        help="제목·본문·태그·출처·검증 보고서 생성",
+    )
+    blog_prepare.add_argument(
+        "--session",
+        choices=["morning", "intraday", "close", "full", "weekly", "narrative"],
+        default="morning",
+    )
+    blog_prepare.add_argument(
+        "--core-data",
+        default=None,
+        help="core_data.json 경로 (기본: config.settings.CORE_DATA_FILE)",
+    )
+    blog_prepare.add_argument(
+        "--output-dir",
+        default=None,
+        help="산출물 루트 (기본: data/outputs/naver_blog)",
+    )
+    blog_prepare.add_argument(
+        "--dry-run",
+        choices=["true", "false"],
+        default="true",
+        help="true=승인 선택, false=승인 권고. 둘 다 PREPARE_ONLY",
+    )
+
     # ── schedule ─────────────────────────────────────────────────
     sch = sub.add_parser("schedule", help="자동 스케줄 데몬 실행")
     sch.add_argument("--now",
@@ -332,6 +395,15 @@ def main() -> None:
         elif args.run_target == "all":
             session = _detect_session() if args.session == "auto" else args.session
             rc = cmd_run_all(session, args.mode)
+
+    elif args.command == "blog":
+        if args.blog_action == "prepare":
+            rc = cmd_blog_prepare(
+                session=args.session,
+                core_data=args.core_data,
+                output_dir=args.output_dir,
+                dry_run=args.dry_run.lower() == "true",
+            )
 
     elif args.command == "schedule":
         rc = cmd_schedule(run_now=args.now)
