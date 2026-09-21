@@ -32,6 +32,8 @@ name: "🐕‍🦺 Watchdog"
       - "📊 Viral Daily Report"
       - "📊 Viral Performance Tracker"
       - Weekend Content
+      - "🎬 Hero Shorts Gen (v2.4.3 — gen 폴더)"
+
     types:
       - completed
   workflow_dispatch:
