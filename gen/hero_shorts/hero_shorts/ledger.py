@@ -41,15 +41,25 @@ def _read_page_notion_api(page_id, token):
         f"https://api.notion.com/v1/blocks/{page_id}/children",
         headers={"Authorization": f"Bearer {token}",
                  "Notion-Version": "2022-06-28"})
-    with urllib.request.urlopen(req, timeout=30) as r:
-        return json.dumps(json.load(r), ensure_ascii=False)
+    try:
+        with urllib.request.urlopen(req, timeout=30) as r:
+            return json.dumps(json.load(r), ensure_ascii=False)
+    except urllib.error.HTTPError as e:
+        raise RuntimeError(
+            f"노션 API 호출 실패(HTTP {e.code}) — NOTION_TOKEN 만료·페이지 접근 권한 확인"
+        )
 
 
 def read_page_via_gsk(page_id):
     """gsk CLI 백엔드 — 크레딧 0. 페이지 본문 JSON(envelope)을 문자열로 반환."""
     cmd = ["gsk", "notion", "read", "--page_id", page_id]
     log.debug("gsk 노션 읽기 실행: %s", page_id)
-    out = subprocess.run(cmd, capture_output=True, text=True, timeout=120)
+    try:
+        out = subprocess.run(cmd, capture_output=True, text=True, timeout=120)
+    except FileNotFoundError:
+        raise RuntimeError(
+            "gsk CLI 부재 + NOTION_TOKEN 미설정 — Actions에서 노션 직독은 레포 시크릿 NOTION_TOKEN 등록 필수"
+        )
     if out.returncode != 0:
         log.error("gsk notion read 실패(%s): %s", page_id, out.stderr[:200])
         raise RuntimeError(f"gsk notion read 실패: {page_id}")
