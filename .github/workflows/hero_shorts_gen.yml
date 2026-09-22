@@ -9,7 +9,7 @@ on:
         required: true
         default: "plan"
       only:
-        description: "generate 시 생성할 컷 번호 (단건 — 연속 생성 방지, 비우면 전체)"
+        description: "generate 시 생성할 컷 번호 (필수 — 예: 2). 비우면 연속생성금지 가드가 거부한다"
         required: false
         default: ""
 jobs:
@@ -27,6 +27,7 @@ jobs:
           STEP="${{ github.event.inputs.step }}"
           ONLY="${{ github.event.inputs.only }}"
           if [ "$STEP" = "generate" ]; then
+            [ -f gen/data/out/ep86_plan.json ] || python3 -m gen.hero_shorts.pipeline plan   # plan 부재 시 노션 원장 직독 재생성(0원)
             ARGS="generate --plan gen/data/out/ep86_plan.json --backend fal"
             [ -n "$ONLY" ] && ARGS="$ARGS --only $ONLY"
             python3 -m gen.hero_shorts.pipeline $ARGS
@@ -36,6 +37,8 @@ jobs:
         env:
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
           FAL_AI_KEY: ${{ secrets.FAL_AI_KEY }}   # fal 시크릿 매핑
+          FAL_ENDPOINT: minimax/h3/text-to-video   # fal 엔드포인트 — 공식 문서 확정
+          NOTION_TOKEN: ${{ secrets.NOTION_TOKEN }}   # 노션 원장 직독(Actions) — 통합 토큰 시크릿
       - name: Upload artifacts (컷 영상·합본·QC·로그)   # v2.4.3 — 러너 소실 방지 필수
         if: always()
         uses: actions/upload-artifact@v4
