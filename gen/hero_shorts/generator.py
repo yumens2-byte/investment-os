@@ -110,6 +110,22 @@ def _validate_output(out_path, requested_duration):
     log.info("출력 검증 OK: %.1fs %dB", dur, size)
 
 
+def _fal_json(req, phase):
+    """fal 호출 공용 — HTTP 오류 시 응답 본문(원인)을 반드시 노출(403 등 원인 규명용)."""
+    try:
+        with urllib.request.urlopen(req, timeout=60) as r:
+            return json.load(r)
+    except urllib.error.HTTPError as e:
+        try:
+            detail = e.read().decode("utf-8", "replace")[:400]
+        except Exception:
+            detail = "(본문 해독 실패)"
+        hint = {401: "FAL_AI_KEY 무효·포맷 확인(fal 대시보드 Keys)",
+                402: "fal 크레딧 부족",
+                403: "접근 거부 — 모델 접근권·계정 빌링·키 상태 확인"}.get(e.code, "")
+        raise RuntimeError(f"fal {phase} 실패 HTTP {e.code} {hint} — fal 응답: {detail}") from e
+
+
 def _fal_call(request, out_path):
     """fal queue API 실호출. 키·엔드포인트 미설정 시 즉시 실패(추측 방지)."""
     key = os.getenv("FAL_AI_KEY", "")
@@ -127,25 +143,22 @@ def _fal_call(request, out_path):
     req = urllib.request.Request(url, data=body, method="POST",
                                  headers={"Authorization": f"Key {key}",
                                           "Content-Type": "application/json"})
-    with urllib.request.urlopen(req, timeout=60) as r:
-        job = json.load(r)
+    job = _fal_json(req, "제출")
     log.info("fal 작업 제출: %s", job.get("request_id"))
     # 폴링 — status_url 응답이 COMPLETED 가 될 때까지 3s 간격 최대 100회
     status_url = job.get("status_url")
     resp_url = job.get("response_url")
     for i in range(100):
         time.sleep(3)
-        with urllib.request.urlopen(urllib.request.Request(
-                status_url, headers={"Authorization": f"Key {key}"}), timeout=30) as r:
-            st = json.load(r)
+        st = _fal_json(urllib.request.Request(
+                status_url, headers={"Authorization": f"Key {key}"}), "폴링")
         log.debug("fal 폴링 %d회: %s", i + 1, st.get("status"))
         if st.get("status") == "COMPLETED":
             break
     else:
         raise TimeoutError("fal 작업 타임아웃(300s)")
-    with urllib.request.urlopen(urllib.request.Request(
-            resp_url, headers={"Authorization": f"Key {key}"}), timeout=30) as r:
-        result = json.load(r)
+    result = _fal_json(urllib.request.Request(
+            resp_url, headers={"Authorization": f"Key {key}"}), "결과조회")
     video_url = result["video"]["url"]
     urllib.request.urlretrieve(video_url, out_path)
     _validate_output(out_path, duration)        # 과금 후 기술검증 — 이상 시 재생성 금지
