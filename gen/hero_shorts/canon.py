@@ -123,4 +123,11 @@ def full_prompt(scene_text, characters, camera=None, sound=None):
         seg.append(sound)
     seg.append(canon_block(characters))
     seg.append(CLEAN_TAIL)
-    return ". ".join([s.rstrip(".") for s in seg if s]) + "."
+    joined = ". ".join([s.rstrip(".") for s in seg if s]) + "."
+    # G2 계약 보장 — 주역 EDT 는 모든 컷 프롬프트에 서술된다(캐논 원칙, 근본 수정).
+    if "EDT" not in joined:
+        hero = CHARACTERS.get("EDT", "EDT")
+        if not hero.startswith("EDT"):
+            hero = "EDT, " + hero
+        joined = joined.rstrip(".") + ", " + hero + "."
+    return joined

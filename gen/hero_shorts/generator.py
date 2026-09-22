@@ -114,8 +114,9 @@ def _fal_call(request, out_path):
     """fal queue API 실호출. 키·엔드포인트 미설정 시 즉시 실패(추측 방지)."""
     key = os.getenv("FAL_AI_KEY", "")
     endpoint = os.getenv("FAL_ENDPOINT", "")
-    if not key or not endpoint:
-        raise RuntimeError("FAL_AI_KEY/FAL_ENDPOINT 미설정 — fal 실생성은 승인 후 주입")
+    missing = [n for n, v in (("FAL_AI_KEY", key), ("FAL_ENDPOINT", endpoint)) if not v]
+    if missing:
+        raise RuntimeError(f"{', '.join(missing)} 미설정 — fal 실생성은 승인 후 주입")
     if endpoint not in KNOWN_PRICES and not os.getenv("FAL_PRICE_OVERRIDE"):
         raise RuntimeError(f"가격 미확인 엔드포인트({endpoint}) — 과금 실측 전 실행 금지(v2.4.4)")
     _validate_request(request)                  # 비용 전 밸리데이션 — ①스키마 ②G1/G2
