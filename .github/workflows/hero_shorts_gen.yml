@@ -9,9 +9,9 @@ on:
         required: true
         default: "plan"
       only:
-        description: "generate 시 생성할 컷 번호 (필수 — 예: 2). 비우면 연속생성금지 가드가 거부한다"
+        description: "생성할 컷 번호 (기본 2 = 단건). 전체 실행은 승인 후 HERO_ALLOW_ALL=1 별도 경로"
         required: false
-        default: ""
+        default: "2"
 jobs:
   run:
     runs-on: ubuntu-latest
@@ -21,11 +21,14 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with: { python-version: "3.11" }
+      - name: Install ffmpeg        # _validate_output 의 ffprobe 기술검증용 — 러너 미기본
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq ffmpeg
       - run: pip install -r requirements.txt
       - name: Run step
         run: |
           STEP="${{ github.event.inputs.step }}"
           ONLY="${{ github.event.inputs.only }}"
+          echo "▶ STEP=$STEP ONLY=$ONLY (기본 2 — 단건 강제)"
           if [ "$STEP" = "generate" ]; then
             [ -f gen/data/out/ep86_plan.json ] || python3 -m gen.hero_shorts.pipeline plan   # plan 부재 시 노션 원장 직독 재생성(0원)
             ARGS="generate --plan gen/data/out/ep86_plan.json --backend fal"
