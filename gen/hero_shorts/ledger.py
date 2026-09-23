@@ -118,7 +118,7 @@ def _query_rows_notion_api(ep_number, token):
     import urllib.error
     import urllib.request
 
-    url = f"https://api.notion.com/v1/data-sources/{TRACKER_DATA_SOURCE_ID}/query"
+    url = f"https://api.notion.com/v1/data_sources/{TRACKER_DATA_SOURCE_ID}/query"
     body = {
         "filter": {"property": "번호", "number": {"equals": int(ep_number)}},
         "sorts": [{"timestamp": "created_time", "direction": "descending"}],
@@ -136,7 +136,7 @@ def _query_rows_notion_api(ep_number, token):
     except urllib.error.HTTPError as e:
         detail = e.read().decode("utf-8", "replace")[:600]
         raise RuntimeError(
-            f"트래커 DB query 실패(HTTP {e.code}) — NOTION_API_KEY/NOTION_TOKEN 또는 DB 공유 권한 확인: {detail}"
+            f"트래커 DB query 실패(HTTP {e.code}) — NOTION_API_TOKEN/NOTION_TOKEN/NOTION_API_KEY 또는 DB 공유 권한 확인: {detail}"
         ) from e
     rows = [_page_to_row(p) for p in data.get("results", [])]
     log.info("트래커 DB query(API): Ep%d → %d행", ep_number, len(rows))
@@ -181,7 +181,7 @@ def _query_rows_via_gsk(ep_number):
         out = subprocess.run(cmd, capture_output=True, text=True, timeout=120)
     except FileNotFoundError as e:
         raise RuntimeError(
-            "gsk CLI 부재 + NOTION_API_KEY/NOTION_TOKEN 미설정 — 트래커 DB 직독 불가"
+            "gsk CLI 부재 + NOTION_API_TOKEN/NOTION_TOKEN/NOTION_API_KEY 미설정 — 트래커 DB 직독 불가"
         ) from e
     if out.returncode != 0:
         raise RuntimeError((out.stderr or out.stdout or "gsk notion query 실패")[:500])
@@ -199,7 +199,6 @@ def query_tracker_rows(ep_number):
     if token:
         return _query_rows_notion_api(ep_number, token)
     return _query_rows_via_gsk(ep_number)
-
 
 
 def _is_discarded(row):

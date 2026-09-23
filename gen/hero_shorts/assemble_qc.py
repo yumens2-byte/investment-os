@@ -83,7 +83,10 @@ def qc_4gates(prompts, final_video, ep_state, plan_meta=None):
 
     # G2 — 캐논 (필수 토큰 존재 + 금지 문구 부재)
     missing = [t for t in C.PROMPT_TOKENS if t not in joined]
-    forbidden = [f for f in C.FORBIDDEN_PHRASES if f in joined]
+    forbidden_pool = C.FORBIDDEN_GLOBAL + [
+        f for vals in C.FORBIDDEN_PER_CHARACTER.values() for f in vals
+    ]
+    forbidden = [f for f in forbidden_pool if f in joined]
     g2_ok = not missing and not forbidden
     log.info("G2 캐논: %s (누락토큰=%s 금지문구=%s)", "통과" if g2_ok else "실패", missing, forbidden)
 

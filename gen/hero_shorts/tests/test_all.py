@@ -18,6 +18,7 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))  # gen/ 루트
 
@@ -123,13 +124,22 @@ class TestQC(unittest.TestCase):
     def test_gates_pass(self):
         # BATTLE 3컷 더미 생성(0원) → 캐논 토큰·금지 문구 검증
         plan = cutplanner.plan_episode(EP86)[:3]
+        tmp = Path(self.tmpdir())
+        cuts = []
         for i, c in enumerate(plan):
-            generator.generate("dummy", c["request"], Path(self.tmpdir()) / f"qc{i}.mp4")
-        joined = "\n".join(c["prompt"] for c in plan)
-        for tok in canon.PROMPT_TOKENS:
-            self.assertIn(tok, joined)
-        all_forbidden = canon.FORBIDDEN_GLOBAL + [f for v in canon.FORBIDDEN_PER_CHARACTER.values() for f in v]
-        self.assertFalse(any(f in joined for f in all_forbidden))
+            cuts.append(generator.generate("dummy", c["request"], tmp / f"qc{i}.mp4"))
+        final = assemble_qc.assemble(cuts, tmp / "qc_final.mp4")
+        qc = assemble_qc.qc_4gates(
+            [c["prompt"] for c in plan],
+            final,
+            EP86,
+            plan_meta={"title": EP86["title"], "type": EP86["type"], "outcome": EP86["outcome"]},
+        )
+        self.assertTrue(qc["G1"])
+        self.assertTrue(qc["G2"])
+        self.assertTrue(qc["G4"])
+        self.assertEqual(qc["G3"]["w"], 720)
+        self.assertEqual(qc["G3"]["h"], 1280)
 
     def test_forbidden_phrase_blocks(self):
         bad = self._prompts() + ["Buy now! guaranteed profit suit"]
@@ -141,20 +151,98 @@ class TestQC(unittest.TestCase):
         return tempfile.mkdtemp()
 
 
-class TestLedgerParsing(unittest.TestCase):
-    """인덱스 행 파싱 — 정본=Y 필터, 폐기행 제거 (실측 Ep90 케이스 포함)."""
+class TestLedgerRows(unittest.TestCase):
+    """트래커 DB 다중 행 정본 선택 + episode 정규화."""
 
-    SAMPLE = """
-86|v1_0|Y|3e19208cbdc38157bb75cade94f98f6f|2d3e8c50d144c7b6
-90|CORRECTED_v1_1|N|3de9208cbdc38115a814ca9148e6d0ac|8dbb0c3ba9802697
-90|CORRECTED_v1_2|Y|3e19208cbdc381e0aba7c983e79d38f4|53eb3d893615bc98
-92|v1_0|Y|3e19208cbdc381ba9662f1028215d647|da9d27b416d1e845
-"""
+    ROWS_86 = [
+        {
+            "id": "stale-86", "createdTime": "2026-09-09 12:00:17Z", "번호": 86,
+            "에피소드": "Ep86 — 물러서지 않는 이유", "에피소드 타입": "STALEMATE",
+            "전투 결과": "No Battle", "발행 상태": "진행중", "메인 히어로": "Gold Bond Muscle",
+            "활성 빌런": "Oil Shock Titan", "Battle Balance": None,
+            "특이사항": "[논리적 폐기 — ACT2 정식전환 2026-09-09] 기존 버전"
+        },
+        {
+            "id": "canon-86", "createdTime": "2026-09-09 13:36:15Z", "번호": 86,
+            "에피소드": "Ep86 — 배분을 바꾼다, 지금 필요한 곳으로 [ACT2 정식전환]",
+            "에피소드 타입": "BATTLE", "전투 결과": "Tactical Victory", "발행 상태": "완료",
+            "메인 히어로": "Guardian of Capital", "활성 빌런": "Oil Shock Titan",
+            "Battle Balance": 27, "Arc Day": 4, "arc_tension": 74,
+            "date:발행일:start": "2026-09-09", "특이사항": "정식 전환 기록"
+        },
+    ]
 
-    def test_only_canonical_rows(self):
-        rows = ledger.parse_index(self.SAMPLE)
-        self.assertEqual(set(rows), {86, 90, 92})
-        self.assertEqual(rows[90]["revision"], "CORRECTED_v1_2")  # v1_1 폐기 제외
+    def test_choose_canonical_row_prefers_non_discarded_completed(self):
+        row = ledger.choose_canonical_row(self.ROWS_86)
+        self.assertEqual(row["id"], "canon-86")
+        self.assertEqual(row["에피소드 타입"], "BATTLE")
+
+    def test_row_to_episode_normalizes_shape(self):
+        ep = ledger.row_to_episode(self.ROWS_86[1])
+        self.assertEqual(ep["episode"], "Ep86")
+        self.assertEqual(ep["type"], "BATTLE")
+        self.assertEqual(ep["outcome"], "Tactical Victory")
+        self.assertEqual(ep["arc_state"]["active_villains"], ["Oil Shock Titan"])
+        self.assertEqual(ep["arc_state"]["arc_day"], 4)
+        self.assertEqual(ep["source"]["kind"], "tracker_db")
+
+
+class TestLedgerApi(unittest.TestCase):
+    """Actions용 Notion API 경로/토큰 우선순위 검증."""
+
+    def test_query_tracker_rows_uses_data_sources_endpoint_and_api_token(self):
+        payload = {
+            "results": [
+                {
+                    "id": "page-86",
+                    "url": "https://www.notion.so/page-86",
+                    "created_time": "2026-09-09T13:36:15.000Z",
+                    "properties": {
+                        "번호": {"type": "number", "number": 86},
+                        "에피소드": {"type": "title", "title": [{"plain_text": "Ep86 — 배분을 바꾼다, 지금 필요한 곳으로"}]},
+                        "에피소드 타입": {"type": "select", "select": {"name": "BATTLE"}},
+                        "전투 결과": {"type": "select", "select": {"name": "Tactical Victory"}},
+                        "발행 상태": {"type": "status", "status": {"name": "완료"}},
+                    },
+                }
+            ]
+        }
+
+        class FakeResponse:
+            def __init__(self, text):
+                self._text = text
+
+            def read(self, *args, **kwargs):
+                return self._text.encode("utf-8")
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, exc_type, exc, tb):
+                return False
+
+        seen = {}
+
+        def fake_urlopen(req, timeout=60):
+            seen["url"] = req.full_url
+            seen["auth"] = req.headers.get("Authorization")
+            return FakeResponse(json.dumps(payload, ensure_ascii=False))
+
+        with patch.dict(os.environ, {
+            "NOTION_API_TOKEN": "token-api",
+            "NOTION_TOKEN": "token-legacy",
+            "NOTION_API_KEY": "token-key",
+        }, clear=False):
+            with patch("urllib.request.urlopen", fake_urlopen):
+                rows = ledger.query_tracker_rows(86)
+
+        self.assertEqual(
+            seen["url"],
+            f"https://api.notion.com/v1/data_sources/{ledger.TRACKER_DATA_SOURCE_ID}/query",
+        )
+        self.assertEqual(seen["auth"], "Bearer token-api")
+        self.assertEqual(rows[0]["번호"], 86)
+        self.assertEqual(rows[0]["에피소드 타입"], "BATTLE")
 
 
 class TestPipelineState(unittest.TestCase):
