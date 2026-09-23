@@ -141,20 +141,40 @@ class TestQC(unittest.TestCase):
         return tempfile.mkdtemp()
 
 
-class TestLedgerParsing(unittest.TestCase):
-    """인덱스 행 파싱 — 정본=Y 필터, 폐기행 제거 (실측 Ep90 케이스 포함)."""
+class TestLedgerRows(unittest.TestCase):
+    """트래커 DB 다중 행 정본 선택 + episode 정규화."""
 
-    SAMPLE = """
-86|v1_0|Y|3e19208cbdc38157bb75cade94f98f6f|2d3e8c50d144c7b6
-90|CORRECTED_v1_1|N|3de9208cbdc38115a814ca9148e6d0ac|8dbb0c3ba9802697
-90|CORRECTED_v1_2|Y|3e19208cbdc381e0aba7c983e79d38f4|53eb3d893615bc98
-92|v1_0|Y|3e19208cbdc381ba9662f1028215d647|da9d27b416d1e845
-"""
+    ROWS_86 = [
+        {
+            "id": "stale-86", "createdTime": "2026-09-09 12:00:17Z", "번호": 86,
+            "에피소드": "Ep86 — 물러서지 않는 이유", "에피소드 타입": "STALEMATE",
+            "전투 결과": "No Battle", "발행 상태": "진행중", "메인 히어로": "Gold Bond Muscle",
+            "활성 빌런": "Oil Shock Titan", "Battle Balance": None,
+            "특이사항": "[논리적 폐기 — ACT2 정식전환 2026-09-09] 기존 버전"
+        },
+        {
+            "id": "canon-86", "createdTime": "2026-09-09 13:36:15Z", "번호": 86,
+            "에피소드": "Ep86 — 배분을 바꾼다, 지금 필요한 곳으로 [ACT2 정식전환]",
+            "에피소드 타입": "BATTLE", "전투 결과": "Tactical Victory", "발행 상태": "완료",
+            "메인 히어로": "Guardian of Capital", "활성 빌런": "Oil Shock Titan",
+            "Battle Balance": 27, "Arc Day": 4, "arc_tension": 74,
+            "date:발행일:start": "2026-09-09", "특이사항": "정식 전환 기록"
+        },
+    ]
 
-    def test_only_canonical_rows(self):
-        rows = ledger.parse_index(self.SAMPLE)
-        self.assertEqual(set(rows), {86, 90, 92})
-        self.assertEqual(rows[90]["revision"], "CORRECTED_v1_2")  # v1_1 폐기 제외
+    def test_choose_canonical_row_prefers_non_discarded_completed(self):
+        row = ledger.choose_canonical_row(self.ROWS_86)
+        self.assertEqual(row["id"], "canon-86")
+        self.assertEqual(row["에피소드 타입"], "BATTLE")
+
+    def test_row_to_episode_normalizes_shape(self):
+        ep = ledger.row_to_episode(self.ROWS_86[1])
+        self.assertEqual(ep["episode"], "Ep86")
+        self.assertEqual(ep["type"], "BATTLE")
+        self.assertEqual(ep["outcome"], "Tactical Victory")
+        self.assertEqual(ep["arc_state"]["active_villains"], ["Oil Shock Titan"])
+        self.assertEqual(ep["arc_state"]["arc_day"], 4)
+        self.assertEqual(ep["source"]["kind"], "tracker_db")
 
 
 class TestPipelineState(unittest.TestCase):
