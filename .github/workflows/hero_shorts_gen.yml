@@ -1,7 +1,7 @@
-name: "🎬 Hero Shorts Gen (v2.4.3 — gen 폴더)"
+name: "🎬 Hero Shorts Gen (v2.4.7 — gen 폴더)"
 on:
   schedule:
-    - cron: "0 1 * * 2,4"   # KST 화·목 10:00 발행 대비 plan 단계 — 0원 (생성 미포함)
+    - cron: "0 1 * * 2,4"   # KST 화·목 10:00 발행 대비 plan 단계 — 0원 (생성 미포함) — 9/23 마스터 지시: 월수→화목 변경
   workflow_dispatch:          # 수동 실행 전용 — fal 실생성(현금)은 여기서만 발생
     inputs:
       step:
@@ -39,12 +39,11 @@ jobs:
           fi
         env:
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
-          FAL_AI_KEY: ${{ secrets.FAL_AI_KEY }}
-          FAL_ENDPOINT: minimax/h3/text-to-video
-          NOTION_API_TOKEN: ${{ secrets.NOTION_API_TOKEN }}
-          NOTION_TOKEN: ${{ secrets.NOTION_TOKEN }}
-          NOTION_API_KEY: ${{ secrets.NOTION_API_KEY }}
-
+          FAL_AI_KEY: ${{ secrets.FAL_AI_KEY }}   # fal 시크릿 매핑
+          FAL_ENDPOINT: minimax/h3/text-to-video   # fal 엔드포인트 — 공식 문서 확정
+          NOTION_API_TOKEN: ${{ secrets.NOTION_API_TOKEN }}   # 표준 시크릿명(우선)
+          NOTION_TOKEN: ${{ secrets.NOTION_TOKEN }}   # 과거 별칭 호환
+          NOTION_API_KEY: ${{ secrets.NOTION_API_KEY }}   # 과거 레포 관례 호환
       - name: Upload artifacts (컷 영상·합본·QC·로그)   # v2.4.3 — 러너 소실 방지 필수
         if: always()
         uses: actions/upload-artifact@v4
