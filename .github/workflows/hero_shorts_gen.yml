@@ -39,9 +39,12 @@ jobs:
           fi
         env:
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
-          FAL_AI_KEY: ${{ secrets.FAL_AI_KEY }}   # fal 시크릿 매핑
-          FAL_ENDPOINT: minimax/h3/text-to-video   # fal 엔드포인트 — 공식 문서 확정
-          NOTION_TOKEN: ${{ secrets.NOTION_TOKEN }}   # 노션 원장 직독(Actions) — 통합 토큰 시크릿
+          FAL_AI_KEY: ${{ secrets.FAL_AI_KEY }}
+          FAL_ENDPOINT: minimax/h3/text-to-video
+          NOTION_API_TOKEN: ${{ secrets.NOTION_API_TOKEN }}
+          NOTION_TOKEN: ${{ secrets.NOTION_TOKEN }}
+          NOTION_API_KEY: ${{ secrets.NOTION_API_KEY }}
+
       - name: Upload artifacts (컷 영상·합본·QC·로그)   # v2.4.3 — 러너 소실 방지 필수
         if: always()
         uses: actions/upload-artifact@v4
