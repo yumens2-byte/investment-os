@@ -191,10 +191,15 @@ def _query_rows_via_gsk(ep_number):
 
 
 def query_tracker_rows(ep_number):
-    token = os.getenv("NOTION_TOKEN", "") or os.getenv("NOTION_API_KEY", "")
+    token = (
+        os.getenv("NOTION_API_TOKEN", "")
+        or os.getenv("NOTION_TOKEN", "")
+        or os.getenv("NOTION_API_KEY", "")
+    )
     if token:
         return _query_rows_notion_api(ep_number, token)
     return _query_rows_via_gsk(ep_number)
+
 
 
 def _is_discarded(row):
