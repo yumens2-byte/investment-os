@@ -1,23 +1,22 @@
 """
-gen/hero_shorts/ledger.py — 노션 원장(EDT Arc State Ledger) 파서
+gen/hero_shorts/ledger.py — 노션 EDT 에피소드 트래커(DB) 직독 로더
 =================================================================
 역할:
-    1. 인덱스 페이지(D-6)의 코드블록을 읽어 정본(정본=Y) page_id 목록 확정.
-       → 파이프라인은 절대 page_id 를 하드코딩하지 않는다(ASL-04 규칙).
-    2. 정본 페이지를 읽어 ```json 블록의 arc_state 객체를 파싱한다.
-    3. 폐기 행(정본=N, 예: Ep90 v1_1)은 목록에서 제외 — 최신 리비전만 사용.
+    1. EDT 에피소드 트래커 DB에서 회차(번호) 기준 행을 조회한다.
+    2. 동일 번호 다중 행이 있으면 논리적 폐기·미정본을 제외하고 최신 정본 1행을 고른다.
+    3. DB 행을 cutplanner가 쓰는 arc_state 구조로 정규화한다.
 
-백엔드:
-    기본 = `gsk notion read` 서브프로세스 (세션 실행 기준, 크레딧 0).
-    NOTION_TOKEN 이 설정되면 공식 REST API 우선 사용(Actions 실행 대응) —
-    이 경우 페이지 접근 권한을 integration 에 부여해야 한다.
+설계 전환(2026-09-23):
+    - 기존 인덱스 페이지(D-6) → 개별 페이지 읽기 구조는 운영 의도와 불일치했다.
+    - 이제 SSOT는 `EDT 에피소드 트래커` DB 자체다.
+    - 세션/개발 환경: gsk Notion MCP query_data_sources(SQL) 사용.
+    - Actions/서버 환경: 공식 Notion REST API(data source query) 사용.
 
-주의 (실측 2026-09-21):
-    - Ep86 `battle_scar` 는 note형, Ep87 은 필드 부재, Ep88+ 는 인물별 구조
-      → 소비자(cutplanner 등)는 battle_scar 를 옵셔널로 다룬다.
-    - `act` 필드는 Ep88 부터 존재 → 옵셔널.
-    - `next_episode.expected_type_hint` 는 Ep89 부터 기재 → 부재 시 유형은
-      v1.7 기본값 규칙(BATTLE) 대체.
+주의:
+    - 트래커 DB에는 동일 번호 다중 행이 존재할 수 있다(Ep86 실측: 논리적 폐기 행 + ACT2 정본 행).
+      => `특이사항`의 폐기 마커와 `발행 상태`를 함께 보아 정본 행을 선택한다.
+    - 트래커의 `메인 히어로` 표기는 캐릭터 캐논의 최종명과 다를 수 있다.
+      => 현재 cutplanner는 이 필드를 직접 쓰지 않고, 히어로 캐논은 canon.py가 책임진다.
 """
 import json
 import logging
@@ -27,101 +26,258 @@ import subprocess
 
 log = logging.getLogger("hero_shorts.ledger")
 
-# 원장 인덱스 page_id (D-6 조회 인덱스 — 삭제 금지, 행 추가·갱신만 허용)
-INDEX_PAGE_ID = "3de9208cbdc3816f9c97e17ed21d2ec0"
+TRACKER_DB_ID = os.getenv("HERO_SHORTS_TRACKER_DB_ID", "32a9e71588b843e1a650d2c9c87d1d9f")
+TRACKER_VIEW_URL = os.getenv(
+    "HERO_SHORTS_TRACKER_VIEW_URL",
+    "https://app.notion.com/p/32a9e71588b843e1a650d2c9c87d1d9f?v=741c74121afe4b6da48fa89d688e1fa6&source=copy_link",
+)
+TRACKER_DATA_SOURCE_ID = os.getenv("HERO_SHORTS_TRACKER_DATA_SOURCE_ID", "bdc5e21c-58eb-40f9-b659-8c6d33fd0dae")
+TRACKER_DATA_SOURCE_URL = f"collection://{TRACKER_DATA_SOURCE_ID}"
+DISCARD_MARKERS = ("논리적 폐기", "폐기됨", "폐기 ")
 
 
-def _read_page_notion_api(page_id, token):
-    """공식 Notion REST API 백엔드 (Actions 실행 대응).
+def _notion_headers(token):
+    return {
+        "Authorization": f"Bearer {token}",
+        "Notion-Version": "2026-03-11",
+        "Content-Type": "application/json",
+    }
 
-    아직 운영 경로는 아니며(토큰 부재) — 존재 시 우선 사용하도록 설계만 포함.
+
+def _rich_text_plain(items):
+    if not items:
+        return None
+    out = []
+    for item in items:
+        if isinstance(item, dict):
+            out.append(item.get("plain_text") or item.get("text", {}).get("content") or "")
+        else:
+            out.append(str(item))
+    text = "".join(out).strip()
+    return text or None
+
+
+def _extract_plain_value(prop):
+    """Notion page property → Python 원시값.
+
+    트래커에서 쓰는 대표 타입(title/rich_text/select/status/number/date 등)만
+    손실 없이 꺼내면 충분하다.
     """
+    if not isinstance(prop, dict):
+        return prop
+    ptype = prop.get("type")
+    if ptype == "title":
+        return _rich_text_plain(prop.get("title"))
+    if ptype == "rich_text":
+        return _rich_text_plain(prop.get("rich_text"))
+    if ptype == "number":
+        return prop.get("number")
+    if ptype == "status":
+        v = prop.get("status") or {}
+        return v.get("name")
+    if ptype == "select":
+        v = prop.get("select") or {}
+        return v.get("name")
+    if ptype == "multi_select":
+        vals = [v.get("name") for v in prop.get("multi_select", []) if v.get("name")]
+        return ", ".join(vals) if vals else None
+    if ptype == "date":
+        v = prop.get("date") or {}
+        return v.get("start")
+    if ptype == "url":
+        return prop.get("url")
+    if ptype == "checkbox":
+        return prop.get("checkbox")
+    if ptype == "people":
+        vals = [v.get("name") for v in prop.get("people", []) if v.get("name")]
+        return ", ".join(vals) if vals else None
+    if ptype == "formula":
+        v = prop.get("formula") or {}
+        ftype = v.get("type")
+        return v.get(ftype) if ftype else None
+    if ptype == "relation":
+        vals = [v.get("id") for v in prop.get("relation", []) if v.get("id")]
+        return vals or None
+    return prop.get(ptype)
+
+
+def _page_to_row(page):
+    props = page.get("properties") or {}
+    row = {
+        "id": page.get("id"),
+        "url": page.get("url"),
+        "createdTime": page.get("created_time"),
+    }
+    for name, prop in props.items():
+        row[name] = _extract_plain_value(prop)
+    return row
+
+
+def _query_rows_notion_api(ep_number, token):
+    """Actions 경로 — 공식 REST API로 트래커 data source 질의."""
+    import urllib.error
     import urllib.request
+
+    url = f"https://api.notion.com/v1/data-sources/{TRACKER_DATA_SOURCE_ID}/query"
+    body = {
+        "filter": {"property": "번호", "number": {"equals": int(ep_number)}},
+        "sorts": [{"timestamp": "created_time", "direction": "descending"}],
+        "page_size": 10,
+    }
     req = urllib.request.Request(
-        f"https://api.notion.com/v1/blocks/{page_id}/children",
-        headers={"Authorization": f"Bearer {token}",
-                 "Notion-Version": "2022-06-28"})
+        url,
+        data=json.dumps(body, ensure_ascii=False).encode("utf-8"),
+        headers=_notion_headers(token),
+        method="POST",
+    )
     try:
-        with urllib.request.urlopen(req, timeout=30) as r:
-            return json.dumps(json.load(r), ensure_ascii=False)
+        with urllib.request.urlopen(req, timeout=60) as r:
+            data = json.load(r)
     except urllib.error.HTTPError as e:
+        detail = e.read().decode("utf-8", "replace")[:600]
         raise RuntimeError(
-            f"노션 API 호출 실패(HTTP {e.code}) — NOTION_TOKEN 만료·페이지 접근 권한 확인"
-        )
-
-
-def read_page_via_gsk(page_id):
-    """gsk CLI 백엔드 — 크레딧 0. 페이지 본문 JSON(envelope)을 문자열로 반환."""
-    cmd = ["gsk", "notion", "read", "--page_id", page_id]
-    log.debug("gsk 노션 읽기 실행: %s", page_id)
-    try:
-        out = subprocess.run(cmd, capture_output=True, text=True, timeout=120)
-    except FileNotFoundError:
-        raise RuntimeError(
-            "gsk CLI 부재 + NOTION_TOKEN 미설정 — Actions에서 노션 직독은 레포 시크릿 NOTION_TOKEN 등록 필수"
-        )
-    if out.returncode != 0:
-        log.error("gsk notion read 실패(%s): %s", page_id, out.stderr[:200])
-        raise RuntimeError(f"gsk notion read 실패: {page_id}")
-    return out.stdout
-
-
-def read_page(page_id):
-    """이중 백엔드 진입점 — NOTION_TOKEN 우선, 없으면 gsk CLI."""
-    token = os.getenv("NOTION_TOKEN", "")
-    if token:
-        return _read_page_notion_api(page_id, token)
-    return read_page_via_gsk(page_id)
-
-
-def parse_index(raw_text):
-    """인덱스 본문에서 정본 행만 파싱.
-
-    Returns:
-        {episode:int: {"page_id":str, "revision":str}} — 정본=Y 행만.
-    """
-    rows = {}
-    # 코드블록 내 `번호|리비전|정본|page_id|hash16` 형식 행 검색
-    for m in re.finditer(r"^\s*(\d+)\|([^|]+)\|([YN])\|([0-9a-f]{32})\|", raw_text, re.M):
-        ep, rev, canon, pid = int(m.group(1)), m.group(2).strip(), m.group(3), m.group(4)
-        if canon != "Y":
-            log.info("폐기 행 제외: Ep%d (%s)", ep, rev)
-            continue
-        rows[ep] = {"page_id": pid, "revision": rev}
-    log.info("인덱스 파싱 완료: 정본 %d행 %s", len(rows), sorted(rows))
+            f"트래커 DB query 실패(HTTP {e.code}) — NOTION_API_KEY/NOTION_TOKEN 또는 DB 공유 권한 확인: {detail}"
+        ) from e
+    rows = [_page_to_row(p) for p in data.get("results", [])]
+    log.info("트래커 DB query(API): Ep%d → %d행", ep_number, len(rows))
     return rows
 
 
-def load_index():
-    """인덱스 페이지를 읽어 정본 page_id 사전 반환 (파이프라인 표준 진입)."""
-    raw = read_page(INDEX_PAGE_ID)
-    d = json.loads(raw)
-    content = d["data"]["content"] if isinstance(d, dict) and "data" in d else raw
-    return parse_index(content)
+def _parse_gsk_query_rows(stdout):
+    outer = json.loads(stdout)
+    if outer.get("status") != "ok":
+        raise RuntimeError(outer.get("message") or "gsk notion query_data_sources 실패")
+    payload = outer.get("data")
+    if isinstance(payload, str):
+        payload = json.loads(payload)
+    if payload.get("isError"):
+        msg = payload.get("content", [{}])[0].get("text", "")
+        raise RuntimeError(msg[:500])
+    text = payload.get("content", [{}])[0].get("text", "{}")
+    return json.loads(text).get("results", [])
 
 
-def extract_json_obj(page_raw):
-    """정본 페이지 본문에서 ```json 블록을 추출해 dict 로 반환."""
-    d = json.loads(page_raw)
-    content = d["data"]["content"] if isinstance(d, dict) and "data" in d else page_raw
-    m = re.search(r"```json\s*(\{.*\})\s*```", content, re.S)
-    if not m:
-        log.error("JSON 블록 미발견 — page_id 확인 필요")
-        raise ValueError("정본 페이지에 ```json 블록 없음")
-    return json.loads(m.group(1))
+def _query_rows_via_gsk(ep_number):
+    """세션/개발 경로 — Notion MCP의 query_data_sources(SQL) 사용."""
+    query = (
+        f'SELECT * FROM "{TRACKER_DATA_SOURCE_URL}" '
+        f'WHERE 번호 = {int(ep_number)} ORDER BY createdTime DESC'
+    )
+    args = {
+        "action": "notion-query-data-sources",
+        "args": json.dumps(
+            {
+                "data": {
+                    "mode": "sql",
+                    "data_source_urls": [TRACKER_DATA_SOURCE_URL],
+                    "query": query,
+                }
+            },
+            ensure_ascii=False,
+        ),
+    }
+    cmd = ["gsk", "connector", "call", "notion", "-t", "call", "-a", json.dumps(args, ensure_ascii=False)]
+    try:
+        out = subprocess.run(cmd, capture_output=True, text=True, timeout=120)
+    except FileNotFoundError as e:
+        raise RuntimeError(
+            "gsk CLI 부재 + NOTION_API_KEY/NOTION_TOKEN 미설정 — 트래커 DB 직독 불가"
+        ) from e
+    if out.returncode != 0:
+        raise RuntimeError((out.stderr or out.stdout or "gsk notion query 실패")[:500])
+    rows = _parse_gsk_query_rows(out.stdout)
+    log.info("트래커 DB query(gsk): Ep%d → %d행", ep_number, len(rows))
+    return rows
+
+
+def query_tracker_rows(ep_number):
+    token = os.getenv("NOTION_TOKEN", "") or os.getenv("NOTION_API_KEY", "")
+    if token:
+        return _query_rows_notion_api(ep_number, token)
+    return _query_rows_via_gsk(ep_number)
+
+
+def _is_discarded(row):
+    note = str(row.get("특이사항") or "")
+    return any(m in note for m in DISCARD_MARKERS)
+
+
+def choose_canonical_row(rows):
+    """동일 번호 다중 행 중 정본 1행 선택.
+
+    우선순위:
+      1) 논리적 폐기 아님
+      2) 발행 상태 == 완료
+      3) createdTime 최신
+    """
+    if not rows:
+        raise KeyError("트래커 DB 해당 회차 없음")
+    candidates = [r for r in rows if not _is_discarded(r)] or list(rows)
+    completed = [r for r in candidates if str(r.get("발행 상태") or "") == "완료"] or candidates
+    best = sorted(completed, key=lambda r: str(r.get("createdTime") or ""), reverse=True)[0]
+    log.info(
+        "트래커 정본 선택: Ep%s → row=%s created=%s status=%s discarded=%s",
+        best.get("번호"), best.get("id"), best.get("createdTime"),
+        best.get("발행 상태"), _is_discarded(best),
+    )
+    return best
+
+
+def _split_names(value):
+    if not value:
+        return []
+    text = str(value).replace("+", ",")
+    parts = [p.strip() for p in re.split(r",|/|\|", text) if p.strip()]
+    return parts
+
+
+def _normalize_title(ep_number, title):
+    if not title:
+        return f"Ep{ep_number}"
+    text = str(title).strip()
+    text = re.sub(rf"^Ep\s*0*{int(ep_number)}\s*[—\-:：]?\s*", "", text).strip()
+    text = text.strip("「」").strip()
+    return text or f"Ep{ep_number}"
+
+
+def row_to_episode(row):
+    ep_number = int(row.get("번호"))
+    title = _normalize_title(ep_number, row.get("에피소드"))
+    villains = _split_names(row.get("활성 빌런"))
+    ep = {
+        "episode": f"Ep{ep_number}",
+        "title": title,
+        "date": row.get("date:발행일:start"),
+        "type": row.get("에피소드 타입"),
+        "outcome": row.get("전투 결과"),
+        "source": {
+            "kind": "tracker_db",
+            "database_id": TRACKER_DB_ID,
+            "data_source_id": TRACKER_DATA_SOURCE_ID,
+            "row_id": row.get("id"),
+            "row_url": row.get("url"),
+            "created_time": row.get("createdTime"),
+        },
+        "arc_state": {
+            "active_villains": villains,
+            "arc_day": row.get("Arc Day"),
+            "battle_balance": row.get("Battle Balance"),
+            "arc_tension": row.get("arc_tension"),
+            "main_hero_tracker": row.get("메인 히어로"),
+            "special_notes": row.get("특이사항"),
+            "publish_state": row.get("발행 상태"),
+        },
+        "next_episode": {"number": f"Ep{ep_number + 1}"},
+    }
+    if row.get("메인 히어로") == "Guardian of Capital":
+        log.warning("트래커 주인공 표기 'Guardian of Capital' 감지 — 캐릭터 캐논은 canon.py(EDT) 우선")
+    return ep
 
 
 def load_episode(ep_number):
-    """회차 번호(예: 86)로 정본 arc_state 객체 로드.
-
-    폐기·재검증 이력이 있는 Ep90 처럼 다중 행이어도 정본=Y 는 1개 —
-    parse_index 가 이미 최신 정본만 남긴다.
-    """
-    idx = load_index()
-    if ep_number not in idx:
-        log.error("Ep%d 정본 없음 — 원장 미적재(신규 집필 필요)", ep_number)
-        raise KeyError(f"Ep{ep_number} 정본 없음")
-    raw = read_page(idx[ep_number]["page_id"])
-    obj = extract_json_obj(raw)
-    log.info("Ep%d 로드 OK: %s", ep_number, obj.get("title"))
-    return obj
+    """회차 번호 → 트래커 DB 정본 행 → cutplanner 입력 arc_state."""
+    rows = query_tracker_rows(ep_number)
+    row = choose_canonical_row(rows)
+    ep = row_to_episode(row)
+    log.info("Ep%d 로드 OK(DB): %s / %s", ep_number, ep.get("title"), row.get("id"))
+    return ep

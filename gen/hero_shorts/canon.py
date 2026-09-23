@@ -10,8 +10,8 @@ SSOT 체계 (마스터 지시 "노션 캐논 참고"):
     L3 게이트: QC G2 (토큰 존재·금지 문구) — assemble_qc.qc_4gates 에서 집행.
 
 v2.4 대비 정정 (노션 공식 캐논 대조, 2026-09-21):
-    1. 주역 히어로 = EDT (Endurance D Tiger, 타이거+로만 아머) — 'Guardian of Capital'
-       라는 캐릭터는 공식 캐논에 부재 → 폐기.
+    1. 주역 히어로 = EDT (Endurance D Tiger, 타이거+로만 아머).
+       'Guardian of Capital'라는 별도 캐릭터는 공식 캐논에 부재 → 폐기.
     2. Exposure Futures Girl = FG-01 (보라 네온 듀얼 피스톨) — 크림슨 자켓 폐기.
     3. Leverage Muscle Man = LEV-01 (인간 남성) — 그린 베스트 폐기.
     4. Oil Shock Titan 시각 기준선 = 마스터 승인 컷1 실측 (영상 전용 캐논).

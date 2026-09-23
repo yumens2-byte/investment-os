@@ -99,7 +99,7 @@ def build_cut_prompt(cut_role, ep_state):
             ["EDT", "Exposure Futures Girl"],
             "shaky handheld close-up", "low ominous drone"),
         "TURN": (
-            "The Guardian of Capital redirects streams of golden light from a "
+            "EDT redirects streams of golden light from a "
             "burning district to a dark district that flickers back to life",
             ["EDT"], "slow crane-up", "rising orchestral swell"),
         "RESOLVE": (
