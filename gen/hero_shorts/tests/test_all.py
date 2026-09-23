@@ -57,6 +57,13 @@ class TestCanon(unittest.TestCase):
             self.assertIn(tok, p)
         self.assertNotIn("red suit", p)
 
+    def test_world_canon_and_forbidden_keywords(self):
+        p = canon.full_prompt("A hero lands on a rooftop", ["EDT"],
+                              "low-angle", "bass")
+        self.assertIn("modern financial district", p)
+        self.assertIn("grounded contemporary city realism", p)
+        self.assertIn("medieval castle", canon.FORBIDDEN_GLOBAL)
+
 
 class TestCutPlanner(unittest.TestCase):
     """유형별 컷구성 + fal 요청 스키마."""
@@ -83,6 +90,27 @@ class TestCutPlanner(unittest.TestCase):
 
     def test_aftermath_three_cuts(self):
         self.assertEqual(len(cutplanner.cuts_for_type("AFTERMATH")), 3)
+
+    def test_role_contracts_strengthened_for_quality(self):
+        plan = cutplanner.plan_episode(EP86)
+        by_role = {c["role"]: c["prompt"] for c in plan}
+        self.assertIn("modern financial district", by_role["ESCALATE"])
+        self.assertIn("crowds", by_role["ESCALATE"])
+        self.assertIn("small in frame", by_role["ESCALATE"])
+        self.assertIn("shockwave", by_role["CRISIS"])
+        self.assertIn("debris", by_role["CRISIS"])
+        self.assertIn("two contrasting zones", by_role["TURN"])
+        self.assertIn("lighting back up", by_role["TURN"])
+        self.assertIn("dawn", by_role["RESOLVE"])
+        self.assertIn("recovering skyline", by_role["RESOLVE"])
+
+    def test_plan_reuses_single_prompt_per_cut(self):
+        with patch("gen.hero_shorts.cutplanner.build_cut_prompt", wraps=cutplanner.build_cut_prompt) as mocked:
+            plan = cutplanner.plan_episode(EP86)
+        self.assertEqual(len(plan), 6)
+        self.assertEqual(mocked.call_count, 6)
+        for cut in plan:
+            self.assertEqual(cut["request"]["prompt"], cut["prompt"])
 
 
 class TestGeneratorAndAssemble(unittest.TestCase):

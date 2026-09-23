@@ -46,6 +46,35 @@ TYPE_PLAN = {
 # arc_state 에서 서사에 쓸 핵심 필드 (화면 표기 없음 — 근거로만 사용)
 NARRATIVE_FIELDS = ["type", "outcome", "title", "date"]
 
+# 역할별 화면 계약 — 생성 전 0원 검증으로 품질 이탈을 최대한 차단한다.
+ROLE_REQUIREMENTS = {
+    "ESCALATE": {
+        "must_have": ["modern financial district", "crowds", "market lights", "sirens", "small in frame"],
+    },
+    "CRISIS": {
+        "must_have": ["shockwave", "debris", "backward", "shaky handheld"],
+    },
+    "TURN": {
+        "must_have": ["two contrasting zones", "golden energy", "lighting back up", "modern city"],
+    },
+    "RESOLVE": {
+        "must_have": ["dawn", "retreats", "stabilizes", "recovering skyline", "no heroic pose"],
+    },
+}
+
+
+def validate_role_contract(cut_role, prompt):
+    """역할별 필수/금지 키워드 검증 — 실패 시 생성 전에 차단."""
+    spec = ROLE_REQUIREMENTS.get(cut_role)
+    if not spec:
+        return
+    missing = [t for t in spec.get("must_have", []) if t not in prompt]
+    if missing:
+        raise ValueError(f"역할 계약 누락 {cut_role}: {missing}")
+    banned = [t for t in spec.get("must_avoid", []) if t in prompt]
+    if banned:
+        raise ValueError(f"역할 계약 금지어 감지 {cut_role}: {banned}")
+
 
 def cuts_for_type(ep_type):
     """유형 → 컷 역할 리스트. 미정의 유형은 안전 기본값(BATTLE) 대신
@@ -84,9 +113,10 @@ def build_cut_prompt(cut_role, ep_state):
             "slamming the ground as red heat waves cross glowing ticker lights",
             villains[:1], "low-angle slow push-in", "deep rumbling bass"),
         "ESCALATE": (
-            "Panic spreads across the city as market lights flicker and fall, "
-            "crowds flee in long shadows",
-            [], "slow lateral tracking shot", "rising sirens and drums"),
+            "A wide night view of a modern financial district in panic: market lights flicker out tower by tower, "
+            "emergency sirens echo, crowds run through long shadows, smoke and sparks drift across wet streets. "
+            "EDT appears only briefly in the mid-background, small in frame, moving through chaos rather than posing for the camera",
+            [], "wide handheld lateral tracking shot with visible crowd flow and environmental motion", "rising sirens, distant explosions, pounding drums"),
         "ENGAGE": (
             "Two heroes land on a rooftop and exchange a nod before leaping toward "
             "the giant villain",
@@ -94,18 +124,18 @@ def build_cut_prompt(cut_role, ep_state):
             ["EDT", "Exposure Futures Girl"],
             "dynamic orbit camera", "heroic brass stab"),
         "CRISIS": (
-            "The heroes are knocked back by a shockwave, armor scratched, "
-            "the sky darkens as tension peaks",
+            "A violent shockwave blasts through a burning modern city street, throwing EDT and Exposure Futures Girl backward as debris, sparks, shattered glass, and dust explode across the frame. "
+            "Both heroes struggle to keep balance, armor scraped and capes torn by force, while the sky darkens and the street lights distort under the impact",
             ["EDT", "Exposure Futures Girl"],
-            "shaky handheld close-up", "low ominous drone"),
+            "shaky handheld close-up with aggressive backward camera jolt and drifting debris crossing the lens", "low ominous drone, impact burst, metal scraping"),
         "TURN": (
-            "EDT redirects streams of golden light from a "
-            "burning district to a dark district that flickers back to life",
-            ["EDT"], "slow crane-up", "rising orchestral swell"),
+            "From above a modern city at night, EDT redirects streams of golden energy away from a burning overloaded district and into a dark powerless district, where windows, street grids, and bridges begin lighting back up in sequence. "
+            "The frame must clearly show two contrasting zones: one still burning red, one recovering with spreading gold light",
+            ["EDT"], "slow crane-up reveal from EDT in the foreground to the citywide redistribution effect", "rising orchestral swell, electrical hum, distant fire"),
         "RESOLVE": (
-            "The villain staggers back as dawn breaks over the skyline and "
-            "golden particles settle over the city",
-            ["EDT"], "wide hopeful shot", "single resolve note"),
+            "At dawn over a modern skyline, the defeated villain retreats into smoke in the far background while the city below stabilizes and soft golden particles settle across rooftops and streets. "
+            "EDT stands smaller in the frame, no heroic pose, as the recovered city and morning light become the true focus of the ending shot",
+            ["EDT"], "wide hopeful pull-back shot revealing more of the recovering skyline over time", "single resolve note, calm wind, distant city ambience"),
         "AFTERMATH_CALM": (
             "Quiet ruins of a financial district at dawn, embers drifting, "
             "the Guardian surveys the damage",
@@ -139,6 +169,7 @@ def build_cut_prompt(cut_role, ep_state):
         raise KeyError(cut_role)
     scene, chars, camera, sound = entry
     prompt = canon.full_prompt(scene, [c for c in chars if c], camera, sound)
+    validate_role_contract(cut_role, prompt)
     log.debug("컷 프롬프트 완성[%s] %s %s — %d자", cut_role, ep_state.get("episode"), title, len(prompt))
     return prompt
 
@@ -167,9 +198,13 @@ def plan_episode(ep_state):
     ep_type = ep_state.get("type", "")
     roles = cuts_for_type(ep_type)
     log.info("컷계획: %s (%s) → %d컷", ep_state.get("episode"), ep_type, len(roles))
-    return [
-        {"cut_no": i + 1, "role": r,
-         "prompt": build_cut_prompt(r, ep_state),
-         "request": build_fal_request(build_cut_prompt(r, ep_state))}
-        for i, r in enumerate(roles)
-    ]
+    plan = []
+    for i, r in enumerate(roles):
+        prompt = build_cut_prompt(r, ep_state)
+        plan.append({
+            "cut_no": i + 1,
+            "role": r,
+            "prompt": prompt,
+            "request": build_fal_request(prompt),
+        })
+    return plan

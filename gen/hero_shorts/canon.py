@@ -69,11 +69,17 @@ REF_SHEETS = {
     "Leverage Muscle Man": [],
 }
 
-# ── 스타일·공통 문구 ────────────────────────────────────────────────
+# ── 스타일·세계관·공통 문구 ─────────────────────────────────────────
+WORLD_CANON = ("modern financial district, glass towers, urban street grids, "
+               "emergency-lit avenues, grounded contemporary city realism")
 STYLE_CANON = ("Dramatic webtoon-anime style, vertical 9:16, cinematic "
                "lighting, dark amber and crimson palette, volumetric haze")
 CLEAN_TAIL = "No subtitles, no logo, no watermark."
-PROMPT_TOKENS = ["webtoon-anime style", "EDT", "9:16", "No subtitles"]
+PROMPT_TOKENS = ["webtoon-anime style", "EDT", "9:16", "No subtitles",
+                 "modern financial district"]
+WORLD_FORBIDDEN = ["medieval castle", "fantasy village", "ancient fortress",
+                   "temple town"]
+FORBIDDEN_GLOBAL += WORLD_FORBIDDEN
 
 
 def ref_sheet_urls(character, config=None):
@@ -116,7 +122,7 @@ def forbidden_for(names):
 
 def full_prompt(scene_text, characters, camera=None, sound=None):
     """완성형 컷 프롬프트 조립 (유일한 프롬프트 빌드 경로 — v2.4 동일)."""
-    seg = [scene_text, STYLE_CANON]
+    seg = [scene_text, WORLD_CANON, STYLE_CANON]
     if camera:
         seg.append(camera)
     if sound:
