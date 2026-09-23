@@ -26,14 +26,31 @@ import subprocess
 
 log = logging.getLogger("hero_shorts.ledger")
 
-TRACKER_DB_ID = os.getenv("HERO_SHORTS_TRACKER_DB_ID", "32a9e71588b843e1a650d2c9c87d1d9f")
-TRACKER_VIEW_URL = os.getenv(
-    "HERO_SHORTS_TRACKER_VIEW_URL",
-    "https://app.notion.com/p/32a9e71588b843e1a650d2c9c87d1d9f?v=741c74121afe4b6da48fa89d688e1fa6&source=copy_link",
-)
-TRACKER_DATA_SOURCE_ID = os.getenv("HERO_SHORTS_TRACKER_DATA_SOURCE_ID", "bdc5e21c-58eb-40f9-b659-8c6d33fd0dae")
-TRACKER_DATA_SOURCE_URL = f"collection://{TRACKER_DATA_SOURCE_ID}"
+TRACKER_DB_ID = os.getenv("HERO_SHORTS_TRACKER_DB_ID")
+TRACKER_VIEW_URL = os.getenv("HERO_SHORTS_TRACKER_VIEW_URL")
+TRACKER_DATA_SOURCE_ID = os.getenv("HERO_SHORTS_TRACKER_DATA_SOURCE_ID")
+TRACKER_DATA_SOURCE_URL = f"collection://{TRACKER_DATA_SOURCE_ID}" if TRACKER_DATA_SOURCE_ID else None
 DISCARD_MARKERS = ("논리적 폐기", "폐기됨", "폐기 ")
+
+
+def _require_tracker_config():
+    missing = [
+        name for name, value in (
+            ("HERO_SHORTS_TRACKER_DB_ID", TRACKER_DB_ID),
+            ("HERO_SHORTS_TRACKER_VIEW_URL", TRACKER_VIEW_URL),
+            ("HERO_SHORTS_TRACKER_DATA_SOURCE_ID", TRACKER_DATA_SOURCE_ID),
+        ) if not value
+    ]
+    if missing:
+        raise RuntimeError(
+            "트래커 설정 누락 — 환경변수 주입 필요: " + ", ".join(missing)
+        )
+    return {
+        "db_id": TRACKER_DB_ID,
+        "view_url": TRACKER_VIEW_URL,
+        "data_source_id": TRACKER_DATA_SOURCE_ID,
+        "data_source_url": TRACKER_DATA_SOURCE_URL,
+    }
 
 
 def _notion_headers(token):
@@ -118,7 +135,8 @@ def _query_rows_notion_api(ep_number, token):
     import urllib.error
     import urllib.request
 
-    url = f"https://api.notion.com/v1/data_sources/{TRACKER_DATA_SOURCE_ID}/query"
+    cfg = _require_tracker_config()
+    url = f"https://api.notion.com/v1/data_sources/{cfg['data_source_id']}/query"
     body = {
         "filter": {"property": "번호", "number": {"equals": int(ep_number)}},
         "sorts": [{"timestamp": "created_time", "direction": "descending"}],
@@ -159,8 +177,9 @@ def _parse_gsk_query_rows(stdout):
 
 def _query_rows_via_gsk(ep_number):
     """세션/개발 경로 — Notion MCP의 query_data_sources(SQL) 사용."""
+    cfg = _require_tracker_config()
     query = (
-        f'SELECT * FROM "{TRACKER_DATA_SOURCE_URL}" '
+        f'SELECT * FROM "{cfg["data_source_url"]}" '
         f'WHERE 번호 = {int(ep_number)} ORDER BY createdTime DESC'
     )
     args = {
@@ -169,7 +188,7 @@ def _query_rows_via_gsk(ep_number):
             {
                 "data": {
                     "mode": "sql",
-                    "data_source_urls": [TRACKER_DATA_SOURCE_URL],
+                    "data_source_urls": [cfg["data_source_url"]],
                     "query": query,
                 }
             },

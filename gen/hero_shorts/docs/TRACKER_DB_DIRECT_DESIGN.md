@@ -1,43 +1,51 @@
-# Hero Shorts DB 직독 전환 설계 (v2.4.6)
+# Hero Shorts DB 직독 전환 설계 (v2.4.10)
 
 ## 배경
-기존 Hero Shorts는 `EDT Arc State Ledger Index` 페이지의 코드블록에서 회차별 page_id를 읽고, 각 에피소드 페이지의 ```json 블록을 다시 읽는 2단계 구조였다.
+Hero Shorts의 운영 SSOT는 별도 인덱스 페이지가 아니라 **`EDT 에피소드 트래커` Notion DB** 다. 따라서 스토리 소스는 트래커 DB 직독을 기준으로 유지한다.
 
-마스터 확인 결과 실제 운영 SSOT는 별도 페이지 인덱스가 아니라 **`EDT 에피소드 트래커` Notion DB** 이다. 따라서 기존 구조는 운영 의도와 불일치했다.
+## v2.4.10 기준 핵심 변경
+- 트래커 관련 운영 식별값 기본 하드코딩 제거
+- `ledger.py`는 환경변수 주입이 없으면 즉시 실패
+- 메일 주소·운영 식별값을 소스 기본값으로 두지 않음
+- 발행 단계는 `zernio_publish`로 통합 가능
+- 발행 전 오디오 가청성 검사(`--require-audible-audio`) 지원
 
-## 실측 사실
-- 트래커 DB URL: `https://app.notion.com/p/32a9e71588b843e1a650d2c9c87d1d9f?v=741c74121afe4b6da48fa89d688e1fa6&source=copy_link`
-- DB id: `32a9e71588b843e1a650d2c9c87d1d9f`
-- view fetch 실측 결과 data source id: `bdc5e21c-58eb-40f9-b659-8c6d33fd0dae`
-- SQL query 실측 결과 Ep86~93 행 조회 가능
-- Ep86은 2행 존재(폐기 행 + ACT2 정본 행)
-
-## 전환 원칙
+## 구성 원칙
 1. SSOT는 트래커 DB다.
 2. 회차 선택은 `번호` 속성 기준.
-3. 동일 번호 다중 행은 다음 우선순위로 정본 선택:
+3. 동일 번호 다중 행은 아래 우선순위로 정본 선택한다.
    - `특이사항`에 `논리적 폐기`가 없는 행
    - `발행 상태 = 완료`
    - `createdTime` 최신
-4. DB의 `메인 히어로` 표기는 캐릭터 캐논 최종명과 다를 수 있으므로, 시각 캐논은 `canon.py`가 우선한다.
-5. Actions는 기존 레포 관례 시크릿 `NOTION_API_KEY`를 재사용한다.
+4. DB의 `메인 히어로` 표기는 운영 이력용 원문으로 두고, 시각 캐논은 `canon.py`가 우선한다.
+5. 개인정보/운영 식별값/토큰은 소스 기본값으로 두지 않고 환경변수로 주입한다.
+
+## 필수 환경변수
+### 트래커 설정
+- `HERO_SHORTS_TRACKER_DB_ID`
+- `HERO_SHORTS_TRACKER_VIEW_URL`
+- `HERO_SHORTS_TRACKER_DATA_SOURCE_ID`
+
+### Notion API 직접 조회 시
+- `NOTION_API_TOKEN`
+- 또는 `NOTION_TOKEN`
+- 또는 `NOTION_API_KEY`
 
 ## 구현 구조
 - `ledger.py`
-  - Actions: `POST /v1/data-sources/{data_source_id}/query`
+  - Actions: `POST /v1/data_sources/{data_source_id}/query`
   - 세션: Notion MCP `notion-query-data-sources` SQL
-  - 결과 행을 cutplanner 입력용 arc_state dict로 정규화
+  - 누락 설정은 `_require_tracker_config()`에서 차단
 - `pipeline.py`
-  - plan 단계는 변경 없음; `ledger.load_episode()`가 DB 직독 결과를 돌려줌
+  - `plan` 단계는 `ledger.load_episode()` 결과를 사용
+  - `zernio_publish` 단계는 발행/모니터/알림을 통합
 
-## 테스트 전략
-- 오프라인 단위 테스트
-  - 다중 행(Ep86) 중 정본 선택 검증
-  - DB row → episode dict 정규화 검증
-- 라이브 실측
-  - 트래커 DB SQL query로 Ep86~93 행 존재 확인
-  - query_data_sources 사용량 제한 도달 시 라이브 전수 질의 대신 단일 샘플 확인 후 오프라인 회귀로 대체
+## 테스트 기준
+- 다중 행 중 정본 선택 검증
+- DB row → episode dict 정규화 검증
+- 트래커 설정 누락 시 즉시 실패 검증
+- 전수 테스트: `python3 -m gen.hero_shorts.tests.test_all`
 
-## 주의
-- Notion MCP `query_data_sources`는 사용량 제한에 걸릴 수 있다. 이 경우 세션 라이브 질의는 `Try again later` 또는 [Learn more](https://app.notion.com/notion-mcp?source=mcp_tool_upsell_mcp&tool=query_data_sources&product=business&mcpRequestId=aa4a4b24-82e8-4cb6-8d65-5854e3f9bc1a&mcpUpsellOpportunityId=0695dabf-bd9b-479d-955e-126f10c57047&mcpClickSource=markdown_link&spaceId=11403613-7846-41be-b116-8c8a5ed95f63&notionAccountId=1c2d872b-594c-81f5-a74f-000283e061ef&action=learn_more).
-- 레거시 인덱스 페이지는 참조 문서로 남을 수 있으나, Hero Shorts 스토리 소스로는 더 이상 사용하지 않는다.
+## 운영 메모
+- 트래커 값은 비공개 운영 공간(Notion)과 실행 환경변수에서만 관리한다.
+- 공개 산출물(zip, patch, 코드 전달본)에는 개인 메일 주소나 운영 식별값을 넣지 않는다.

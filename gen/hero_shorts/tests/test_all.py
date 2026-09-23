@@ -25,6 +25,12 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[2]))  # gen/ 루트
 from gen.hero_shorts import canon, cutplanner, generator, assemble_qc  # noqa: E402
 from gen.hero_shorts import ledger, pipeline, publish_runtime  # noqa: E402
 
+TRACKER_ENV = {
+    "HERO_SHORTS_TRACKER_DB_ID": "db-test",
+    "HERO_SHORTS_TRACKER_VIEW_URL": "https://example.com/notion/view",
+    "HERO_SHORTS_TRACKER_DATA_SOURCE_ID": "ds-test",
+}
+
 # ── Ep86 실측 arc_state 샘플 (원장 정본 — 네트워크 비의존 테스트 데이터) ──
 EP86 = {
     "episode": "Ep86", "title": "배분을 바꾼다, 지금 필요한 곳으로",
@@ -218,6 +224,18 @@ class TestLedgerRows(unittest.TestCase):
 class TestLedgerApi(unittest.TestCase):
     """Actions용 Notion API 경로/토큰 우선순위 검증."""
 
+    def test_missing_tracker_config_refused(self):
+        with patch.dict(os.environ, {
+            "HERO_SHORTS_TRACKER_DB_ID": "",
+            "HERO_SHORTS_TRACKER_VIEW_URL": "",
+            "HERO_SHORTS_TRACKER_DATA_SOURCE_ID": "",
+        }, clear=False):
+            with patch.object(ledger, "TRACKER_DB_ID", ""), \
+                 patch.object(ledger, "TRACKER_VIEW_URL", ""), \
+                 patch.object(ledger, "TRACKER_DATA_SOURCE_ID", ""), \
+                 patch.object(ledger, "TRACKER_DATA_SOURCE_URL", None):
+                self.assertRaises(RuntimeError, ledger._require_tracker_config)
+
     def test_query_tracker_rows_uses_data_sources_endpoint_and_api_token(self):
         payload = {
             "results": [
@@ -257,16 +275,21 @@ class TestLedgerApi(unittest.TestCase):
             return FakeResponse(json.dumps(payload, ensure_ascii=False))
 
         with patch.dict(os.environ, {
+            **TRACKER_ENV,
             "NOTION_API_TOKEN": "token-api",
             "NOTION_TOKEN": "token-legacy",
             "NOTION_API_KEY": "token-key",
         }, clear=False):
-            with patch("urllib.request.urlopen", fake_urlopen):
+            with patch.object(ledger, "TRACKER_DB_ID", "db-test"), \
+                 patch.object(ledger, "TRACKER_VIEW_URL", "https://example.com/notion/view"), \
+                 patch.object(ledger, "TRACKER_DATA_SOURCE_ID", "ds-test"), \
+                 patch.object(ledger, "TRACKER_DATA_SOURCE_URL", "collection://ds-test"), \
+                 patch("urllib.request.urlopen", fake_urlopen):
                 rows = ledger.query_tracker_rows(86)
 
         self.assertEqual(
             seen["url"],
-            f"https://api.notion.com/v1/data_sources/{ledger.TRACKER_DATA_SOURCE_ID}/query",
+            "https://api.notion.com/v1/data_sources/ds-test/query",
         )
         self.assertEqual(seen["auth"], "Bearer token-api")
         self.assertEqual(rows[0]["번호"], 86)
