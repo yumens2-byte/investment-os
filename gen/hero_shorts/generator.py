@@ -71,6 +71,43 @@ def budget_record(duration_sec):
 KNOWN_PRICES = {"minimax/h3/text-to-video": 0.06}   # 가격 실측 완료 엔드포인트 전용
 
 
+def _request_signature(request):
+    return json.dumps(request, ensure_ascii=False, sort_keys=True)
+
+
+def _pending_file(out_path):
+    out_path = Path(out_path)
+    return out_path.with_name(out_path.name + ".fal_pending.json")
+
+
+def _pending_now_utc():
+    return time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+
+
+def _load_pending(out_path):
+    path = _pending_file(out_path)
+    if not path.exists():
+        return None
+    try:
+        return json.loads(path.read_text(encoding="utf-8"))
+    except Exception as e:
+        log.warning("대기 작업 파일 해독 실패: %s (%s)", path, e)
+        return None
+
+
+def _save_pending(out_path, payload):
+    path = _pending_file(out_path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+    return path
+
+
+def _clear_pending(out_path):
+    path = _pending_file(out_path)
+    if path.exists():
+        path.unlink()
+
+
 def _validate_request(request):
     """사전 밸리데이션 (v2.4.4) — 실패 시 호출 자체가 없으므로 0원.
 
@@ -137,32 +174,85 @@ def _fal_call(request, out_path):
         raise RuntimeError(f"가격 미확인 엔드포인트({endpoint}) — 과금 실측 전 실행 금지(v2.4.4)")
     _validate_request(request)                  # 비용 전 밸리데이션 — ①스키마 ②G1/G2
     duration = int(request.get("duration", 10))
-    budget_check(duration)                      # 호출 전 비용 게이트
-    url = f"https://queue.fal.run/{endpoint}"
-    body = json.dumps(request).encode()
-    req = urllib.request.Request(url, data=body, method="POST",
-                                 headers={"Authorization": f"Key {key}",
-                                          "Content-Type": "application/json"})
-    job = _fal_json(req, "제출")
-    log.info("fal 작업 제출: %s", job.get("request_id"))
-    # 폴링 — status_url 응답이 COMPLETED 가 될 때까지 3s 간격 최대 100회
-    status_url = job.get("status_url")
-    resp_url = job.get("response_url")
-    for i in range(100):
-        time.sleep(3)
+    poll_interval = float(os.getenv("FAL_POLL_INTERVAL_SEC", "3"))
+    max_polls = int(os.getenv("FAL_MAX_POLLS", "100"))
+    if poll_interval <= 0:
+        raise ValueError(f"FAL_POLL_INTERVAL_SEC={poll_interval} 허용 밖 — 0보다 커야 함")
+    if max_polls <= 0:
+        raise ValueError(f"FAL_MAX_POLLS={max_polls} 허용 밖 — 1 이상이어야 함")
+
+    pending = _load_pending(out_path)
+    request_signature = _request_signature(request)
+    pending_matches = (
+        pending
+        and pending.get("endpoint") == endpoint
+        and pending.get("request_signature") == request_signature
+        and pending.get("status_url")
+        and pending.get("response_url")
+    )
+
+    if pending_matches:
+        job = pending
+        log.warning(
+            "기존 fal 작업 재개: request_id=%s last_status=%s polls=%s",
+            job.get("request_id"), job.get("last_status"), job.get("poll_count", 0),
+        )
+    else:
+        budget_check(duration)                  # 신규 제출 전에만 비용 게이트
+        url = f"https://queue.fal.run/{endpoint}"
+        body = json.dumps(request).encode()
+        req = urllib.request.Request(url, data=body, method="POST",
+                                     headers={"Authorization": f"Key {key}",
+                                              "Content-Type": "application/json"})
+        submitted = _fal_json(req, "제출")
+        job = {
+            "request_id": submitted.get("request_id"),
+            "status_url": submitted.get("status_url"),
+            "response_url": submitted.get("response_url"),
+            "endpoint": endpoint,
+            "request_signature": request_signature,
+            "submitted_at": _pending_now_utc(),
+            "last_status": "SUBMITTED",
+            "poll_count": 0,
+        }
+        if not job.get("status_url") or not job.get("response_url"):
+            raise RuntimeError(f"fal 제출 응답 불완전 — request_id={job.get('request_id')}")
+        _save_pending(out_path, job)
+        log.info("fal 작업 제출: %s", job.get("request_id"))
+
+    status_url = job["status_url"]
+    resp_url = job["response_url"]
+    last_status = job.get("last_status", "SUBMITTED")
+    for i in range(max_polls):
+        time.sleep(poll_interval)
         st = _fal_json(urllib.request.Request(
                 status_url, headers={"Authorization": f"Key {key}"}), "폴링")
-        log.debug("fal 폴링 %d회: %s", i + 1, st.get("status"))
-        if st.get("status") == "COMPLETED":
+        last_status = st.get("status", "UNKNOWN")
+        job["last_status"] = last_status
+        job["poll_count"] = int(job.get("poll_count", 0)) + 1
+        job["last_polled_at"] = _pending_now_utc()
+        _save_pending(out_path, job)
+        log.debug("fal 폴링 %d회: %s", i + 1, last_status)
+        if last_status == "COMPLETED":
             break
+        if last_status in ("FAILED", "CANCELED"):
+            raise RuntimeError(
+                f"fal 작업 실패 status={last_status} request_id={job.get('request_id')} — {json.dumps(st, ensure_ascii=False)}"
+            )
     else:
-        raise TimeoutError("fal 작업 타임아웃(300s)")
+        timeout_sec = poll_interval * max_polls
+        raise TimeoutError(
+            f"fal 작업 타임아웃({timeout_sec:.0f}s) request_id={job.get('request_id')} "
+            f"last_status={last_status} pending={_pending_file(out_path)}"
+        )
+
     result = _fal_json(urllib.request.Request(
             resp_url, headers={"Authorization": f"Key {key}"}), "결과조회")
     video_url = result["video"]["url"]
     urllib.request.urlretrieve(video_url, out_path)
     _validate_output(out_path, duration)        # 과금 후 기술검증 — 이상 시 재생성 금지
     budget_record(duration)
+    _clear_pending(out_path)
     log.info("fal 다운로드 완료: %s (%.0fs분)", out_path, duration)
     return str(out_path)
 

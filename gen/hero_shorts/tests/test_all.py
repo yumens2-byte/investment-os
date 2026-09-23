@@ -288,10 +288,6 @@ class TestPipelineState(unittest.TestCase):
             pipeline.STATE_FILE = old
 
 
-if __name__ == "__main__":
-    unittest.main(verbosity=2)
-
-
 class TestCostGates(unittest.TestCase):
     """v2.4.4 — 비용 발생 프로세스 사전 밸리데이션 (마스터 지시 전수검토 반영)."""
 
@@ -339,3 +335,131 @@ class TestCostGates(unittest.TestCase):
         v = generator.generate("dummy", req, Path(self.__class__.__name__) / "g5.mp4")
         self.assertRaises(RuntimeError, assemble_qc.validate_publish_assets,
                           v, "시장 만화 1화", "https://example.com/v.mp4", "2026-09-23T10:00:00")
+
+
+class TestFalTimeoutRecovery(unittest.TestCase):
+    """fal 타임아웃 후 회수/재개 로직 검증."""
+
+    def setUp(self):
+        self._old = {k: os.environ.get(k) for k in (
+            "FAL_AI_KEY", "FAL_ENDPOINT", "FAL_MAX_POLLS", "FAL_POLL_INTERVAL_SEC"
+        )}
+        os.environ["FAL_AI_KEY"] = "test-key"
+        os.environ["FAL_ENDPOINT"] = "minimax/h3/text-to-video"
+        os.environ["FAL_MAX_POLLS"] = "2"
+        os.environ["FAL_POLL_INTERVAL_SEC"] = "0.01"
+        self.req = cutplanner.plan_episode(EP86)[3]["request"]
+        self.tmpdir = tempfile.TemporaryDirectory()
+        self.out_path = Path(self.tmpdir.name) / "cut4.mp4"
+
+    def tearDown(self):
+        self.tmpdir.cleanup()
+        for k, v in self._old.items():
+            if v is None:
+                os.environ.pop(k, None)
+            else:
+                os.environ[k] = v
+
+    def test_timeout_saves_pending_file(self):
+        submit = {
+            "request_id": "req-timeout",
+            "status_url": "https://status/req-timeout",
+            "response_url": "https://response/req-timeout",
+        }
+        queued = {"status": "IN_QUEUE"}
+
+        class FakeResponse:
+            def __init__(self, payload):
+                self.payload = payload
+
+            def read(self, *args, **kwargs):
+                return json.dumps(self.payload, ensure_ascii=False).encode("utf-8")
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, exc_type, exc, tb):
+                return False
+
+        calls = {"poll": 0}
+
+        def fake_urlopen(req, timeout=60):
+            if req.full_url == "https://queue.fal.run/minimax/h3/text-to-video":
+                return FakeResponse(submit)
+            if req.full_url == "https://status/req-timeout":
+                calls["poll"] += 1
+                return FakeResponse(queued)
+            raise AssertionError(f"unexpected url: {req.full_url}")
+
+        with patch("urllib.request.urlopen", fake_urlopen), \
+             patch("time.sleep", lambda *_: None), \
+             patch("gen.hero_shorts.generator.budget_check", lambda *_args, **_kwargs: None):
+            with self.assertRaises(TimeoutError):
+                generator._fal_call(self.req, self.out_path)
+
+        pending_path = self.out_path.with_name(self.out_path.name + ".fal_pending.json")
+        self.assertTrue(pending_path.exists())
+        pending = json.loads(pending_path.read_text(encoding="utf-8"))
+        self.assertEqual(pending["request_id"], "req-timeout")
+        self.assertEqual(pending["last_status"], "IN_QUEUE")
+        self.assertEqual(pending["poll_count"], 2)
+        self.assertEqual(calls["poll"], 2)
+
+    def test_resume_uses_pending_without_resubmit(self):
+        pending = {
+            "request_id": "req-resume",
+            "status_url": "https://status/req-resume",
+            "response_url": "https://response/req-resume",
+            "endpoint": "minimax/h3/text-to-video",
+            "request_signature": generator._request_signature(self.req),
+            "submitted_at": "2026-09-23T16:40:00Z",
+            "last_status": "IN_PROGRESS",
+            "poll_count": 7,
+        }
+        pending_path = self.out_path.with_name(self.out_path.name + ".fal_pending.json")
+        pending_path.write_text(json.dumps(pending, ensure_ascii=False, indent=2), encoding="utf-8")
+
+        class FakeResponse:
+            def __init__(self, payload):
+                self.payload = payload
+
+            def read(self, *args, **kwargs):
+                return json.dumps(self.payload, ensure_ascii=False).encode("utf-8")
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, exc_type, exc, tb):
+                return False
+
+        seen = []
+
+        def fake_urlopen(req, timeout=60):
+            seen.append(req.full_url)
+            if req.full_url == "https://queue.fal.run/minimax/h3/text-to-video":
+                raise AssertionError("resume 경로에서 재제출이 발생하면 안 됨")
+            if req.full_url == "https://status/req-resume":
+                return FakeResponse({"status": "COMPLETED"})
+            if req.full_url == "https://response/req-resume":
+                return FakeResponse({"video": {"url": "https://cdn.example.com/cut4.mp4"}})
+            raise AssertionError(f"unexpected url: {req.full_url}")
+
+        def fake_urlretrieve(url, out_path):
+            Path(out_path).write_bytes(b"fake-video")
+            return str(out_path), None
+
+        with patch("urllib.request.urlopen", fake_urlopen), \
+             patch("urllib.request.urlretrieve", fake_urlretrieve), \
+             patch("time.sleep", lambda *_: None), \
+             patch("gen.hero_shorts.generator._validate_output", lambda *_args, **_kwargs: None), \
+             patch("gen.hero_shorts.generator.budget_record", lambda *_args, **_kwargs: None):
+            result = generator._fal_call(self.req, self.out_path)
+
+        self.assertEqual(result, str(self.out_path))
+        self.assertFalse(pending_path.exists())
+        self.assertIn("https://status/req-resume", seen)
+        self.assertIn("https://response/req-resume", seen)
+
+
+if __name__ == "__main__":
+    unittest.main(verbosity=2)
