@@ -9,8 +9,12 @@
 ## 2. 실행 절차 (GitHub Actions)
 1. Actions → 🎬 Hero Shorts Gen → Run workflow
 2. `step: plan` 또는 `step: generate`, `only:` 칸 (기본 2 = 단건, 연속생성금지 가드 상시 유효)
-3. 성공 시 아티팩트 `hero-shorts-out` 다운로드 → 세션에 첨부
-4. 세션에서: 합본(720x1280 트랜스코드) → QC 4게이트+G5 → 제르니오 예약
+3. 1분 전체 영상은 `step: run`과 `confirm_all: true`를 함께 선택한다. 이 모드는
+   plan→전체 컷 생성→합본→QC를 **같은 러너에서** 끝낸다. GitHub-hosted runner는 실행마다
+   초기화되므로 여러 `generate` 실행의 산출물을 다음 실행의 `assemble`에서 합칠 수 없다.
+4. `run`은 전체 컷 과금 승인이 없으면 실행 전에 종료하며, fal 백엔드만 사용한다.
+5. 성공 시 실행별 아티팩트 `hero-shorts-<run id>-<attempt>` 다운로드 → 세션에 첨부
+6. 세션에서: QC 결과 확인→G5→제르니오 예약
 - 예약 스케줄(화·목 UTC 01:00 = KST 10:00)은 plan 생성 전용(0원). 생성은 수동 dispatch만.
 
 ## 3. 스토리 소스 구조 (v2.4.6)
@@ -39,6 +43,9 @@
 | 9/22 | fal HTTP 403 | 모델 접근권·빌링 | 해소 |
 | 9/22 | ffprobe FileNotFoundError | 러너 ffmpeg 미기본 | 해소 |
 | 9/23 | plan 경로 불일치 | 기존 레포는 `NOTION_API_KEY`, Hero Shorts만 별도 인덱스/`NOTION_TOKEN` 기대 | **DB 직독 구조로 전환 착수** |
+| 9/23 | `run`이 실제 영상 대신 dummy 생성 | workflow가 `run`에 `--backend fal`을 전달하지 않음 | 해소 |
+| 9/23 | 단계별 실행 뒤 합본 파일 유실 | GitHub-hosted runner는 실행 간 파일을 보존하지 않음 | 동일 실행 E2E로 해소 |
+| 9/23 | fal 제출 경로 오류/403 | 구형 `minimax/h3/text-to-video` endpoint 지정 | Hailuo 2.3 공식 slug로 교체 |
 
 ## 6. 알려진 관리 사항
 - **중복 디렉터리 `gen/hero_shorts/hero_shorts/` 잔존** → `git rm -r gen/hero_shorts/hero_shorts` 필요
