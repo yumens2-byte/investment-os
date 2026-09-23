@@ -23,7 +23,7 @@ from unittest.mock import patch
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))  # gen/ 루트
 
 from gen.hero_shorts import canon, cutplanner, generator, assemble_qc  # noqa: E402
-from gen.hero_shorts import ledger, pipeline  # noqa: E402
+from gen.hero_shorts import ledger, pipeline, publish_runtime  # noqa: E402
 
 # ── Ep86 실측 arc_state 샘플 (원장 정본 — 네트워크 비의존 테스트 데이터) ──
 EP86 = {
@@ -288,6 +288,72 @@ class TestPipelineState(unittest.TestCase):
             pipeline.STATE_FILE = old
 
 
+class TestPublishRuntime(unittest.TestCase):
+    def test_create_post_args_now(self):
+        payload = publish_runtime.create_post_args(
+            text="caption",
+            media_url="https://www.genspark.ai/api/files/s/example",
+            account_id="acc1",
+        )
+        self.assertEqual(payload["text"], "caption")
+        self.assertEqual(payload["media_urls"], ["https://www.genspark.ai/api/files/s/example"])
+        self.assertEqual(payload["account_ids"], ["acc1"])
+        self.assertTrue(payload["ai_generated"])
+        self.assertNotIn("schedule_at", payload)
+
+    def test_create_post_args_schedule(self):
+        payload = publish_runtime.create_post_args(
+            text="caption",
+            media_url="https://www.genspark.ai/api/files/s/example",
+            account_id="acc1",
+            schedule_at="2026-09-24T09:30:00+09:00",
+            ai_generated=False,
+        )
+        self.assertEqual(payload["schedule_at"], "2026-09-24T09:30:00+09:00")
+        self.assertFalse(payload["ai_generated"])
+
+    def test_normalize_status_published(self):
+        post = {
+            "status": "publishing",
+            "platforms": [{
+                "platform": "instagram",
+                "status": "published",
+                "platformPostUrl": "https://www.instagram.com/reel/abc/",
+            }],
+        }
+        status, url = publish_runtime._normalize_status(post, "instagram")
+        self.assertEqual(status, "published")
+        self.assertEqual(url, "https://www.instagram.com/reel/abc/")
+
+    def test_normalize_status_failed(self):
+        post = {
+            "status": "publishing",
+            "platforms": [{
+                "platform": "instagram",
+                "status": "failed",
+                "errorMessage": "download failed",
+            }],
+        }
+        status, url = publish_runtime._normalize_status(post, "instagram")
+        self.assertEqual(status, "failed")
+        self.assertIsNone(url)
+
+    def test_collect_errors(self):
+        post = {
+            "status": "error",
+            "platforms": [{
+                "platform": "instagram",
+                "status": "failed",
+                "error": "x",
+                "errorMessage": "y",
+            }],
+        }
+        errors = publish_runtime._collect_errors(post)
+        self.assertTrue(any("instagram: x" == e for e in errors))
+        self.assertTrue(any("instagram: y" == e for e in errors))
+        self.assertTrue(any("aggregate: status=error" == e for e in errors))
+
+
 class TestCostGates(unittest.TestCase):
     """v2.4.4 — 비용 발생 프로세스 사전 밸리데이션 (마스터 지시 전수검토 반영)."""
 
@@ -335,6 +401,21 @@ class TestCostGates(unittest.TestCase):
         v = generator.generate("dummy", req, Path(self.__class__.__name__) / "g5.mp4")
         self.assertRaises(RuntimeError, assemble_qc.validate_publish_assets,
                           v, "시장 만화 1화", "https://example.com/v.mp4", "2026-09-23T10:00:00")
+
+    def test_g5_require_audible_audio_refused(self):
+        req = {"prompt": "x", "duration": 30}
+        v = generator.generate("dummy", req, Path(self.__class__.__name__) / "g5_voice.mp4")
+        with patch("gen.hero_shorts.assemble_qc.detect_audio_presence", return_value={
+            "audible": False,
+            "mean_volume_db": -91.0,
+            "max_volume_db": -91.0,
+        }):
+            self.assertRaises(RuntimeError, assemble_qc.validate_publish_assets,
+                              v,
+                              "⚠️ 투자 참고 정보, 투자 권유 아님",
+                              "https://example.com/v.mp4",
+                              "2026-09-23T10:00:00",
+                              True)
 
 
 class TestFalTimeoutRecovery(unittest.TestCase):

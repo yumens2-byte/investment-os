@@ -18,6 +18,7 @@ import logging
 import os
 import sys
 from pathlib import Path
+from typing import Optional
 
 from . import VERSION
 
@@ -27,6 +28,9 @@ DATA = BASE / "data"
 OUT = DATA / "out"
 LOG_DIR = BASE / "logs" / "hero_shorts"
 STATE_FILE = DATA / "publish_state.json"
+DEFAULT_ZERNIO_ACCOUNT_ID = os.getenv("HERO_ZERNIO_ACCOUNT_ID")
+DEFAULT_ALERT_EMAIL = os.getenv("HERO_ALERT_EMAIL")
+DEFAULT_FROM_ACCOUNT = os.getenv("HERO_FROM_ACCOUNT")
 
 
 def load_dotenv():
@@ -132,7 +136,7 @@ def cmd_qc(plan_file, final_video):
 
 
 def cmd_publish(plan_file, final_video, qc_result, channel="instagram"):
-    """발행 원장 갱신 — 실제 SNS 업로드는 젠스파크 제르니오 발행 승인 후 별도."""
+    """발행 원장 갱신 — 실제 SNS 업로드 전 QC 통과 상태를 기록."""
     qc = qc_result or {}
     if not (qc.get("G1") and qc.get("G2") and qc.get("G3") and qc.get("G4")):
         raise RuntimeError("QC 미통과 — 발행 원장 기록 거부(G1~G4 전부 통과 후만 허용)")
@@ -147,17 +151,97 @@ def cmd_publish(plan_file, final_video, qc_result, channel="instagram"):
     return state[key]
 
 
+def cmd_zernio_publish(plan_file, final_video, caption_file, media_url,
+                       qc_result=None, schedule_at: Optional[str] = None,
+                       account_id: Optional[str] = DEFAULT_ZERNIO_ACCOUNT_ID,
+                       platform: str = "instagram",
+                       channel: str = "instagram",
+                       max_wait_sec: int = 900,
+                       poll_interval_sec: int = 30,
+                       alert_to: Optional[str] = DEFAULT_ALERT_EMAIL,
+                       from_account: Optional[str] = DEFAULT_FROM_ACCOUNT,
+                       ai_generated: bool = True,
+                       require_audible_audio: bool = False):
+    """QC/G5 통과 산출물로 Zernio 발행 후 공개 링크까지 회수한다."""
+    from . import assemble_qc, publish_runtime
+    qc = qc_result or {}
+    if not (qc.get("G1") and qc.get("G2") and qc.get("G3") and qc.get("G4")):
+        raise RuntimeError("QC 미통과 — Zernio 발행 거부(G1~G4 전부 통과 후만 허용)")
+    if not account_id:
+        raise RuntimeError("HERO_ZERNIO_ACCOUNT_ID 누락 — 소스 하드코딩 없이 환경변수 또는 --account-id로 주입 필요")
+    caption = Path(caption_file).read_text(encoding="utf-8").strip()
+    effective_schedule = schedule_at or datetime_now_iso_local()
+    assemble_qc.validate_publish_assets(
+        final_video,
+        caption,
+        media_url,
+        effective_schedule,
+        require_audible_audio=require_audible_audio,
+    )
+    result = publish_runtime.create_and_monitor_post(
+        text=caption,
+        media_url=media_url,
+        account_id=account_id,
+        schedule_at=schedule_at,
+        platform=platform,
+        ai_generated=ai_generated,
+        max_wait_sec=max_wait_sec,
+        poll_interval_sec=poll_interval_sec,
+        alert_on_timeout=True,
+        alert_on_error=True,
+        from_account=from_account,
+        alert_to=alert_to,
+    )
+    state = load_state()
+    plan = json.loads(Path(plan_file).read_text(encoding="utf-8"))
+    key = f"ep{plan['episode']}"
+    state[key] = {
+        "title": plan["title"],
+        "type": plan["type"],
+        "final": final_video,
+        "caption_file": str(caption_file),
+        "media_url": media_url,
+        "channel": channel,
+        "platform": platform,
+        "qc": qc,
+        "status": result["outcome"],
+        "zernio_post_id": result.get("post_id"),
+        "platform_post_url": result.get("post_url"),
+        "schedule_at": schedule_at,
+        "version": VERSION,
+        "require_audible_audio": require_audible_audio,
+    }
+    save_state(state)
+    logging.getLogger("hero_shorts").info("제르니오 발행/모니터 완료: %s outcome=%s url=%s", key, result.get("outcome"), result.get("post_url"))
+    return result
+
+
+def datetime_now_iso_local():
+    import datetime
+    return datetime.datetime.now().astimezone().isoformat(timespec="seconds")
+
+
 def main(argv=None):
     """CLI 진입점 — python3 -m gen.hero_shorts.pipeline <단계> [옵션]."""
     setup_logging()
     load_dotenv()
     ap = argparse.ArgumentParser(description="hero shorts pipeline v" + VERSION)
-    ap.add_argument("step", choices=["plan", "generate", "assemble", "qc", "publish", "run", "test"])
+    ap.add_argument("step", choices=["plan", "generate", "assemble", "qc", "publish", "zernio_publish", "run", "test"])
     ap.add_argument("--ep", type=int, default=86)
     ap.add_argument("--backend", choices=["fal", "dummy"], default="dummy",
                     help="fal=현금(승인 후), dummy=테스트 0원")
     ap.add_argument("--plan", default=None, help="plan 단계 산출 JSON 경로")
     ap.add_argument("--only", type=int, default=None, help="지정 컷 번호만 생성 (단건 — 연속 생성 방지)")
+    ap.add_argument("--caption-file", default=None, help="발행용 캡션 txt 경로")
+    ap.add_argument("--media-url", default=None, help="제르니오가 내려받을 Genspark 파일 URL")
+    ap.add_argument("--schedule-at", default=None, help="예약 발행 ISO8601 시각")
+    ap.add_argument("--account-id", default=DEFAULT_ZERNIO_ACCOUNT_ID, help="제르니오 계정 ID(환경변수 주입 권장)")
+    ap.add_argument("--platform", default="instagram", help="게시 플랫폼")
+    ap.add_argument("--alert-to", default=DEFAULT_ALERT_EMAIL, help="지연/실패 알림 수신 메일(환경변수 주입 권장)")
+    ap.add_argument("--from-account", default=DEFAULT_FROM_ACCOUNT, help="지연/실패 알림 발신 Gmail 계정(환경변수 주입 권장)")
+    ap.add_argument("--max-wait-sec", type=int, default=900, help="게시 완료 대기 최대 초")
+    ap.add_argument("--poll-interval-sec", type=int, default=30, help="게시 상태 조회 간격 초")
+    ap.add_argument("--require-audible-audio", action="store_true", help="무음/대사 누락이면 발행 차단")
     args = ap.parse_args(argv)
     log = logging.getLogger("hero_shorts")
 
@@ -181,6 +265,27 @@ def main(argv=None):
         plan_file = args.plan
         qc_result = json.loads(Path(OUT / f"ep{args.ep}_qc.json").read_text())
         print(cmd_publish(plan_file, str(OUT / f"ep{args.ep}_final.mp4"), qc_result))
+    elif args.step == "zernio_publish":
+        if not args.caption_file or not args.media_url:
+            raise RuntimeError("zernio_publish 단계는 --caption-file 과 --media-url 필수")
+        plan_file = args.plan
+        qc_result = json.loads(Path(OUT / f"ep{args.ep}_qc.json").read_text())
+        final_video = str(OUT / f"ep{args.ep}_final.mp4")
+        print(json.dumps(cmd_zernio_publish(
+            plan_file=plan_file,
+            final_video=final_video,
+            caption_file=args.caption_file,
+            media_url=args.media_url,
+            qc_result=qc_result,
+            schedule_at=args.schedule_at,
+            account_id=args.account_id,
+            platform=args.platform,
+            max_wait_sec=args.max_wait_sec,
+            poll_interval_sec=args.poll_interval_sec,
+            alert_to=args.alert_to,
+            from_account=args.from_account,
+            require_audible_audio=args.require_audible_audio,
+        ), ensure_ascii=False, indent=2))
     elif args.step == "run":
         # E2E — plan→generate→assemble→qc (publish 는 승인 후 별도)
         plan_file = cmd_plan(args.ep, OUT)

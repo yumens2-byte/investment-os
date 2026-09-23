@@ -14,6 +14,7 @@ QC 4게이트 (하나라도 실패하면 발행 차단):
 """
 import json
 import logging
+import re
 import subprocess
 from pathlib import Path
 
@@ -64,6 +65,27 @@ def ffprobe_check(path, min_sec=29, max_sec=61):
     return ok, {"w": w, "h": h, "duration": dur, "audio": len(audio)}
 
 
+def detect_audio_presence(path, silence_db_threshold=-60.0):
+    """발행 전 오디오가 사실상 무음인지 검사.
+
+    Returns:
+        dict(audible, mean_volume_db, max_volume_db)
+    """
+    cmd = [
+        "ffmpeg", "-i", str(path), "-af", "volumedetect",
+        "-f", "null", "/dev/null"
+    ]
+    r = subprocess.run(cmd, capture_output=True, text=True)
+    stderr = r.stderr or ""
+    mean_match = re.search(r"mean_volume:\s*(-?\d+(?:\.\d+)?)\s*dB", stderr)
+    max_match = re.search(r"max_volume:\s*(-?\d+(?:\.\d+)?)\s*dB", stderr)
+    mean_db = float(mean_match.group(1)) if mean_match else None
+    max_db = float(max_match.group(1)) if max_match else None
+    audible = bool(max_db is not None and max_db > silence_db_threshold)
+    log.info("오디오 감지: mean=%s dB max=%s dB audible=%s", mean_db, max_db, audible)
+    return {"audible": audible, "mean_volume_db": mean_db, "max_volume_db": max_db}
+
+
 def qc_4gates(prompts, final_video, ep_state, plan_meta=None):
     """QC 4게이트 실행 — 실패 시 RuntimeError 로 발행 차단.
 
@@ -112,7 +134,7 @@ IG_CAPTION_LIMIT = 2200
 DISCLAIMER_MARKS = ["면책", "투자 참고", "not investment advice"]
 
 
-def validate_publish_assets(final_video, caption, media_url, schedule_at):
+def validate_publish_assets(final_video, caption, media_url, schedule_at, require_audible_audio=False):
     """G5 — 잘못된 발행(캡션 초과·면책 누락·링크 만료·무결성)을 예약 전에 차단."""
     import datetime
     problems = []
@@ -128,6 +150,12 @@ def validate_publish_assets(final_video, caption, media_url, schedule_at):
     ok, m = ffprobe_check(final_video)
     if not ok:
         problems.append(f"영상 기술검증 실패 {m}")
+    if require_audible_audio:
+        audio_info = detect_audio_presence(final_video)
+        if not audio_info["audible"]:
+            problems.append(
+                f"음성/대사 감지 실패 mean={audio_info['mean_volume_db']}dB max={audio_info['max_volume_db']}dB"
+            )
     log.info("G5 발행 사전검증: %s", "통과" if not problems else f"실패 {problems}")
     if problems:
         raise RuntimeError("발행 사전검증 실패: " + "; ".join(problems))
