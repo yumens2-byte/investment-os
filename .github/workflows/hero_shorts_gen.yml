@@ -1,7 +1,7 @@
 name: "🎬 Hero Shorts Gen (v2.4.3 — gen 폴더)"
 on:
   schedule:
-    - cron: "0 1 * * 1,3"   # KST 월·수 10:00 발행 대비 plan 단계 — 0원 (생성 미포함)
+    - cron: "0 1 * * 2,4"   # KST 화·목 10:00 발행 대비 plan 단계 — 0원 (생성 미포함)
   workflow_dispatch:          # 수동 실행 전용 — fal 실생성(현금)은 여기서만 발생
     inputs:
       step:
