@@ -182,7 +182,7 @@ class TestCostGates(unittest.TestCase):
     def setUp(self):
         self._old = {k: os.environ.get(k) for k in ("FAL_AI_KEY", "FAL_ENDPOINT", "HERO_ALLOW_ALL")}
         os.environ["FAL_AI_KEY"] = "test-key"
-        os.environ["FAL_ENDPOINT"] = "minimax/h3/text-to-video"
+        os.environ["FAL_ENDPOINT"] = "fal-ai/minimax/hailuo-2.3/standard/text-to-video"
         os.environ.pop("HERO_ALLOW_ALL", None)
 
     def tearDown(self):

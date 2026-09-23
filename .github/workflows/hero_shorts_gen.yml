@@ -1,21 +1,35 @@
+# workflow_run watchdog가 표시 이름을 정확히 일치시켜 구독하므로 이 이름은 안정적으로 유지한다.
 name: "🎬 Hero Shorts Gen (v2.4.3 — gen 폴더)"
 on:
   schedule:
     - cron: "0 1 * * 2,4"   # KST 화·목 10:00 발행 대비 plan 단계 — 0원 (생성 미포함)
-  workflow_dispatch:          # 수동 실행 전용 — fal 실생성(현금)은 여기서만 발생
+  workflow_dispatch:          # fal 실생성(현금)은 수동 실행에서만 발생
     inputs:
       step:
-        description: "실행 단계 (plan|generate|assemble|qc|run)"
+        description: "실행 단계"
         required: true
+        type: choice
+        options: [plan, generate, run]
         default: "plan"
+      episode:
+        description: "에피소드 번호"
+        required: true
+        type: number
+        default: 86
       only:
-        description: "생성할 컷 번호 (기본 2 = 단건). 전체 실행은 승인 후 HERO_ALLOW_ALL=1 별도 경로"
+        description: "generate에서 생성할 단일 컷 번호"
         required: false
-        default: "2"
+        type: number
+        default: 2
+      confirm_all:
+        description: "run의 전체 컷 과금 실행을 승인합니다"
+        required: false
+        type: boolean
+        default: false
 jobs:
   run:
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 45
 
     steps:
       - uses: actions/checkout@v4
@@ -25,29 +39,52 @@ jobs:
         run: sudo apt-get update -qq && sudo apt-get install -y -qq ffmpeg
       - run: pip install -r requirements.txt
       - name: Run step
+        shell: bash
         run: |
-          STEP="${{ github.event.inputs.step }}"
-          ONLY="${{ github.event.inputs.only }}"
-          echo "▶ STEP=$STEP ONLY=$ONLY (기본 2 — 단건 강제)"
-          if [ "$STEP" = "generate" ]; then
-            [ -f gen/data/out/ep86_plan.json ] || python3 -m gen.hero_shorts.pipeline plan   # plan 부재 시 노션 원장 직독 재생성(0원)
-            ARGS="generate --plan gen/data/out/ep86_plan.json --backend fal"
-            [ -n "$ONLY" ] && ARGS="$ARGS --only $ONLY"
-            python3 -m gen.hero_shorts.pipeline $ARGS
-          else
-            python3 -m gen.hero_shorts.pipeline "${STEP:-plan}"
-          fi
+          set -euo pipefail
+          STEP="${{ inputs.step || 'plan' }}"
+          EPISODE="${{ inputs.episode || 86 }}"
+          ONLY="${{ inputs.only || 2 }}"
+          PLAN="gen/data/out/ep${EPISODE}_plan.json"
+          echo "▶ STEP=$STEP EPISODE=$EPISODE ONLY=$ONLY"
+
+          case "$STEP" in
+            plan)
+              python3 -m gen.hero_shorts.pipeline plan --ep "$EPISODE"
+              ;;
+            generate)
+              # Actions 러너는 매번 새 환경이다. 같은 실행에서 plan을 다시 만들어
+              # 단일 컷 생성에 필요한 입력을 항상 보장한다.
+              python3 -m gen.hero_shorts.pipeline plan --ep "$EPISODE"
+              python3 -m gen.hero_shorts.pipeline generate \
+                --plan "$PLAN" --backend fal --only "$ONLY"
+              ;;
+            run)
+              if [ "${{ inputs.confirm_all || false }}" != "true" ]; then
+                echo "::error::run은 1분 전체 컷을 과금 생성합니다. confirm_all을 선택하세요."
+                exit 2
+              fi
+              # plan→전체 컷 생성→합본→QC를 한 러너에서 실행해야 컷 파일이 유실되지 않는다.
+              HERO_ALLOW_ALL=1 python3 -m gen.hero_shorts.pipeline run \
+                --ep "$EPISODE" --backend fal
+              ;;
+            *)
+              echo "::error::지원하지 않는 단계: $STEP"
+              exit 2
+              ;;
+          esac
         env:
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
           FAL_AI_KEY: ${{ secrets.FAL_AI_KEY }}   # fal 시크릿 매핑
-          FAL_ENDPOINT: minimax/h3/text-to-video   # fal 엔드포인트 — 공식 문서 확정
-          NOTION_TOKEN: ${{ secrets.NOTION_TOKEN }}   # 노션 원장 직독(Actions) — 통합 토큰 시크릿
-      - name: Upload artifacts (컷 영상·합본·QC·로그)   # v2.4.3 — 러너 소실 방지 필수
+          FAL_ENDPOINT: fal-ai/minimax/hailuo-2.3/standard/text-to-video
+          NOTION_TOKEN: ${{ secrets.NOTION_TOKEN || secrets.NOTION_API_KEY }}
+      - name: Upload artifacts (컷 영상·합본·QC·로그)
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: hero-shorts-out
+          name: hero-shorts-${{ github.run_id }}-${{ github.run_attempt }}
           path: |
             gen/data/out/
             gen/logs/
           if-no-files-found: ignore
+          retention-days: 14

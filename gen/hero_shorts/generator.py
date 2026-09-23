@@ -68,7 +68,9 @@ def budget_record(duration_sec):
 
 
 # ── fal H3 백엔드 ───────────────────────────────────────────────────
-KNOWN_PRICES = {"minimax/h3/text-to-video": 0.06}   # 가격 실측 완료 엔드포인트 전용
+KNOWN_PRICES = {
+    "fal-ai/minimax/hailuo-2.3/standard/text-to-video": 0.06,
+}  # 가격 실측 완료 엔드포인트 전용
 
 
 def _validate_request(request):
