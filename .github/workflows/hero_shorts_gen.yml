@@ -1,4 +1,5 @@
-name: "🎬 Hero Shorts Gen"
+# workflow_run watchdog가 표시 이름을 정확히 일치시켜 구독하므로 이 이름은 안정적으로 유지한다.
+name: "🎬 Hero Shorts Gen (v2.4.3 — gen 폴더)"
 on:
   schedule:
     - cron: "0 1 * * 2,4"   # KST 화·목 10:00 발행 대비 plan 단계 — 0원 (생성 미포함)
