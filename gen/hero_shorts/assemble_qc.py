@@ -174,30 +174,34 @@ def validate_publish_assets(final_video, caption, media_url, schedule_at, requir
 def check_media_url_reachable(url, timeout=15):
     """v2.5.3 G5 보강 — 발행 미디어 URL의 실제 가용성 검증(형식만이 아니라 접근 확인).
 
-    HEAD 200 통과, 405 등은 Range GET으로 재시도, 403/404/410과 접근 실패는
-    RuntimeError로 발행을 중단한다.
+    HEAD 200 통과. 403/405 등은 실제 다운로드와 동일한 Range GET으로 재검증
+    (토큰 URL은 HEAD만 차단하는 환경 실측 — v2.6.1 파일럿). UA 헤더 상시 포함.
+    404/410과 모든 GET 실패는 RuntimeError로 발행을 중단한다.
     """
     import urllib.error
     import urllib.request
     if not (isinstance(url, str) and url.lower().startswith(("http://", "https://"))):
         raise RuntimeError(f"media_url 형식 불량 — 실가용성 검증 불가: {url!r}")
     code, ctype = None, ""
+    headers = {"User-Agent": "Mozilla/5.0 (compatible; hero-shorts-g5/2.6)"}
     try:
-        req = urllib.request.Request(url, method="HEAD")
+        req = urllib.request.Request(url, method="HEAD", headers=headers)
         with urllib.request.urlopen(req, timeout=timeout) as r:
             code = r.status
             ctype = r.headers.get("Content-Type", "")
     except urllib.error.HTTPError as e:
-        if e.code in (403, 404, 410):
+        if e.code in (404, 410):
             raise RuntimeError(f"media_url 접근 불가(HTTP {e.code}) — 발행 중단") from e
+        code = None                            # 403/405 등 — GET 재검증으로 판단 유보
+    except Exception as exc:
+        raise RuntimeError(f"media_url 접근 불가({exc}) — 발행 중단") from exc
+    if code is None:
         try:
-            req2 = urllib.request.Request(url, headers={"Range": "bytes=0-63"})
+            req2 = urllib.request.Request(url, headers={**headers, "Range": "bytes=0-63"})
             with urllib.request.urlopen(req2, timeout=timeout) as r:
                 code = r.status
                 ctype = r.headers.get("Content-Type", "")
         except Exception as exc:
             raise RuntimeError(f"media_url 접근 불가({exc}) — 발행 중단") from exc
-    except Exception as exc:
-        raise RuntimeError(f"media_url 접근 불가({exc}) — 발행 중단") from exc
     log.info("G5 media_url 가용성: HTTP %s %s", code, ctype)
     return {"http_status": code, "content_type": ctype, "reachable": True}

@@ -753,4 +753,192 @@ class TestV253Hardening(unittest.TestCase):
             except RuntimeError as e:
                 self.assertIn("원장불일치=outcome", str(e))
                 self.assertIn("QC 게이트 실패", str(e))
+
+
+class TestV260Integration(unittest.TestCase):
+    """v2.6.0 — ④에피소드 자동결정 ⑤캡션 ⑥업로드 ⑦원장내구화 ⑧트래커 역동기화."""
+
+    def test_choose_next_episode(self):
+        rows = [
+            {"번호": 88, "발행 상태": "", "특이사항": ""},
+            {"번호": 87, "발행 상태": "진행", "특이사항": ""},
+            {"번호": 86, "발행 상태": "완료", "특이사항": ""},
+            {"번호": 85, "발행 상태": "", "특이사항": "논리적 폐기"},
+        ]
+        self.assertEqual(ledger.choose_next_episode(rows), 87)
+        with self.assertRaises(KeyError):
+            ledger.choose_next_episode([{"번호": 86, "발행 상태": "완료"}])
+
+    def test_find_next_episode_uses_full_query(self):
+        with patch.object(ledger, "query_tracker_rows", return_value=[{"번호": 90, "발행 상태": "대기"}]) as q:
+            self.assertEqual(ledger.find_next_episode(), 90)
+            q.assert_called_once_with(None)
+
+    def test_build_caption_deterministic_and_safe(self):
+        from gen.hero_shorts import caption as cap_mod
+        plan = {"title": "t", "type": "BATTLE", "outcome": "o",
+                "cuts": [{"cut_no": 1, "role": "ESCALATE"}, {"cut_no": 2, "role": "TURN"}]}
+        text = cap_mod.build_caption(plan)
+        self.assertEqual(text.splitlines()[0], "t")
+        self.assertEqual(text.count("- "), 2)
+        self.assertIn("투자 권유 아님", text)
+        for w in ("buy", "sell", "guaranteed", "무조건"):
+            self.assertNotIn(w, text)
+        self.assertEqual(text, cap_mod.build_caption(plan))
+
+    def test_upload_media_parses_gsk_output(self):
+        import subprocess as sp
+        from gen.hero_shorts import mediashare
+        outs = [json.dumps({"url": "https://www.genspark.ai/api/files/s/abc"}),
+                json.dumps({"data": {"url": "https://x.test/pub?token=1"}})]
+
+        def fake_run(args, capture_output=True, text=True, timeout=300):
+            return sp.CompletedProcess(args, 0, stdout=outs.pop(0), stderr="")
+
+        with patch.object(mediashare.subprocess, "run", fake_run):
+            res = mediashare.upload_media("gen/data/out/ep86_final_voiced.mp4")
+        self.assertEqual(res["wrapper_url"], "https://www.genspark.ai/api/files/s/abc")
+        self.assertEqual(res["public_url"], "https://x.test/pub?token=1")
+
+    def test_statestore_sync_and_restore(self):
+        import subprocess as sp
+        import tempfile as tf
+        from gen.hero_shorts import statestore
+        calls = []
+
+        def fake_run(args, capture_output=True, text=True, timeout=300):
+            calls.append(args)
+            return sp.CompletedProcess(args, 0, stdout="{}", stderr="")
+
+        with patch.object(statestore.subprocess, "run", fake_run):
+            with tf.TemporaryDirectory() as d:
+                f = Path(d) / "publish_state.json"
+                f.write_text("{}", encoding="utf-8")
+                self.assertEqual(statestore.sync_states([f]), [str(f)])
+                self.assertIn("--upload_path", calls[0])
+                statestore.restore_if_missing([f])          # 존재 → 스킵
+                self.assertEqual(len(calls), 1)
+                f.unlink()
+                statestore.restore_if_missing([f])          # 부재 → 복원 시도
+                self.assertIn("download", calls[-1])
+
+    def test_update_publish_status_patches_row(self):
+        seen = {}
+
+        class R:
+            def __enter__(self): return self
+            def __exit__(self, *a): return False
+            def read(self): return json.dumps({"id": "row-1"}).encode()
+
+        def fake(req, timeout=60):
+            seen["method"] = req.get_method()
+            seen["url"] = req.full_url
+            seen["body"] = req.data
+            return R()
+
+        with patch.dict(os.environ, {"NOTION_API_TOKEN": "tok"}):
+            with patch("urllib.request.urlopen", fake):
+                self.assertTrue(ledger.update_publish_status("row-1"))
+        self.assertEqual(seen["method"], "PATCH")
+        self.assertIn("pages/row-1", seen["url"])
+        self.assertIn("발행 상태", seen["body"].decode("utf-8"))
+
+    def test_update_publish_status_without_token_fails_clearly(self):
+        self.assertRaises(RuntimeError, ledger.update_publish_status, "row-1", "완료", token=None)
+
+    def test_cmd_plan_persists_source_row(self):
+        ep = {"episode": "Ep87", "title": "t", "type": "BATTLE", "outcome": "o",
+              "source": {"kind": "tracker_db", "row_id": "row-87"}}
+        import gen.hero_shorts.pipeline as pipeline_mod
+        with patch.object(ledger, "load_episode", return_value=ep):
+            out = pipeline_mod.cmd_plan(87, "/tmp/opencode/v260plan")
+        payload = json.loads(Path(out).read_text(encoding="utf-8"))
+        self.assertEqual(payload["source"]["row_id"], "row-87")
+
+    def test_zernio_publish_records_tracker_sync(self):
+        import subprocess as sp
+        import tempfile as tf
+        import gen.hero_shorts.pipeline as P
+        from gen.hero_shorts import publish_runtime
+        d = Path(tf.mkdtemp())
+        plan_f = d / "p.json"
+        plan_f.write_text(json.dumps({
+            "episode": 87, "title": "t", "type": "BATTLE", "outcome": "o",
+            "source": {"row_id": "row-87"}, "cuts": []}), encoding="utf-8")
+        captured = {}
+
+        def fake_pub(**kw):
+            return {"outcome": "published", "post_id": "p1", "post_url": "https://u", "snapshot": None}
+
+        with patch.object(P, "load_state", return_value={}), \
+             patch.object(P, "save_state", lambda s: captured.update(s)), \
+             patch.object(publish_runtime, "create_and_monitor_post", fake_pub), \
+             patch.object(ledger, "update_publish_status", return_value=True) as ups:
+            res = P.cmd_zernio_publish(
+                plan_file=str(plan_f),
+                final_video="/tmp/verify-main/gen/data/out/ep86_final_voiced.mp4",
+                caption_file="/tmp/opencode/ep86-post-final/ep86_caption_ko.txt",
+                media_url="https://example.com/v.mp4",
+                qc_result={"G1": True, "G2": True, "G3": True, "G4": True},
+                require_audible_audio=False, require_media_reachable=False)
+        self.assertEqual(res["outcome"], "published")
+        self.assertEqual(captured["ep87"]["tracker_sync"], "done")
+        self.assertIn("caption_file", captured["ep87"])
+        ups.assert_called_once_with("row-87")
+
+
+class TestV261Pilot(unittest.TestCase):
+    """v2.6.1 — 발행 원장 보호 가드 + 원장 경로 격리(리허설 지원)."""
+
+    def test_cmd_publish_guard_protects_published_record(self):
+        import gen.hero_shorts.pipeline as P
+        published = {"zernio_post_id": "p-old", "status": "published"}
+        with patch.object(P, "load_state", return_value={"ep86": published}):
+            self.assertRaises(RuntimeError, P.cmd_publish,
+                              "gen/data/out/ep86_plan.json",
+                              "gen/data/out/ep86_final_voiced.mp4",
+                              {"G1": True, "G2": True, "G3": True, "G4": True})
+        # 신규 회차(기록 없음)는 통과 — save_state만 격리
+        plan_p = Path("/tmp/opencode/v261_plan.json")
+        plan_p.write_text(json.dumps({"episode": 99, "title": "t", "type": "BATTLE", "outcome": "o"}), encoding="utf-8")
+        saved = {}
+        with patch.object(P, "load_state", return_value={}), \
+             patch.object(P, "save_state", lambda s: saved.update(s)):
+            rec = P.cmd_publish(str(plan_p), "dummy.mp4", {"G1": True, "G2": True, "G3": True, "G4": True})
+        self.assertEqual(rec["status"], "QC_PASSED_READY")
+
+    def test_state_file_env_override(self):
+        import gen.hero_shorts.pipeline as P
+        iso = "/tmp/opencode/v261_state/publish_state.json"
+        Path(iso).unlink(missing_ok=True)             # 재실행 격리(파일럿 발견 결함 수정)
+        with patch.dict(os.environ, {"HERO_STATE_FILE": iso}):
+            self.assertEqual(P.load_state(), {})             # 격리 원장은 비어 있음
+            P.save_state({"epX": {"status": "QC_PASSED_READY"}})
+            self.assertEqual(P.load_state()["epX"]["status"], "QC_PASSED_READY")
+            self.assertTrue(Path(iso).exists())
+        Path(iso).unlink(missing_ok=True)             # 테스트 산출 정리
+
+
+class TestV261AutoselectFallback(unittest.TestCase):
+    """v2.6.1 — 전체 조회 0행 환경(gsk SQL 무필터 미지원)의 순차 탐색 fallback."""
+
+    def test_find_next_episode_sequential_probe(self):
+        rows88 = [{"번호": 88, "발행 상태": "대기", "특이사항": "", "id": "r88"}]
+        with patch.object(ledger, "query_tracker_rows",
+                          side_effect=[[], [], rows88]) as q:      # 전체조회, Ep87, Ep88
+            self.assertEqual(ledger.find_next_episode(base=86), 88)
+        self.assertEqual(q.call_args_list[1][0][0], 87)
+        self.assertEqual(q.call_args_list[2][0][0], 88)
+
+    def test_find_next_episode_skips_discarded_and_completed(self):
+        discarded = [{"번호": 87, "발행 상태": "", "특이사항": "논리적 폐기", "id": "r87"}]
+        done = [{"번호": 88, "발행 상태": "완료", "특이사항": "", "id": "r88"}]
+        next_ep = [{"번호": 89, "발행 상태": "대기", "특이사항": "", "id": "r89"}]
+        with patch.object(ledger, "query_tracker_rows",
+                          side_effect=[[], discarded, done, next_ep]):
+            self.assertEqual(ledger.find_next_episode(base=86), 89)
+
+    def test_find_next_episode_no_base_no_rows_raises_clearly(self):
+        with patch.object(ledger, "query_tracker_rows", return_value=[]):
+            self.assertRaises(RuntimeError, ledger.find_next_episode)
 unittest.main(verbosity=2)

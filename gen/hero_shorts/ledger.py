@@ -141,10 +141,11 @@ def _query_rows_notion_api(ep_number, token):
     cfg = _require_tracker_config()
     url = f"https://api.notion.com/v1/data_sources/{cfg['data_source_id']}/query"
     body = {
-        "filter": {"property": "번호", "number": {"equals": int(ep_number)}},
         "sorts": [{"timestamp": "created_time", "direction": "descending"}],
-        "page_size": 10,
+        "page_size": 100 if ep_number is None else 10,
     }
+    if ep_number is not None:
+        body["filter"] = {"property": "번호", "number": {"equals": int(ep_number)}}
     req = urllib.request.Request(
         url,
         data=json.dumps(body, ensure_ascii=False).encode("utf-8"),
@@ -160,7 +161,7 @@ def _query_rows_notion_api(ep_number, token):
             f"트래커 DB query 실패(HTTP {e.code}) — NOTION_API_TOKEN/NOTION_TOKEN/NOTION_API_KEY 또는 DB 공유 권한 확인: {detail}"
         ) from e
     rows = [_page_to_row(p) for p in data.get("results", [])]
-    log.info("트래커 DB query(API): Ep%d → %d행", ep_number, len(rows))
+    log.info("트래커 DB query(API): %s → %d행", f"Ep{ep_number}" if ep_number is not None else "전체", len(rows))
     return rows
 
 
@@ -181,10 +182,8 @@ def _parse_gsk_query_rows(stdout):
 def _query_rows_via_gsk(ep_number):
     """세션/개발 경로 — Notion MCP의 query_data_sources(SQL) 사용."""
     cfg = _require_tracker_config()
-    query = (
-        f'SELECT * FROM "{cfg["data_source_url"]}" '
-        f'WHERE 번호 = {int(ep_number)} ORDER BY createdTime DESC'
-    )
+    where = f"WHERE 번호 = {int(ep_number)} " if ep_number is not None else ""
+    query = f'SELECT * FROM "{cfg["data_source_url"]}" {where}ORDER BY createdTime DESC'
     args = {
         "action": "notion-query-data-sources",
         "args": json.dumps(
@@ -208,11 +207,11 @@ def _query_rows_via_gsk(ep_number):
     if out.returncode != 0:
         raise RuntimeError((out.stderr or out.stdout or "gsk notion query 실패")[:500])
     rows = _parse_gsk_query_rows(out.stdout)
-    log.info("트래커 DB query(gsk): Ep%d → %d행", ep_number, len(rows))
+    log.info("트래커 DB query(gsk): %s → %d행", f"Ep{ep_number}" if ep_number is not None else "전체", len(rows))
     return rows
 
 
-def query_tracker_rows(ep_number):
+def query_tracker_rows(ep_number=None):
     token = (
         os.getenv("NOTION_API_TOKEN", "")
         or os.getenv("NOTION_TOKEN", "")
@@ -307,3 +306,93 @@ def load_episode(ep_number):
     ep = row_to_episode(row)
     log.info("Ep%d 로드 OK(DB): %s / %s", ep_number, ep.get("title"), row.get("id"))
     return ep
+
+
+def choose_next_episode(rows):
+    """미발행(발행 상태 != 완료) + 폐기 아님 행 중 가장 작은 번호를 고른다(v2.6.0 ④)."""
+    candidates = {}
+    for r in rows:
+        if _is_discarded(r):
+            continue
+        if str(r.get("발행 상태") or "") == "완료":
+            continue
+        try:
+            num = int(r.get("번호"))
+        except (TypeError, ValueError):
+            continue
+        candidates.setdefault(num, r)
+    if not candidates:
+        raise KeyError("미발행 회차 없음 — 전 회차 발행 완료 또는 트래커 비어 있음")
+    best = min(candidates)
+    log.info("다음 미발행 회차 선택: Ep%d (행=%s)", best, candidates[best].get("id"))
+    return best
+
+
+def find_next_episode(base=None):
+    """--ep 미지정 시 사용 — 다음 미발행 회차 번호 반환.
+
+    1차: 트래커 전체 행 조회(gsk SQL 무필터는 0행 실측 — REST 토큰 환경에서만 동작)
+    2차 fallback(v2.6.1): 원장 최종 회차(base) 이후를 1회차 단위 조회로 순차 탐색
+    """
+    rows = query_tracker_rows(None)
+    if rows:
+        return choose_next_episode(rows)
+    if base is None:
+        raise RuntimeError(
+            "트래커 전체 조회 0행(gsk SQL 무필터 미지원 실측) + 원장 기준 없음 — --ep 지정 필요"
+        )
+    for n in range(int(base) + 1, int(base) + 11):
+        try:
+            rows = query_tracker_rows(n)
+        except Exception:
+            rows = []
+        if not rows:
+            continue
+        try:
+            row = choose_canonical_row(rows)
+        except KeyError:
+            continue
+        if not _is_discarded(row) and str(row.get("발행 상태") or "") != "완료":
+            log.info("순차 탐색으로 다음 미발행 회차 확정: Ep%d", n)
+            return n
+    raise KeyError(
+        f"Ep{base} 이후 10개 범위에서 미발행 회차 미발견 — 트래커에 다음 회차 행 등록 필요"
+    )
+
+
+def update_publish_status(row_id, status_name="완료", token=None):
+    """발행 완료 역동기화(v2.6.0 ⑧) — 트래커 행의 발행 상태를 PATCH 갱신(Notion REST 전용).
+
+    gsk notion 은 페이지 갱신 액션이 없어(gsk notion --help 실측) 토큰이 없으면 실패 처리한다.
+    호출부는 결과를 발행 원장 tracker_sync 에 기록한다.
+    """
+    import urllib.error
+    import urllib.request
+
+    token = token or (
+        os.getenv("NOTION_API_TOKEN")
+        or os.getenv("NOTION_TOKEN")
+        or os.getenv("NOTION_API_KEY")
+        or ""
+    )
+    if not token:
+        raise RuntimeError(
+            "트래커 역동기화 불가 — NOTION_API_TOKEN/NOTION_TOKEN/NOTION_API_KEY 미설정"
+            "(gsk 경로는 페이지 갱신 미지원)"
+        )
+    url = f"https://api.notion.com/v1/pages/{row_id}"
+    body = {"properties": {"발행 상태": {"status": {"name": status_name}}}}
+    req = urllib.request.Request(
+        url,
+        data=json.dumps(body, ensure_ascii=False).encode("utf-8"),
+        headers=_notion_headers(token),
+        method="PATCH",
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=60) as r:
+            data = json.load(r)
+    except urllib.error.HTTPError as e:
+        detail = e.read().decode("utf-8", "replace")[:400]
+        raise RuntimeError(f"트래커 역동기화 실패(HTTP {e.code}): {detail}") from e
+    log.info("트래커 역동기화 완료: row=%s 발행 상태=%s", row_id, status_name)
+    return data.get("id") == row_id

@@ -1,4 +1,4 @@
-# Hero Shorts 운영 런북 (v2.5.2 — 2026-09-24 기준)
+# Hero Shorts 운영 런북 (v2.6.0 — 2026-09-24 기준)
 
 ## 1. 현재 상태
 - SSOT: `EDT 에피소드 트래커` DB 직독 구조 유지
@@ -69,9 +69,15 @@ python3 -m gen.hero_shorts.pipeline tts --ep 86 --voice-plan <voice_plan_json> -
 python3 -m gen.hero_shorts.pipeline mix_audio --ep 86 --voice-plan <voice_manifest_json>
 ```
 
-## 7. 다음 작업
-1. 중복 발행 방지와 재조회 모드 분리 — v2.5.1 완료(차단 기본+예외 플래그)
-2. 상태 파일/비용 원장 동시성 안전화
-3. media_url 실가용성 검증 — v2.5.3 완료(`check_media_url_reachable` 발행 직전 실접근 확인)
-4. 대사 품질/속도 파라미터 튜닝
-5. plan 단계 캐논 셀프체크 — v2.5.3 완료(캐논 누락 플랜 원천 차단)
+## 7. 발행 자동화 (v2.6.0 — 상세설계 ④~⑧)
+- ④ 에피소드 자동 결정: `--ep` 미지정 시 트래커에서 다음 미발행 회차(발행 상태≠완료, 폐기 제외, 최소 번호) 자동 선택 — `ledger.find_next_episode()`
+- ⑤ 캡션 자동 생성: `caption` 단계 또는 `zernio_publish`에서 plan+ROLE_LINES 기반 생성(새 사실·수치 미생성) — `gen/hero_shorts/caption.py`
+- ⑥ 미디어 업로드 자동화: `upload_media` 단계 — `gsk upload`→`gsk download`로 공개링크 회수. `zernio_publish`에서 `--media-url` 생략 시 최종 영상 자동 업로드 — `gen/hero_shorts/mediashare.py`
+- ⑦ 발행 원장 내구화: `publish_state.json`/`costs.json`을 AI Drive `/hero-shorts/`에 미러링·복원(실행 시작 시 로컬 부재분 복원, 발행 후 업로드). 비활성화: `HERO_STATE_SYNC=0` — `gen/hero_shorts/statestore.py`
+- ⑧ 트래커 역동기화: 발행 완료 후 plan의 `source.row_id` 행 `발행 상태=완료` PATCH(Notion REST 토큰 필요 — gsk notion은 페이지 갱신 미지원). 결과는 원장 `tracker_sync`에 기록 — `ledger.update_publish_status()`
+- v2.6.1 하드닝: `cmd_publish`도 발행 원장 보호 가드 적용(run/publish 재실행 시 기존 발행 기록 덮어쓰기 차단), `HERO_STATE_FILE` 환경변수로 원장 경로 격리(리허설·테스트 전용), statestore 업로드 실패 시 `aidrive mkdir` 1회 재시도, G5 검사기 UA 헤더 + GET 폴백(토큰 URL HEAD 403 실측 대응)
+
+## 8. 다음 작업
+1. 상태 파일/비용 원장 동시성 파일락
+2. 대사 품질/속도 파라미터 튜닝
+3. Genspark 스케줄 스킬 신규 등록(실행 층 — CI plan 이후 gsk 구간 전담) — 등록 주기/수신처 마스터 승인 필요

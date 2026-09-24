@@ -30,6 +30,11 @@ LOG_DIR = BASE / "logs" / "hero_shorts"
 STATE_FILE = DATA / "publish_state.json"
 
 
+def _state_file():
+    """발행 원장 경로 — HERO_STATE_FILE 로 격리·리허설 실행 가능(v2.6.1). 미설정 시 기본 원장."""
+    return Path(os.getenv("HERO_STATE_FILE") or STATE_FILE)
+
+
 def load_dotenv():
     """gen/.env 로더 — 기존 환경변수를 덮지 않음(setdefault). 키 값을 로그에 절대 출력하지 않는다."""
     envf = BASE / ".env"
@@ -62,19 +67,21 @@ def setup_logging():
 
 
 def load_state():
-    if STATE_FILE.exists():
-        return json.loads(STATE_FILE.read_text(encoding="utf-8"))
+    sf = _state_file()
+    if sf.exists():
+        return json.loads(sf.read_text(encoding="utf-8"))
     return {}
 
 
 def save_state(state):
     import tempfile
-    DATA.mkdir(parents=True, exist_ok=True)
+    sf = _state_file()
+    sf.parent.mkdir(parents=True, exist_ok=True)     # 격리 원장 경로 대응(v2.6.1)
     payload = json.dumps(state, ensure_ascii=False, indent=2)
-    with tempfile.NamedTemporaryFile("w", encoding="utf-8", dir=str(DATA), delete=False) as tmp:
+    with tempfile.NamedTemporaryFile("w", encoding="utf-8", dir=str(sf.parent), delete=False) as tmp:
         tmp.write(payload)
         tmp_path = Path(tmp.name)
-    tmp_path.replace(STATE_FILE)
+    tmp_path.replace(sf)
 
 
 def _env(name: str, default=None):
@@ -129,7 +136,7 @@ def cmd_plan(ep_number, out_dir):
     plan_file = out_dir / f"ep{ep_number}_plan.json"
     plan_file.write_text(json.dumps(
         {"episode": ep_number, "title": ep.get("title"), "type": ep.get("type"),
-         "outcome": ep.get("outcome"), "cuts": plan},
+         "outcome": ep.get("outcome"), "source": ep.get("source"), "cuts": plan},
         ensure_ascii=False, indent=2), encoding="utf-8")
     logging.getLogger("hero_shorts").info("컷계획 저장: %s", plan_file)
     return str(plan_file)
@@ -199,7 +206,8 @@ def cmd_qc(plan_file, final_video):
                    "outcome": plan["outcome"]})
 
 
-def cmd_publish(plan_file, final_video, qc_result, channel="instagram", require_audible_audio=False):
+def cmd_publish(plan_file, final_video, qc_result, channel="instagram", require_audible_audio=False,
+                allow_duplicate_post: bool = False):
     """발행 원장 갱신 — 실제 SNS 업로드 전 QC 통과 상태를 기록."""
     from . import assemble_qc
     qc = qc_result or {}
@@ -213,6 +221,12 @@ def cmd_publish(plan_file, final_video, qc_result, channel="instagram", require_
     state = load_state()
     plan = _load_plan(plan_file)
     key = f"ep{plan['episode']}"
+    existing = state.get(key) or {}
+    if not allow_duplicate_post and existing.get("zernio_post_id") and existing.get("status") in {"published", "pending", "timeout"}:
+        raise RuntimeError(
+            f"발행 원장 보호 — {key} 기존 발행 기록 유지(post_id={existing.get('zernio_post_id')}). "
+            "덮어쓰기 금지 — 재발행은 zernio_publish --allow-duplicate-post 경로만 허용"
+        )
     state[key] = {
         "title": plan["title"],
         "type": plan["type"],
@@ -284,13 +298,25 @@ def cmd_zernio_publish(plan_file, final_video, caption_file, media_url,
         from_account=resolved["from_account"],
         alert_to=resolved["alert_to"],
     )
+    row_id = (plan.get("source") or {}).get("row_id")
+    tracker_sync = "skipped: plan에 source.row_id 없음(구버전 plan)"
+    if row_id:
+        try:
+            from . import ledger as _ledger
+            _ledger.update_publish_status(row_id)
+            tracker_sync = "done"
+        except Exception as exc:
+            tracker_sync = f"failed: {exc}"
+            logging.getLogger("hero_shorts").warning("트래커 역동기화 실패(발행 상태는 유지): %s", exc)
     state[key] = {
         "title": plan["title"],
         "type": plan["type"],
         "final": final_video,
+        "caption_file": caption_file,
         "channel": channel,
         "platform": platform,
         "qc": qc,
+        "tracker_sync": tracker_sync,
         "status": result["outcome"],
         "zernio_post_id": result.get("post_id"),
         "platform_post_url": result.get("post_url"),
@@ -314,8 +340,8 @@ def main(argv=None):
     setup_logging()
     load_dotenv()
     ap = argparse.ArgumentParser(description="hero shorts pipeline v" + VERSION)
-    ap.add_argument("step", choices=["plan", "generate", "assemble", "voice_plan", "tts", "mix_audio", "qc", "publish", "zernio_publish", "run", "test"])
-    ap.add_argument("--ep", type=int, default=86)
+    ap.add_argument("step", choices=["plan", "generate", "assemble", "voice_plan", "tts", "mix_audio", "caption", "upload_media", "qc", "publish", "zernio_publish", "run", "test"])
+    ap.add_argument("--ep", type=int, default=None, help="회차 번호(미지정 시 트래커에서 다음 미발행 회차 자동 선택)")
     ap.add_argument("--backend", choices=["fal", "dummy"], default="dummy",
                     help="fal=현금(승인 후), dummy=테스트 0원")
     ap.add_argument("--plan", default=None, help="plan 단계 산출 JSON 경로")
@@ -345,6 +371,22 @@ def main(argv=None):
         suite = unittest.defaultTestLoader.discover(tests.__path__[0])
         result = unittest.TextTestRunner(verbosity=2).run(suite)
         sys.exit(0 if result.wasSuccessful() else 1)
+
+    if args.step not in ("test", "generate") and args.ep is None:
+        from . import ledger as _ledger
+        try:
+            args.ep = _ledger.find_next_episode()
+        except (KeyError, RuntimeError) as exc:
+            base = max((int(k[2:]) for k in load_state()
+                        if str(k).startswith("ep") and k[2:].isdigit()), default=None)
+            if base is None:
+                raise RuntimeError(f"미발행 회차 자동 판별 불가 — --ep 지정 필요 ({exc})")
+            log.info("전체 조회 불가 — 원장 기준 Ep%d 이후 순차 탐색", base)
+            args.ep = _ledger.find_next_episode(base=base)
+        log.info("ep 미지정 — 트래커에서 다음 미발행 회차 자동 선택: Ep%d", args.ep)
+    if args.step in ("publish", "zernio_publish", "run"):
+        from . import statestore as _ss
+        _ss.restore_if_missing([_state_file(), DATA / "costs.json"])
 
     if args.step == "plan":
         print(cmd_plan(args.ep, OUT))
@@ -376,6 +418,14 @@ def main(argv=None):
             raise RuntimeError("voice manifest에 merged_audio 없음")
         final_video = args.final_video or str(OUT / f"ep{args.ep}_final.mp4")
         print(cmd_mix_audio(final_video, voice_audio, OUT / f"ep{args.ep}_final_voiced.mp4"))
+    elif args.step == "caption":
+        from .caption import save_caption
+        plan_file = args.plan or str(OUT / f"ep{args.ep}_plan.json")
+        print(save_caption(plan_file, args.caption_file or OUT / f"ep{args.ep}_caption.txt"))
+    elif args.step == "upload_media":
+        from .mediashare import upload_media
+        target = args.final_video or str(OUT / f"ep{args.ep}_final_voiced.mp4")
+        print(json.dumps(upload_media(target), ensure_ascii=False, indent=2))
     elif args.step == "qc":
         final_video = args.final_video or str(OUT / f"ep{args.ep}_final.mp4")
         print(cmd_qc(args.plan, final_video))
@@ -388,10 +438,17 @@ def main(argv=None):
             qc_path.write_text(json.dumps(qc_result, ensure_ascii=False, indent=2), encoding="utf-8")
         print(cmd_publish(plan_file, final_video, qc_result, require_audible_audio=args.require_audible_audio))
     elif args.step == "zernio_publish":
-        if not args.caption_file or not args.media_url:
-            raise RuntimeError("zernio_publish 단계는 --caption-file 과 --media-url 필수")
-        plan_file = args.plan
+        plan_file = args.plan or str(OUT / f"ep{args.ep}_plan.json")
         final_video = args.final_video or str(OUT / f"ep{args.ep}_final_voiced.mp4")
+        if not args.caption_file:
+            from .caption import save_caption
+            args.caption_file = save_caption(plan_file, OUT / f"ep{args.ep}_caption.txt")
+            log.info("캡션 미지정 — plan에서 자동 생성: %s", args.caption_file)
+        media_url = args.media_url
+        if not media_url:
+            from .mediashare import upload_media
+            media_url = upload_media(final_video)["public_url"]
+            log.info("media_url 미지정 — 최종 영상 자동 업로드: %s", media_url)
         qc_path = OUT / f"ep{args.ep}_qc.json"
         qc_result = json.loads(qc_path.read_text()) if qc_path.exists() else cmd_qc(plan_file, final_video)
         if not qc_path.exists():
@@ -400,7 +457,7 @@ def main(argv=None):
             plan_file=plan_file,
             final_video=final_video,
             caption_file=args.caption_file,
-            media_url=args.media_url,
+            media_url=media_url,
             qc_result=qc_result,
             schedule_at=args.schedule_at,
             account_id=args.account_id,
@@ -422,8 +479,15 @@ def main(argv=None):
         voiced_final = cmd_mix_audio(final, tts_manifest["merged_audio"], OUT / f"ep{args.ep}_final_voiced.mp4")
         qc = cmd_qc(plan_file, voiced_final)
         (OUT / f"ep{args.ep}_qc.json").write_text(json.dumps(qc, ensure_ascii=False, indent=2), encoding="utf-8")
+        from .caption import save_caption
+        caption_path = save_caption(plan_file, OUT / f"ep{args.ep}_caption.txt")
+        log.info("캡션 생성 완료: %s", caption_path)
         cmd_publish(plan_file, voiced_final, qc, require_audible_audio=True)
         log.info("E2E 완료 (backend=%s tts=%s): %s", args.backend, args.tts_backend, voiced_final)
+
+    if args.step in ("publish", "zernio_publish", "run"):
+        from . import statestore as _ss
+        _ss.sync_states([_state_file(), DATA / "costs.json"])
 
 
 if __name__ == "__main__":
