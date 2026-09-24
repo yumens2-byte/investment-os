@@ -115,16 +115,25 @@ def qc_4gates(prompts, final_video, ep_state, plan_meta=None):
     # G3 — 기술검증
     g3_ok, measured = ffprobe_check(final_video)
 
-    # G4 — 원장 정합 (제목·결과·유형이 계획 메타와 일치)
+    # G4 — 원장 정합 (v2.5.3: 공백/대소문자 정규화 비교 + 실패 항목 상세화)
+    def _norm_text(v):
+        return " ".join(str(v or "").split()).casefold()
+
     meta = plan_meta or {}
-    g4_ok = (meta.get("title") == ep_state.get("title")
-             and meta.get("type") == ep_state.get("type")
-             and meta.get("outcome") == ep_state.get("outcome"))
+    g4_diff = [k for k in ("title", "type", "outcome")
+               if _norm_text(meta.get(k)) != _norm_text(ep_state.get(k))]
+    g4_ok = not g4_diff
     log.info("G4 원장 정합: %s (title=%s type=%s)", "통과" if g4_ok else "실패",
              ep_state.get("title"), ep_state.get("type"))
 
     if not all([g1_ok, g2_ok, g3_ok, g4_ok]):
-        raise RuntimeError(f"QC 게이트 실패 — G1:{g1_ok} G2:{g2_ok} G3:{g3_ok} G4:{g4_ok}")
+        detail = []
+        if not g2_ok:
+            detail.append(f"누락토큰={missing} 금지문구={forbidden}")
+        if not g4_ok:
+            detail.append("원장불일치=" + ",".join(g4_diff))
+        raise RuntimeError(f"QC 게이트 실패 — G1:{g1_ok} G2:{g2_ok} G3:{g3_ok} G4:{g4_ok}"
+                           + (" — " + "; ".join(detail) if detail else ""))
     log.info("QC 4게이트 전부 통과 — 발행 가능")
     return {"G1": g1_ok, "G2": g2_ok, "G3": measured, "G4": g4_ok}
 
@@ -160,3 +169,35 @@ def validate_publish_assets(final_video, caption, media_url, schedule_at, requir
     if problems:
         raise RuntimeError("발행 사전검증 실패: " + "; ".join(problems))
     return True
+
+
+def check_media_url_reachable(url, timeout=15):
+    """v2.5.3 G5 보강 — 발행 미디어 URL의 실제 가용성 검증(형식만이 아니라 접근 확인).
+
+    HEAD 200 통과, 405 등은 Range GET으로 재시도, 403/404/410과 접근 실패는
+    RuntimeError로 발행을 중단한다.
+    """
+    import urllib.error
+    import urllib.request
+    if not (isinstance(url, str) and url.lower().startswith(("http://", "https://"))):
+        raise RuntimeError(f"media_url 형식 불량 — 실가용성 검증 불가: {url!r}")
+    code, ctype = None, ""
+    try:
+        req = urllib.request.Request(url, method="HEAD")
+        with urllib.request.urlopen(req, timeout=timeout) as r:
+            code = r.status
+            ctype = r.headers.get("Content-Type", "")
+    except urllib.error.HTTPError as e:
+        if e.code in (403, 404, 410):
+            raise RuntimeError(f"media_url 접근 불가(HTTP {e.code}) — 발행 중단") from e
+        try:
+            req2 = urllib.request.Request(url, headers={"Range": "bytes=0-63"})
+            with urllib.request.urlopen(req2, timeout=timeout) as r:
+                code = r.status
+                ctype = r.headers.get("Content-Type", "")
+        except Exception as exc:
+            raise RuntimeError(f"media_url 접근 불가({exc}) — 발행 중단") from exc
+    except Exception as exc:
+        raise RuntimeError(f"media_url 접근 불가({exc}) — 발행 중단") from exc
+    log.info("G5 media_url 가용성: HTTP %s %s", code, ctype)
+    return {"http_status": code, "content_type": ctype, "reachable": True}

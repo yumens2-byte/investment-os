@@ -14,7 +14,7 @@ fal 호출 프로토콜 (queue API):
     1) POST https://queue.fal.run/{FAL_ENDPOINT}  (Authorization: Key <키>)
     2) 응답의 status_url 폴링 (1~3s 간격, 상한 300s)
     3) 완료 응답의 video.url 다운로드
-    FAL_ENDPOINT 는 .env 에서 주입 — 추측으로 기본값을 박지 않는다.
+    FAL_ENDPOINT 소스 기본값: minimax/h3/text-to-video (가격 실측 완료, 마스터 승인 v2.5.2). 환경변수로 override 가능.
 """
 import json
 import logging
@@ -69,6 +69,7 @@ def budget_record(duration_sec):
 
 # ── fal H3 백엔드 ───────────────────────────────────────────────────
 KNOWN_PRICES = {"minimax/h3/text-to-video": 0.06}   # 가격 실측 완료 엔드포인트 전용
+DEFAULT_FAL_ENDPOINT = "minimax/h3/text-to-video"   # 소스 기본값(마스터 승인 v2.5.2) — env override 가능
 
 
 def _request_signature(request):
@@ -166,7 +167,7 @@ def _fal_json(req, phase):
 def _fal_call(request, out_path):
     """fal queue API 실호출. 키·엔드포인트 미설정 시 즉시 실패(추측 방지)."""
     key = os.getenv("FAL_AI_KEY", "")
-    endpoint = os.getenv("FAL_ENDPOINT", "")
+    endpoint = os.getenv("FAL_ENDPOINT", DEFAULT_FAL_ENDPOINT)
     missing = [n for n, v in (("FAL_AI_KEY", key), ("FAL_ENDPOINT", endpoint)) if not v]
     if missing:
         raise RuntimeError(f"{', '.join(missing)} 미설정 — fal 실생성은 승인 후 주입")

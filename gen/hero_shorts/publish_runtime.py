@@ -15,6 +15,7 @@ import logging
 import os
 import shlex
 import subprocess
+import tempfile
 import time
 from datetime import datetime, timezone
 from pathlib import Path
@@ -22,8 +23,6 @@ from typing import Any, Dict, List, Optional, Tuple
 
 log = logging.getLogger("hero_shorts.publish_runtime")
 
-DEFAULT_FROM_ACCOUNT = os.getenv("HERO_FROM_ACCOUNT")
-DEFAULT_ALERT_TO = os.getenv("HERO_ALERT_EMAIL")
 TERMINAL_FAIL = {"failed", "error", "rejected", "cancelled"}
 TERMINAL_OK = {"published", "completed", "success"}
 
@@ -95,8 +94,6 @@ def _normalize_status(post: Dict[str, Any], platform: str) -> Tuple[str, Optiona
             return "published", url
         if p_status in TERMINAL_FAIL:
             return "failed", url
-        if url and p_status not in TERMINAL_FAIL:
-            return "published", url
     aggregate = str(post.get("status", "unknown")).lower()
     if aggregate in TERMINAL_OK:
         return "published", url
@@ -140,8 +137,11 @@ def _format_alert_html(post_id: str, state: str, message: str, post_url: Optiona
 
 
 def send_email_alert(subject: str, html_body: str,
-                     from_account: Optional[str] = DEFAULT_FROM_ACCOUNT,
-                     to: Optional[str] = DEFAULT_ALERT_TO) -> None:
+                     from_account: Optional[str] = None,
+                     to: Optional[str] = None) -> None:
+    # 소스 기본값(v2.5.2 마스터 승인) — pipeline.py의 DEFAULT_*와 동일 값
+    from_account = from_account or os.getenv("HERO_FROM_ACCOUNT", "yumens2@gmail.com")
+    to = to or os.getenv("HERO_ALERT_EMAIL", "yumens2@gmail.com")
     if not from_account or not to:
         raise RuntimeError("이메일 알림 설정 누락: HERO_FROM_ACCOUNT 및 HERO_ALERT_EMAIL 필요")
     _run_ok([
@@ -172,15 +172,22 @@ def create_post_args(text: str, media_url: str, account_id: str,
 def create_post(text: str, media_url: str, account_id: str,
                 schedule_at: Optional[str] = None,
                 ai_generated: bool = True) -> Dict[str, Any]:
-    args_file = Path("/tmp/opencode/zernio_create_post_args.json")
-    args_file.parent.mkdir(parents=True, exist_ok=True)
-    args_file.write_text(json.dumps(
-        create_post_args(text=text, media_url=media_url, account_id=account_id,
-                         schedule_at=schedule_at, ai_generated=ai_generated),
-        ensure_ascii=False, indent=2),
-        encoding="utf-8"
-    )
-    payload = _run_json(["gsk", "zernio", "create_post", "자동발행", "--args-file", str(args_file), "-y"])
+    args_dir = Path("/tmp/opencode")
+    args_dir.mkdir(parents=True, exist_ok=True)
+    with tempfile.NamedTemporaryFile("w", encoding="utf-8", dir=str(args_dir), prefix="zernio_create_post_", suffix=".json", delete=False) as tmp:
+        args_file = Path(tmp.name)
+        json.dump(
+            create_post_args(text=text, media_url=media_url, account_id=account_id,
+                             schedule_at=schedule_at, ai_generated=ai_generated),
+            tmp,
+            ensure_ascii=False,
+            indent=2,
+        )
+    try:
+        payload = _run_json(["gsk", "zernio", "create_post", "자동발행", "--args-file", str(args_file), "-y"])
+    finally:
+        if args_file.exists():
+            args_file.unlink()
     data = payload.get("data") or {}
     post = data.get("post") or {}
     post_id = post.get("_id")
@@ -230,8 +237,8 @@ def poll_post(post_id: str, platform: str = "instagram",
 
 
 def maybe_alert(result: Dict[str, Any],
-                from_account: str = DEFAULT_FROM_ACCOUNT,
-                alert_to: str = DEFAULT_ALERT_TO,
+                from_account: Optional[str] = None,
+                alert_to: Optional[str] = None,
                 max_wait_sec: int = 900,
                 alert_on_timeout: bool = True,
                 alert_on_error: bool = True) -> None:
@@ -270,8 +277,8 @@ def create_and_monitor_post(text: str, media_url: str, account_id: str,
                             poll_interval_sec: int = 30,
                             alert_on_timeout: bool = True,
                             alert_on_error: bool = True,
-                            from_account: str = DEFAULT_FROM_ACCOUNT,
-                            alert_to: str = DEFAULT_ALERT_TO) -> Dict[str, Any]:
+                            from_account: Optional[str] = None,
+                            alert_to: Optional[str] = None) -> Dict[str, Any]:
     created = create_post(
         text=text,
         media_url=media_url,

@@ -22,7 +22,7 @@ from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))  # gen/ 루트
 
-from gen.hero_shorts import canon, cutplanner, generator, assemble_qc  # noqa: E402
+from gen.hero_shorts import canon, cutplanner, generator, assemble_qc, voiceover  # noqa: E402
 from gen.hero_shorts import ledger, pipeline, publish_runtime  # noqa: E402
 
 TRACKER_ENV = {
@@ -149,6 +149,54 @@ class TestGeneratorAndAssemble(unittest.TestCase):
         self.assertRaises(RuntimeError, generator.budget_check, 10, cap="0.001")
 
 
+class TestVoiceOver(unittest.TestCase):
+    """대사 계획·더미 TTS·믹싱 경로 검증."""
+
+    def test_build_dialogue_plan_matches_cut_count(self):
+        plan = {
+            "episode": 86,
+            "title": EP86["title"],
+            "type": EP86["type"],
+            "outcome": EP86["outcome"],
+            "cuts": cutplanner.plan_episode(EP86),
+        }
+        payload = voiceover.build_dialogue_plan(plan)
+        self.assertEqual(len(payload["cuts"]), 6)
+        self.assertEqual(payload["cuts"][0]["role"], "ESTABLISH_THREAT")
+        self.assertTrue(payload["cuts"][0]["text"])
+        self.assertLessEqual(payload["cuts"][0]["target_duration_sec"], 10)
+
+    def test_dummy_tts_and_mix_create_audible_video(self):
+        with tempfile.TemporaryDirectory() as d:
+            tmp = Path(d)
+            plan = {
+                "episode": 86,
+                "title": EP86["title"],
+                "type": EP86["type"],
+                "outcome": EP86["outcome"],
+                "cuts": cutplanner.plan_episode(EP86)[:2],
+            }
+            plan_file = tmp / "plan.json"
+            plan_file.write_text(json.dumps(plan, ensure_ascii=False, indent=2), encoding="utf-8")
+            voice_plan_file = tmp / "voice_plan.json"
+            voiceover.save_dialogue_plan(plan_file, voice_plan_file)
+            manifest = voiceover.synthesize_tts_clips(voice_plan_file, tmp / "audio", backend="dummy")
+            self.assertTrue(Path(manifest["merged_audio"]).exists())
+            self.assertGreater(manifest["merged_duration_sec"], 19)
+            self.assertLess(manifest["merged_duration_sec"], 21)
+            for clip in manifest["clips"]:
+                self.assertGreaterEqual(clip["duration_sec"], 9.9)
+                self.assertLessEqual(clip["duration_sec"], 10.1)
+
+            cuts = []
+            for i, c in enumerate(plan["cuts"]):
+                cuts.append(generator.generate("dummy", c["request"], tmp / f"cut{i}.mp4"))
+            final = assemble_qc.assemble(cuts, tmp / "final.mp4")
+            mixed = voiceover.mix_voice_over(final, manifest["merged_audio"], tmp / "final_voiced.mp4")
+            audio_info = assemble_qc.detect_audio_presence(mixed)
+            self.assertTrue(audio_info["audible"])
+
+
 class TestQC(unittest.TestCase):
     """QC 4게이트 — 통과/차단 양쪽 검증."""
 
@@ -236,6 +284,17 @@ class TestLedgerApi(unittest.TestCase):
                  patch.object(ledger, "TRACKER_DATA_SOURCE_URL", None):
                 self.assertRaises(RuntimeError, ledger._require_tracker_config)
 
+    def test_source_defaults_restored(self):
+        """v2.5.2 — HERO_* 운영 식별값 소스 기본값 복원 검증."""
+        import gen.hero_shorts.pipeline as pipeline_mod
+        self.assertTrue(ledger.TRACKER_DB_ID)
+        self.assertTrue(ledger.TRACKER_VIEW_URL)
+        self.assertTrue(ledger.TRACKER_DATA_SOURCE_ID)
+        self.assertTrue(ledger.TRACKER_DATA_SOURCE_URL)
+        self.assertTrue(pipeline_mod.DEFAULT_ZERNIO_ACCOUNT_ID)
+        self.assertTrue(pipeline_mod.DEFAULT_ALERT_EMAIL)
+        self.assertTrue(pipeline_mod.DEFAULT_FROM_ACCOUNT)
+
     def test_query_tracker_rows_uses_data_sources_endpoint_and_api_token(self):
         payload = {
             "results": [
@@ -309,6 +368,37 @@ class TestPipelineState(unittest.TestCase):
                 self.assertEqual(st["ep86"]["status"], "QC_PASSED_READY")
         finally:
             pipeline.STATE_FILE = old
+
+    def test_assemble_paths_from_plan_json(self):
+        with tempfile.TemporaryDirectory() as d:
+            p = Path(d) / "plan.json"
+            p.write_text(json.dumps({
+                "episode": 86,
+                "cuts": [{"cut_no": 1}, {"cut_no": 2}]
+            }, ensure_ascii=False), encoding="utf-8")
+            paths = pipeline._assemble_paths_from_input(str(p), 86)
+            self.assertTrue(paths[0].endswith("ep86_cut1.mp4"))
+            self.assertTrue(paths[1].endswith("ep86_cut2.mp4"))
+
+    def test_qc_falls_back_to_plan_meta_when_ledger_fails(self):
+        with tempfile.TemporaryDirectory() as d:
+            tmp = Path(d)
+            plan = {
+                "episode": 86,
+                "title": EP86["title"],
+                "type": EP86["type"],
+                "outcome": EP86["outcome"],
+                "cuts": cutplanner.plan_episode(EP86)[:3],
+            }
+            plan_file = tmp / "plan.json"
+            plan_file.write_text(json.dumps(plan, ensure_ascii=False, indent=2), encoding="utf-8")
+            cuts = [generator.generate("dummy", c["request"], tmp / f"cut{i}.mp4") for i, c in enumerate(plan["cuts"])]
+            final = assemble_qc.assemble(cuts, tmp / "final.mp4")
+            with patch("gen.hero_shorts.ledger.load_episode", side_effect=RuntimeError("boom")):
+                qc = pipeline.cmd_qc(str(plan_file), final)
+            self.assertTrue(qc["G1"])
+            self.assertTrue(qc["G2"])
+            self.assertTrue(qc["G4"])
 
 
 class TestPublishRuntime(unittest.TestCase):
@@ -418,6 +508,35 @@ class TestCostGates(unittest.TestCase):
         plan_file = "unused"
         self.assertRaises(RuntimeError, pipeline.cmd_publish, plan_file, "v.mp4", {"G1": True})
         self.assertRaises(RuntimeError, pipeline.cmd_publish, plan_file, "v.mp4", {})
+
+    def test_duplicate_post_blocked(self):
+        old = pipeline.STATE_FILE
+        try:
+            with tempfile.TemporaryDirectory() as d:
+                pipeline.STATE_FILE = Path(d) / "publish_state.json"
+                pipeline.save_state({"ep86": {"status": "published", "zernio_post_id": "post-1"}})
+                plan_file = Path(d) / "plan.json"
+                plan_file.write_text(json.dumps({
+                    "episode": 86,
+                    "title": EP86["title"],
+                    "type": EP86["type"],
+                    "outcome": EP86["outcome"],
+                    "cuts": cutplanner.plan_episode(EP86)[:1],
+                }, ensure_ascii=False, indent=2), encoding="utf-8")
+                with patch("gen.hero_shorts.assemble_qc.validate_publish_assets", return_value=True):
+                    self.assertRaises(
+                        RuntimeError,
+                        pipeline.cmd_zernio_publish,
+                        str(plan_file),
+                        "v.mp4",
+                        __file__,
+                        "https://example.com/video.mp4",
+                        {"G1": True, "G2": True, "G3": {"w": 720, "h": 1280, "duration": 10, "audio": 1}, "G4": True},
+                        None,
+                        "acc1",
+                    )
+        finally:
+            pipeline.STATE_FILE = old
 
     def test_g5_caption_without_disclaimer_refused(self):
         req = {"prompt": "x", "duration": 30}
@@ -565,5 +684,73 @@ class TestFalTimeoutRecovery(unittest.TestCase):
         self.assertIn("https://response/req-resume", seen)
 
 
-if __name__ == "__main__":
-    unittest.main(verbosity=2)
+
+
+class TestV253Hardening(unittest.TestCase):
+    """v2.5.3 — plan 캐논 셀프체크 / G5 URL 실가용성 / G4 정규화 / QC 상세화."""
+
+    def test_plan_blocks_missing_canon_tokens(self):
+        from gen.hero_shorts import canon as C, cutplanner, ledger as ledger_mod, pipeline as P
+        ep = {"episode": "Ep87", "title": "t", "type": "BATTLE", "outcome": "Tactical Victory"}
+        plan = cutplanner.plan_episode(ep)
+        missing = [x for x in C.PROMPT_TOKENS if x not in "\n".join(c["prompt"] for c in plan)]
+        self.assertEqual(missing, [])
+        # G2 셀프체크는 플랜 전체 조인 기준 — 전 컷에서 토큰 제거해야 차단 대상이 된다
+        broken = [{**c, "prompt": c["prompt"].replace("modern financial district", "cyber city")}
+                  for c in plan]
+        with patch.object(ledger_mod, "load_episode", return_value=ep), \
+             patch.object(cutplanner, "plan_episode", return_value=broken):
+            self.assertRaises(RuntimeError, P.cmd_plan, 87, "/tmp/opencode/v253test")
+
+    def test_check_media_url_reachable(self):
+        import urllib.error
+        from gen.hero_shorts import assemble_qc
+
+        class R:
+            status = 200
+            headers = {"Content-Type": "video/mp4"}
+            def __enter__(self): return self
+            def __exit__(self, *a): return False
+
+        with patch("urllib.request.urlopen", lambda req, timeout=15: R()):
+            res = assemble_qc.check_media_url_reachable("https://example.com/v.mp4")
+        self.assertTrue(res["reachable"])
+        self.assertEqual(res["http_status"], 200)
+
+        def fake405(req, timeout=15):
+            if req.get_method() == "HEAD":
+                raise urllib.error.HTTPError("u", 405, "m", {}, None)
+            r = R(); r.status = 206
+            return r
+        with patch("urllib.request.urlopen", fake405):
+            res = assemble_qc.check_media_url_reachable("https://example.com/v.mp4")
+        self.assertEqual(res["http_status"], 206)
+
+        def fake404(req, timeout=15):
+            raise urllib.error.HTTPError("u", 404, "nf", {}, None)
+        with patch("urllib.request.urlopen", fake404):
+            self.assertRaises(RuntimeError, assemble_qc.check_media_url_reachable, "https://example.com/x.mp4")
+
+        self.assertRaises(RuntimeError, assemble_qc.check_media_url_reachable, "ftp://bad")
+
+    def test_g4_normalized_and_detailed_error(self):
+        from gen.hero_shorts import assemble_qc
+        prompts = ["webtoon-anime style. EDT. 9:16. No subtitles. modern financial district."]
+        probe = (True, {"w": 720, "h": 1280, "duration": 60.0, "audio": 1})
+        with patch.object(assemble_qc, "ffprobe_check", return_value=probe):
+            ok = assemble_qc.qc_4gates(
+                prompts, "dummy.mp4",
+                {"title": "t", "type": "BATTLE", "outcome": "Tactical Victory"},
+                plan_meta={"title": " t  ", "type": "battle", "outcome": "tactical victory"})
+        self.assertTrue(ok["G4"])
+        with patch.object(assemble_qc, "ffprobe_check", return_value=probe):
+            try:
+                assemble_qc.qc_4gates(
+                    prompts, "dummy.mp4",
+                    {"title": "t", "type": "BATTLE", "outcome": "Tactical Victory"},
+                    plan_meta={"title": "t", "type": "BATTLE", "outcome": "Hero Tactical Victory"})
+                self.fail("예외 미발생")
+            except RuntimeError as e:
+                self.assertIn("원장불일치=outcome", str(e))
+                self.assertIn("QC 게이트 실패", str(e))
+unittest.main(verbosity=2)

@@ -26,9 +26,12 @@ import subprocess
 
 log = logging.getLogger("hero_shorts.ledger")
 
-TRACKER_DB_ID = os.getenv("HERO_SHORTS_TRACKER_DB_ID")
-TRACKER_VIEW_URL = os.getenv("HERO_SHORTS_TRACKER_VIEW_URL")
-TRACKER_DATA_SOURCE_ID = os.getenv("HERO_SHORTS_TRACKER_DATA_SOURCE_ID")
+TRACKER_DB_ID = os.getenv("HERO_SHORTS_TRACKER_DB_ID", "32a9e71588b843e1a650d2c9c87d1d9f")
+TRACKER_VIEW_URL = os.getenv(
+    "HERO_SHORTS_TRACKER_VIEW_URL",
+    "https://app.notion.com/p/32a9e71588b843e1a650d2c9c87d1d9f?v=741c74121afe4b6da48fa89d688e1fa6&source=copy_link",
+)
+TRACKER_DATA_SOURCE_ID = os.getenv("HERO_SHORTS_TRACKER_DATA_SOURCE_ID", "bdc5e21c-58eb-40f9-b659-8c6d33fd0dae")
 TRACKER_DATA_SOURCE_URL = f"collection://{TRACKER_DATA_SOURCE_ID}" if TRACKER_DATA_SOURCE_ID else None
 DISCARD_MARKERS = ("논리적 폐기", "폐기됨", "폐기 ")
 

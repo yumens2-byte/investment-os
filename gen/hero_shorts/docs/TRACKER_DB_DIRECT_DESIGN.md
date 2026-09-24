@@ -4,8 +4,8 @@
 Hero Shorts의 운영 SSOT는 별도 인덱스 페이지가 아니라 **`EDT 에피소드 트래커` Notion DB** 다. 따라서 스토리 소스는 트래커 DB 직독을 기준으로 유지한다.
 
 ## v2.4.10 기준 핵심 변경
-- 트래커 관련 운영 식별값 기본 하드코딩 제거
-- `ledger.py`는 환경변수 주입이 없으면 즉시 실패
+- 트래커 관련 운영 식별값 기본 하드코딩 제거 (v2.5.2에서 소스 기본값으로 재복원 — 마스터 승인)
+- `ledger.py`는 기본값 소실 시 즉시 실패 (환경변수 override 허용)
 - 메일 주소·운영 식별값을 소스 기본값으로 두지 않음
 - 발행 단계는 `zernio_publish`로 통합 가능
 - 발행 전 오디오 가청성 검사(`--require-audible-audio`) 지원
@@ -18,18 +18,19 @@ Hero Shorts의 운영 SSOT는 별도 인덱스 페이지가 아니라 **`EDT 에
    - `발행 상태 = 완료`
    - `createdTime` 최신
 4. DB의 `메인 히어로` 표기는 운영 이력용 원문으로 두고, 시각 캐논은 `canon.py`가 우선한다.
-5. 개인정보/운영 식별값/토큰은 소스 기본값으로 두지 않고 환경변수로 주입한다.
+5. 시크릿(토큰·API 키)은 소스에 두지 않고 환경변수로 주입한다. 운영 식별값은 v2.5.2부터 소스 기본값 허용(마스터 승인), 환경변수 override가 우선한다.
 
-## 필수 환경변수
-### 트래커 설정
+## 환경변수 정책 (v2.5.2 개정)
+### 시크릿 — 환경변수 전용(소스 하드코딩 금지)
+- `NOTION_API_TOKEN` 또는 `NOTION_TOKEN` 또는 `NOTION_API_KEY`
+- `FAL_AI_KEY`
+
+### 소스 기본값 복원(마스터 승인) — 환경변수로 override 가능
 - `HERO_SHORTS_TRACKER_DB_ID`
 - `HERO_SHORTS_TRACKER_VIEW_URL`
 - `HERO_SHORTS_TRACKER_DATA_SOURCE_ID`
-
-### Notion API 직접 조회 시
-- `NOTION_API_TOKEN`
-- 또는 `NOTION_TOKEN`
-- 또는 `NOTION_API_KEY`
+- `HERO_ZERNIO_ACCOUNT_ID` / `HERO_ALERT_EMAIL` / `HERO_FROM_ACCOUNT`
+- `FAL_ENDPOINT` (기본값 `minimax/h3/text-to-video`)
 
 ## 구현 구조
 - `ledger.py`
