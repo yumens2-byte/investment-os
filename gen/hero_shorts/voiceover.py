@@ -11,6 +11,7 @@ gen/hero_shorts/voiceover.py — 대사 계획·TTS·오디오 믹싱
     3) 최종 영상 + 병합 WAV → 발행용 혼합 MP4
 """
 import json
+import os
 import logging
 import math
 import subprocess
@@ -126,15 +127,38 @@ def _dummy_tts(text: str, out_path, duration_sec: float):
 
 
 def _gsk_tts(text: str, out_path, model: Optional[str] = None, speaker: Optional[str] = None):
+    # v2.7.3 치유: ① elevenlabs/v4-tts는 화자 필수(-p {"speaker": ...}) ② 오류도 exit 0+ok 봉투로 반환되므로
+    #    파일 부재 시 응답 본문을 검사해 반드시 실패 처리한다(Ep87 삐 결함 원인: 무음/스테일 마스킹).
+    import json as _json, re as _re, urllib.request as _uq
     chosen_model = model or "elevenlabs/v4-tts"
-    cmd = ["gsk", "audio_generation", text, "-m", chosen_model, "-o", str(out_path)]
-    if speaker:
-        cmd.extend(["--speaker", speaker])
+    speaker = speaker or (os.environ.get("HERO_TTS_SPEAKER") or None)
+    if not speaker:
+        raise RuntimeError("TTS 화자 미지정 — HERO_TTS_SPEAKER 또는 --speaker 필요(v2.7.3 fail-closed)")
+    cmd = ["gsk", "audio_generation", text, "-m", chosen_model, "-o", str(out_path),
+           "-p", _json.dumps({"speaker": speaker})]
     r = subprocess.run(cmd, capture_output=True, text=True)
     if r.returncode != 0:
         raise RuntimeError(f"gsk TTS 실패: {r.stderr[:300] or r.stdout[:300]}")
     if not Path(out_path).exists() or Path(out_path).stat().st_size == 0:
-        raise RuntimeError("gsk TTS 출력 파일 없음")
+        body = r.stdout or ""
+        try:
+            _d = _json.loads(body)
+            if str(_d.get("status")) != "ok" or "Invalid params" in str(_d.get("data", {}).get("result", "")):
+                raise RuntimeError(f"gsk TTS 거부: {str(_d.get('data', {}).get('result'))[:200]}")
+            _data = _d.get("data") or {}
+            audio_url = (_data.get("audio_url") or _data.get("url") or _data.get("audio")
+                         or (_data.get("audio_urls") or [None])[0])
+        except RuntimeError:
+            raise
+        except Exception:
+            audio_url = None
+        if not audio_url:
+            _m = _re.search(r"https://[^\s\"']+", body)
+            audio_url = _m.group(0) if _m else None
+        if audio_url:
+            _uq.urlretrieve(audio_url, str(out_path))
+    if not Path(out_path).exists() or Path(out_path).stat().st_size == 0:
+        raise RuntimeError(f"gsk TTS 출력 부재(응답): {r.stdout[:200]}")
     return str(out_path)
 
 
@@ -167,6 +191,8 @@ def synthesize_tts_clips(dialogue_plan_file, out_dir, backend="dummy", model=Non
         raw_clip_path = out_dir / f"{episode}_voice_cut{cut['cut_no']}_raw.wav"
         clip_path = out_dir / f"{episode}_voice_cut{cut['cut_no']}.wav"
         text = cut["text"]
+        if raw_clip_path.exists():
+            raw_clip_path.unlink()  # v2.7.3: 이전 실행 raw 재사용 금지 — Ep87 삐 결함 원인(더미 사인 잔존)
         target_duration = float(cut.get("target_duration_sec", 3.0))
         segment_duration = float(cut.get("max_duration_sec", target_duration))
         if backend == "dummy":
