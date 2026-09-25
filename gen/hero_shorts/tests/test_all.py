@@ -960,6 +960,18 @@ class TestV270ApprovalGate(unittest.TestCase):
                 approval.request_approval(87, "t", "c", "https://example.com/v.mp4")
             self.assertIn("fail-closed", str(cm.exception))
 
+
+    def test_config_alias_paid_channel_id(self):
+        import os
+        from unittest.mock import patch
+        from gen.hero_shorts import approval
+        with patch.dict(os.environ, {"TELEGRAM_BOT_TOKEN": "T", "HERO_TELEGRAM_CHAT_ID": "",
+                                     "TELEGRAM_PAID_CHANNEL_ID": "-100999"}), \
+             patch("gen.hero_shorts.approval._call_api") as api:
+            api.return_value = {"message_id": 3}
+            block = approval.request_approval(87, "제목", "캡션", "https://example.com/v.mp4")
+        self.assertEqual(block["chat_id"], "-100999")          # 기존 공용변수 별칭 동작
+
     def test_request_approval_sends_buttons_and_records(self):
         import os
         from unittest.mock import patch

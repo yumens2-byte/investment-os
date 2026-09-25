@@ -38,8 +38,9 @@ def _now_iso():
 def _config():
     """시크릿/채팅 설정 해석 — 미설정이면 fail-closed로 즉시 실패."""
     token = os.getenv("TELEGRAM_BOT_TOKEN")
-    chat = os.getenv("HERO_TELEGRAM_CHAT_ID")
-    missing = [n for n, v in (("TELEGRAM_BOT_TOKEN", token), ("HERO_TELEGRAM_CHAT_ID", chat)) if not v]
+    # 채팅 허용목록 — 신규 전용변수 우선, 기존 공용변수 별칭(기존 크리덴셜 재사용, v2.7.0 파일럿)
+    chat = os.getenv("HERO_TELEGRAM_CHAT_ID") or os.getenv("TELEGRAM_PAID_CHANNEL_ID")
+    missing = [n for n, v in (("TELEGRAM_BOT_TOKEN", token), ("HERO_TELEGRAM_CHAT_ID/TELEGRAM_PAID_CHANNEL_ID", chat)) if not v]
     if missing:
         raise ApprovalError(f"텔레그램 승인 설정 누락({', '.join(missing)}) — fail-closed: 승인 절차 중단")
     return token, chat

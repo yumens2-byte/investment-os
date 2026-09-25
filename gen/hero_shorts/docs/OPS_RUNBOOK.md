@@ -82,7 +82,7 @@ python3 -m gen.hero_shorts.pipeline mix_audio --ep 86 --voice-plan <voice_manife
   러너2(화·목 10:00) `resolve_approvals` → **승인건만** `zernio_publish --ep N --require-audible-audio`
 - fail-closed: `HERO_APPROVAL_REQUIRED=1` 또는 승인 요청 이력 존재 시, `approval.status=APPROVED`가 아니면 발행 거부
 - 상세설계: docs/APPROVAL_GATE_DESIGN.md (보안 모델·상태 머신·테스트 목록 포함)
-- 신규 환경변수: `TELEGRAM_BOT_TOKEN`(시크릿), `HERO_TELEGRAM_CHAT_ID`(허용 채팅 — 콜백 허용목록)
+- 환경변수: `TELEGRAM_BOT_TOKEN`(시크릿), 허용 채팅 = `HERO_TELEGRAM_CHAT_ID` 또는 기존 `TELEGRAM_PAID_CHANNEL_ID`(별칭)
 - 봇 생성·토큰 발급·스케줄 스킬 2건 등록은 마스터 조작/승인(휴먼게이트)
 
 ## 9. 다음 작업

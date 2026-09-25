@@ -39,7 +39,7 @@
 | 항목 | 설계 |
 |---|---|
 | 토큰 | `TELEGRAM_BOT_TOKEN` — 환경변수 전용(시크릿, 소스·문서 기록 금지) |
-| 채팅 허용목록 | `HERO_TELEGRAM_CHAT_ID`(쉼표 복수) — 콜백 chat_id가 목록 밖이면 무시+ack |
+| 채팅 허용목록 | `HERO_TELEGRAM_CHAT_ID` 또는 기존 `TELEGRAM_PAID_CHANNEL_ID` 별칭(쉼표 복수) — 콜백 chat_id가 목록 밖이면 무시+ack |
 | 1회 소비 | `answerCallbackQuery` + 메시지 "결정 반영" 편집 + 원장 `decided_at` 멱등 키 |
 | 전송 실패 | sendVideo 실패(용량·네트워크) → sendMessage 링크 폴백(버튼 동일) |
 | 설정 누락 | 승인 절차 전체 즉시 실패 — 조용한 통과 없음(fail-closed) |
