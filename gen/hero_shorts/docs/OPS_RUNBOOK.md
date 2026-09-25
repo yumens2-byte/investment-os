@@ -77,7 +77,16 @@ python3 -m gen.hero_shorts.pipeline mix_audio --ep 86 --voice-plan <voice_manife
 - ⑧ 트래커 역동기화: 발행 완료 후 plan의 `source.row_id` 행 `발행 상태=완료` PATCH(Notion REST 토큰 필요 — gsk notion은 페이지 갱신 미지원). 결과는 원장 `tracker_sync`에 기록 — `ledger.update_publish_status()`
 - v2.6.1 하드닝: `cmd_publish`도 발행 원장 보호 가드 적용(run/publish 재실행 시 기존 발행 기록 덮어쓰기 차단), `HERO_STATE_FILE` 환경변수로 원장 경로 격리(리허설·테스트 전용), statestore 업로드 실패 시 `aidrive mkdir` 1회 재시도, G5 검사기 UA 헤더 + GET 폴백(토큰 URL HEAD 403 실측 대응)
 
-## 8. 다음 작업
+## 8. 승인 게이트 — 2페이즈 자동화 (v2.7.0)
+- 구조: 러너1(화·목 08:00) `run --ep N --request-approval` → 텔레그램 영상+[승인]/[보류] 버튼 →
+  러너2(화·목 10:00) `resolve_approvals` → **승인건만** `zernio_publish --ep N --require-audible-audio`
+- fail-closed: `HERO_APPROVAL_REQUIRED=1` 또는 승인 요청 이력 존재 시, `approval.status=APPROVED`가 아니면 발행 거부
+- 상세설계: docs/APPROVAL_GATE_DESIGN.md (보안 모델·상태 머신·테스트 목록 포함)
+- 신규 환경변수: `TELEGRAM_BOT_TOKEN`(시크릿), `HERO_TELEGRAM_CHAT_ID`(허용 채팅 — 콜백 허용목록)
+- 봇 생성·토큰 발급·스케줄 스킬 2건 등록은 마스터 조작/승인(휴먼게이트)
+
+## 9. 다음 작업
 1. 상태 파일/비용 원장 동시성 파일락
 2. 대사 품질/속도 파라미터 튜닝
-3. Genspark 스케줄 스킬 신규 등록(실행 층 — CI plan 이후 gsk 구간 전담) — 등록 주기/수신처 마스터 승인 필요
+3. Genspark 스케줄 스킬 신규 등록(실행 층 — 러너1·2 포함) — 등록 주기/수신처 마스터 승인 필요
+4. Ep87 실전 파일럿 — 러너1 수동 실행 → 텔레그램 수신·승인 탭 → 러너2 수동 실행(발행 확인) 후 스케줄 승인

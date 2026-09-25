@@ -238,6 +238,8 @@ def cmd_publish(plan_file, final_video, qc_result, channel="instagram", require_
         "require_audible_audio": require_audible_audio,
         "audio_check": audio_info,
     }
+    if existing.get("approval"):                     # v2.7.0 — 승인 결정 이력 보존
+        state[key]["approval"] = existing["approval"]
     save_state(state)
     logging.getLogger("hero_shorts").info("발행 원장 갱신: %s", key)
     return state[key]
@@ -280,6 +282,14 @@ def cmd_zernio_publish(plan_file, final_video, caption_file, media_url,
     if not allow_duplicate_post and existing.get("zernio_post_id") and existing.get("status") in {"published", "pending", "timeout"}:
         raise RuntimeError(
             f"중복 발행 방지 — {key} 기존 post_id={existing.get('zernio_post_id')} status={existing.get('status')}"
+        )
+    approval = existing.get("approval") or {}
+    gate_on = os.getenv("HERO_APPROVAL_REQUIRED") == "1" or bool(approval.get("requested_at"))
+    if gate_on and approval.get("status") != "APPROVED":
+        # v2.7.0 승인 게이트(fail-closed) — 텔레그램 승인(resolve_approvals) 후에만 발행 허용
+        raise RuntimeError(
+            f"승인 게이트 차단 — {key} 승인 상태={approval.get('status') or '요청 이력 없음'}. "
+            "텔레그램 [승인] + resolve_approvals 실행 후 발행 가능"
         )
     if require_media_reachable:
         # v2.5.3 G5 보강 — 형식 검사를 넘어 발행 직전 실제 접근 가능 여부 확인
@@ -325,6 +335,8 @@ def cmd_zernio_publish(plan_file, final_video, caption_file, media_url,
         "require_audible_audio": require_audible_audio,
         "published_at": ((result.get("snapshot") or {}).get("platforms") or [{}])[0].get("publishedAt") if result.get("snapshot") else None,
     }
+    if existing.get("approval"):                     # v2.7.0 — 승인 결정 이력 보존
+        state[key]["approval"] = existing["approval"]
     save_state(state)
     logging.getLogger("hero_shorts").info("제르니오 발행/모니터 완료: %s outcome=%s url=%s", key, result.get("outcome"), result.get("post_url"))
     return result
@@ -340,7 +352,7 @@ def main(argv=None):
     setup_logging()
     load_dotenv()
     ap = argparse.ArgumentParser(description="hero shorts pipeline v" + VERSION)
-    ap.add_argument("step", choices=["plan", "generate", "assemble", "voice_plan", "tts", "mix_audio", "caption", "upload_media", "qc", "publish", "zernio_publish", "run", "test"])
+    ap.add_argument("step", choices=["plan", "generate", "assemble", "voice_plan", "tts", "mix_audio", "caption", "upload_media", "qc", "publish", "zernio_publish", "run", "request_approval", "resolve_approvals", "test"])
     ap.add_argument("--ep", type=int, default=None, help="회차 번호(미지정 시 트래커에서 다음 미발행 회차 자동 선택)")
     ap.add_argument("--backend", choices=["fal", "dummy"], default="dummy",
                     help="fal=현금(승인 후), dummy=테스트 0원")
@@ -362,6 +374,8 @@ def main(argv=None):
     ap.add_argument("--poll-interval-sec", type=int, default=30, help="게시 상태 조회 간격 초")
     ap.add_argument("--require-audible-audio", action="store_true", help="무음/대사 누락이면 발행 차단")
     ap.add_argument("--allow-duplicate-post", action="store_true", help="기존 post_id가 있어도 새 발행을 허용")
+    ap.add_argument("--request-approval", action="store_true", help="run 종료 후 텔레그램 승인 요청까지 수행(러너1)")
+    ap.add_argument("--lookback-hours", type=int, default=36, help="resolve_approvals 결정 반영 대기 시간(시)")
     args = ap.parse_args(argv)
     log = logging.getLogger("hero_shorts")
 
@@ -372,7 +386,7 @@ def main(argv=None):
         result = unittest.TextTestRunner(verbosity=2).run(suite)
         sys.exit(0 if result.wasSuccessful() else 1)
 
-    if args.step not in ("test", "generate") and args.ep is None:
+    if args.step not in ("test", "generate", "resolve_approvals") and args.ep is None:
         from . import ledger as _ledger
         try:
             args.ep = _ledger.find_next_episode()
@@ -384,7 +398,7 @@ def main(argv=None):
             log.info("전체 조회 불가 — 원장 기준 Ep%d 이후 순차 탐색", base)
             args.ep = _ledger.find_next_episode(base=base)
         log.info("ep 미지정 — 트래커에서 다음 미발행 회차 자동 선택: Ep%d", args.ep)
-    if args.step in ("publish", "zernio_publish", "run"):
+    if args.step in ("publish", "zernio_publish", "run", "request_approval", "resolve_approvals"):
         from . import statestore as _ss
         _ss.restore_if_missing([_state_file(), DATA / "costs.json"])
 
@@ -437,6 +451,31 @@ def main(argv=None):
         if not qc_path.exists():
             qc_path.write_text(json.dumps(qc_result, ensure_ascii=False, indent=2), encoding="utf-8")
         print(cmd_publish(plan_file, final_video, qc_result, require_audible_audio=args.require_audible_audio))
+    elif args.step == "request_approval":
+        # v2.7.0 러너1 단독 실행(재요청) — 캡션/업로드 자동화 포함
+        from . import approval as _ap
+        from .mediashare import upload_media as _up
+        plan_file = args.plan or str(OUT / f"ep{args.ep}_plan.json")
+        final = args.final_video or str(OUT / f"ep{args.ep}_final_voiced.mp4")
+        if not args.caption_file:
+            from .caption import save_caption
+            args.caption_file = save_caption(plan_file, OUT / f"ep{args.ep}_caption.txt")
+        media_url = args.media_url or _up(final)["public_url"]
+        cap_text = Path(args.caption_file).read_text(encoding="utf-8").strip()
+        ap_block = _ap.request_approval(args.ep, _load_plan(plan_file).get("title"),
+                                        cap_text, media_url, video_path=final)
+        st = load_state()
+        st.setdefault(f"ep{args.ep}", {})["approval"] = ap_block
+        save_state(st)
+        print(json.dumps(ap_block, ensure_ascii=False, indent=2))
+    elif args.step == "resolve_approvals":
+        # v2.7.0 러너2 선두 — 결정 반영 후 zernio_publish가 승인건만 발행
+        from . import approval as _ap
+        st = load_state()
+        summary = _ap.resolve_pending(st, lookback_hours=args.lookback_hours)
+        if summary["decisions"]:
+            save_state(st)
+        print(json.dumps(summary, ensure_ascii=False, indent=2))
     elif args.step == "zernio_publish":
         plan_file = args.plan or str(OUT / f"ep{args.ep}_plan.json")
         final_video = args.final_video or str(OUT / f"ep{args.ep}_final_voiced.mp4")
@@ -484,8 +523,19 @@ def main(argv=None):
         log.info("캡션 생성 완료: %s", caption_path)
         cmd_publish(plan_file, voiced_final, qc, require_audible_audio=True)
         log.info("E2E 완료 (backend=%s tts=%s): %s", args.backend, args.tts_backend, voiced_final)
+        if args.request_approval:                    # v2.7.0 러너1 — 업로드+텔레그램 승인 요청
+            from . import approval as _ap
+            from .mediashare import upload_media as _up
+            media = _up(voiced_final)
+            cap_text = Path(caption_path).read_text(encoding="utf-8").strip()
+            ap_block = _ap.request_approval(args.ep, _load_plan(plan_file).get("title"),
+                                            cap_text, media["public_url"], video_path=voiced_final)
+            st = load_state()
+            st.setdefault(f"ep{args.ep}", {})["approval"] = ap_block
+            save_state(st)
+            log.info("승인 요청 완료 — approval.status=%s (러너2: resolve_approvals → zernio_publish)", ap_block["status"])
 
-    if args.step in ("publish", "zernio_publish", "run"):
+    if args.step in ("publish", "zernio_publish", "run", "request_approval", "resolve_approvals"):
         from . import statestore as _ss
         _ss.sync_states([_state_file(), DATA / "costs.json"])
 

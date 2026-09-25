@@ -941,4 +941,191 @@ class TestV261AutoselectFallback(unittest.TestCase):
     def test_find_next_episode_no_base_no_rows_raises_clearly(self):
         with patch.object(ledger, "query_tracker_rows", return_value=[]):
             self.assertRaises(RuntimeError, ledger.find_next_episode)
+
+class TestV270ApprovalGate(unittest.TestCase):
+    """v2.7.0 — 텔레그램 승인 게이트(2페이즈): 요청→결정→가드 발행. 전부 mock 오프라인."""
+
+    def _plan(self, tmp, ep=87):
+        p = tmp / f"ep{ep}_plan.json"
+        p.write_text(json.dumps({"episode": ep, "title": "테스트", "type": "시장분석",
+                                 "outcome": "Victory", "source": {}, "cuts": []}), encoding="utf-8")
+        return str(p)
+
+    def test_config_missing_fails_closed(self):
+        import os
+        from unittest.mock import patch
+        from gen.hero_shorts import approval
+        with patch.dict(os.environ, {"TELEGRAM_BOT_TOKEN": "", "HERO_TELEGRAM_CHAT_ID": ""}):
+            with self.assertRaises(RuntimeError) as cm:
+                approval.request_approval(87, "t", "c", "https://example.com/v.mp4")
+            self.assertIn("fail-closed", str(cm.exception))
+
+    def test_request_approval_sends_buttons_and_records(self):
+        import os
+        from unittest.mock import patch
+        from gen.hero_shorts import approval
+        with patch.dict(os.environ, {"TELEGRAM_BOT_TOKEN": "T", "HERO_TELEGRAM_CHAT_ID": "42"}), \
+             patch("gen.hero_shorts.approval._call_api") as api:
+            api.return_value = {"message_id": 7}
+            block = approval.request_approval(87, "제목", "캡션", "https://example.com/v.mp4")
+            self.assertEqual(block["status"], "READY_FOR_APPROVAL")
+            self.assertEqual(block["chat_id"], "42")
+            self.assertEqual(block["message_id"], 7)
+            methods = [c.args[1] for c in api.call_args_list]
+            self.assertIn("sendMessage", methods)
+            kb = json.loads(api.call_args_list[0].kwargs["params"]["reply_markup"])
+            row = kb["inline_keyboard"][0]
+            self.assertIn("승인", row[0]["text"])
+            self.assertEqual(row[0]["callback_data"], "hs:approve:ep87")
+            self.assertEqual(row[1]["callback_data"], "hs:hold:ep87")
+
+    def test_poll_callbacks_allowlist_and_parse(self):
+        import os
+        from unittest.mock import patch
+        from gen.hero_shorts import approval
+        updates = [
+            {"update_id": 5, "callback_query": {"id": "cb1", "data": "hs:approve:ep87",
+             "from": {"username": "master"}, "message": {"message_id": 7, "chat": {"id": 42}}}},
+            {"update_id": 6, "callback_query": {"id": "cb2", "data": "hs:approve:ep87",
+             "message": {"message_id": 7, "chat": {"id": 999}}}},   # 허용 밖 채팅
+            {"update_id": 7, "callback_query": {"id": "cb3", "data": "garbage",
+             "message": {"message_id": 7, "chat": {"id": 42}}}},    # 형식 불량
+        ]
+        with patch.dict(os.environ, {"TELEGRAM_BOT_TOKEN": "T", "HERO_TELEGRAM_CHAT_ID": "42"}), \
+             patch("gen.hero_shorts.approval._call_api") as api:
+            api.side_effect = lambda token, method, params=None, **kw: updates
+            decisions = approval.poll_callbacks()
+        self.assertEqual(len(decisions), 1)
+        self.assertEqual(decisions[0]["ep"], 87)
+        self.assertEqual(decisions[0]["decision"], "APPROVED")
+        self.assertEqual(decisions[0]["decided_by"], "master")
+
+    def test_resolve_approves_and_idempotent(self):
+        import os
+        from unittest.mock import patch
+        from gen.hero_shorts import approval
+        state = {"ep87": {"title": "t", "status": "QC_PASSED_READY",
+                          "approval": {"status": "READY_FOR_APPROVAL", "requested_at": "2026-09-25T08:00:00+09:00"}}}
+        cb = {"update_id": 5, "callback_query": {"id": "cb1", "data": "hs:approve:ep87",
+              "from": {"username": "master"}, "message": {"message_id": 7, "chat": {"id": 42}}}}
+        with patch.dict(os.environ, {"TELEGRAM_BOT_TOKEN": "T", "HERO_TELEGRAM_CHAT_ID": "42"}), \
+             patch("gen.hero_shorts.approval._call_api") as api:
+            api.side_effect = lambda token, method, params=None, **kw: ([cb] if method == "getUpdates" and params and params.get("timeout") == 0 and params.get("offset") is None else {"ok": True} if isinstance(params, dict) else [])
+            summary = approval.resolve_pending(state)
+            self.assertEqual(summary["decisions"][0]["decision"], "APPROVED")
+            self.assertEqual(state["ep87"]["approval"]["status"], "APPROVED")
+            self.assertTrue(state["ep87"]["approval"]["decided_at"])
+            summary2 = approval.resolve_pending(state)          # 멱등 — decided_at 존재
+        self.assertEqual(summary2, {"pending": 0, "decisions": []})
+
+    def test_resolve_hold_decision(self):
+        import os
+        from unittest.mock import patch
+        from gen.hero_shorts import approval
+        state = {"ep88": {"approval": {"status": "READY_FOR_APPROVAL", "requested_at": "x"}}}
+        cb = {"update_id": 9, "callback_query": {"id": "cb9", "data": "hs:hold:ep88",
+              "from": {"username": "master"}, "message": {"message_id": 8, "chat": {"id": 42}}}}
+        with patch.dict(os.environ, {"TELEGRAM_BOT_TOKEN": "T", "HERO_TELEGRAM_CHAT_ID": "42"}), \
+             patch("gen.hero_shorts.approval._call_api") as api:
+            api.side_effect = lambda token, method, params=None, **kw: ([cb] if method == "getUpdates" and isinstance(params, dict) and params.get("timeout") == 0 and params.get("offset") is None else {"ok": True})
+            summary = approval.resolve_pending(state)
+        self.assertEqual(state["ep88"]["approval"]["status"], "HOLD")
+        self.assertEqual(summary["decisions"][0]["decision"], "HOLD")
+
+    def _prep_publish(self, tmp):
+        plan = tmp / "plan.json"
+        plan.write_text(json.dumps({"episode": 87, "title": "t", "type": "분석",
+                                    "outcome": "V", "source": {}, "cuts": []}), encoding="utf-8")
+        cap = tmp / "cap.txt"
+        cap.write_text("캡션", encoding="utf-8")
+        return str(plan), str(cap)
+
+    def test_publish_blocked_without_approval(self):
+        import os
+        import tempfile
+        from pathlib import Path as _P
+        from unittest.mock import patch
+        from gen.hero_shorts import pipeline
+        with tempfile.TemporaryDirectory() as td:
+            tmp = _P(td)
+            plan, cap = self._prep_publish(tmp)
+            sf = tmp / "publish_state.json"
+            sf.write_text(json.dumps({"ep87": {"approval": {"status": "READY_FOR_APPROVAL", "requested_at": "x"}}}), encoding="utf-8")
+            with patch.dict(os.environ, {"HERO_STATE_FILE": str(sf), "HERO_STATE_SYNC": "0"}), \
+                 patch("gen.hero_shorts.publish_runtime.create_and_monitor_post") as pub, \
+                 patch("gen.hero_shorts.assemble_qc.validate_publish_assets"), \
+                 patch("gen.hero_shorts.assemble_qc.check_media_url_reachable"):
+                with self.assertRaises(RuntimeError) as cm:
+                    pipeline.cmd_zernio_publish(plan, "v.mp4", cap, "https://example.com/v.mp4",
+                                                qc_result={"G1": 1, "G2": 1, "G3": 1, "G4": 1})
+                self.assertIn("승인 게이트", str(cm.exception))
+                pub.assert_not_called()
+
+    def test_publish_blocked_gate_env_without_request(self):
+        import os
+        import tempfile
+        from pathlib import Path as _P
+        from unittest.mock import patch
+        from gen.hero_shorts import pipeline
+        with tempfile.TemporaryDirectory() as td:
+            tmp = _P(td)
+            plan, cap = self._prep_publish(tmp)
+            sf = tmp / "publish_state.json"
+            sf.write_text("{}", encoding="utf-8")
+            with patch.dict(os.environ, {"HERO_STATE_FILE": str(sf), "HERO_STATE_SYNC": "0",
+                                         "HERO_APPROVAL_REQUIRED": "1"}), \
+                 patch("gen.hero_shorts.publish_runtime.create_and_monitor_post") as pub, \
+                 patch("gen.hero_shorts.assemble_qc.validate_publish_assets"), \
+                 patch("gen.hero_shorts.assemble_qc.check_media_url_reachable"):
+                with self.assertRaises(RuntimeError) as cm:
+                    pipeline.cmd_zernio_publish(plan, "v.mp4", cap, "https://example.com/v.mp4",
+                                                qc_result={"G1": 1, "G2": 1, "G3": 1, "G4": 1})
+                self.assertIn("승인 게이트", str(cm.exception))
+                pub.assert_not_called()
+
+    def test_publish_allowed_with_approval(self):
+        import os
+        import tempfile
+        from pathlib import Path as _P
+        from unittest.mock import patch
+        from gen.hero_shorts import pipeline
+        with tempfile.TemporaryDirectory() as td:
+            tmp = _P(td)
+            plan, cap = self._prep_publish(tmp)
+            sf = tmp / "publish_state.json"
+            sf.write_text(json.dumps({"ep87": {"approval": {"status": "APPROVED", "decided_at": "y"}}}), encoding="utf-8")
+            with patch.dict(os.environ, {"HERO_STATE_FILE": str(sf), "HERO_STATE_SYNC": "0"}), \
+                 patch("gen.hero_shorts.publish_runtime.create_and_monitor_post") as pub, \
+                 patch("gen.hero_shorts.assemble_qc.validate_publish_assets"), \
+                 patch("gen.hero_shorts.assemble_qc.check_media_url_reachable"), \
+                 patch("gen.hero_shorts.ledger.update_publish_status"):
+                pub.return_value = {"outcome": "published", "post_id": "p1", "post_url": "u1", "snapshot": None}
+                result = pipeline.cmd_zernio_publish(plan, "v.mp4", cap, "https://example.com/v.mp4",
+                                                     qc_result={"G1": 1, "G2": 1, "G3": 1, "G4": 1})
+            self.assertEqual(result["outcome"], "published")
+            saved = json.loads(sf.read_text(encoding="utf-8"))
+            self.assertEqual(saved["ep87"]["approval"]["status"], "APPROVED")   # 승인 이력 보존
+            self.assertEqual(saved["ep87"]["status"], "published")
+
+    def test_publish_backward_compat_no_gate(self):
+        import os
+        import tempfile
+        from pathlib import Path as _P
+        from unittest.mock import patch
+        from gen.hero_shorts import pipeline
+        with tempfile.TemporaryDirectory() as td:
+            tmp = _P(td)
+            plan, cap = self._prep_publish(tmp)
+            sf = tmp / "publish_state.json"
+            sf.write_text("{}", encoding="utf-8")
+            with patch.dict(os.environ, {"HERO_STATE_FILE": str(sf), "HERO_STATE_SYNC": "0"}), \
+                 patch("gen.hero_shorts.publish_runtime.create_and_monitor_post") as pub, \
+                 patch("gen.hero_shorts.assemble_qc.validate_publish_assets"), \
+                 patch("gen.hero_shorts.assemble_qc.check_media_url_reachable"), \
+                 patch("gen.hero_shorts.ledger.update_publish_status"):
+                pub.return_value = {"outcome": "published", "post_id": "p2", "post_url": "u2", "snapshot": None}
+                result = pipeline.cmd_zernio_publish(plan, "v.mp4", cap, "https://example.com/v.mp4",
+                                                     qc_result={"G1": 1, "G2": 1, "G3": 1, "G4": 1})
+            self.assertEqual(result["outcome"], "published")                     # 기존 수동 흐름 유지
+
 unittest.main(verbosity=2)
