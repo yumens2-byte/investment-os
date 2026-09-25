@@ -304,3 +304,29 @@ def create_and_monitor_post(text: str, media_url: str, account_id: str,
     )
     result["create_response"] = created_post
     return result
+
+
+_MEDIA_SERVER = None
+
+def resolve_public_media_url(local_path: str, port: int = 8899) -> str:
+    """v2.7.2: Zernio 인게스트는 확장자 있는 공개 URL을 요구(2026-09-26 실측 — mediashare·readable URL 모두 거부).
+    로컬 http.server + gsk get_service_url로 '<파일명>.mp4' 공개 URL을 만든다. 프로세스 종료 시 서버 정리."""
+    global _MEDIA_SERVER
+    import re as _re, socket as _socket, time as _time, subprocess as _sp, atexit as _ae
+    from pathlib import Path as _Path
+    if _MEDIA_SERVER is None:
+        for p in range(port, port + 5):
+            s = _socket.socket()
+            try:
+                s.bind(("", p)); s.close(); port = p; break
+            except OSError:
+                continue
+        _MEDIA_SERVER = _sp.Popen(["python3", "-m", "http.server", str(port), "--directory", str(_Path(local_path).parent)],
+                                  stdout=_sp.DEVNULL, stderr=_sp.DEVNULL)
+        _ae.register(lambda: (_MEDIA_SERVER.terminate(),))
+        _time.sleep(2)
+    out = _sp.run(["gsk", "get_service_url", "--port", str(port)], capture_output=True, text=True).stdout
+    m = _re.search(r"(https://[^\s\"]+)", out)
+    if not m:
+        raise RuntimeError("get_service_url 실패 — 공개 미디어 URL 생성 불가")
+    return f"{m.group(1)}/{_Path(local_path).name}"

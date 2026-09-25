@@ -485,9 +485,14 @@ def main(argv=None):
             log.info("캡션 미지정 — plan에서 자동 생성: %s", args.caption_file)
         media_url = args.media_url
         if not media_url:
-            from .mediashare import upload_media
-            media_url = upload_media(final_video)["public_url"]
-            log.info("media_url 미지정 — 최종 영상 자동 업로드: %s", media_url)
+            try:
+                from .publish_runtime import resolve_public_media_url
+                media_url = resolve_public_media_url(str(final_video))
+                log.info("media_url 미지정 — 로컬 공개 호스팅 URL(v2.7.2): %s", media_url)
+            except Exception:
+                from .mediashare import upload_media
+                media_url = upload_media(final_video)["public_url"]
+                log.info("media_url 미지정 — mediashare 폴백: %s", media_url)
         qc_path = OUT / f"ep{args.ep}_qc.json"
         qc_result = json.loads(qc_path.read_text()) if qc_path.exists() else cmd_qc(plan_file, final_video)
         if not qc_path.exists():
