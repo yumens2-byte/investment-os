@@ -1,21 +1,39 @@
 name: EDT Market Snapshot
 
 # ============================================================
-# EDT Universe 전용 시장데이터 수집 워크플로 v1.0
+# EDT Universe 전용 시장데이터 수집 워크플로 v1.1
 # - 기존 investment-os(ICG) 워크플로와 완전 독립 (무접촉)
-# - 스케줄: UTC 21:40 월~금 = KST 06:40 화~토
-#   (미국 종가 확정 후 / ICG 06:30 실행과 10분 오프셋)
+#
+# v1.1 (2026-09-26) 변경 — TRACK-A2-32 후속 / 스케줄 지연 대응
+#   [1] 워크플로 파일명 유지(edt_snapshot.yml) — 교체 시 Git 이력 유지
+#   [2] 백업 스케줄 1회 추가 (UTC 23:15 = KST 08:15)
+#       ※ 근거(실측): 1차 스케줄 21:40 UTC 는 GitHub Actions 지연으로
+#         실제 실행이 23:56~23:59 UTC (KST 08:56~08:59) 로 밀렸다.
+#         최근 12회 실행 로그상 21:40 정시 실행 0건.
+#         17 v1.11 문서상 신선도 기준(KST 06:40)이 구조적으로 달성 불가하다.
+#         → 2차 실행을 추가해 스냅샷 확보 시각을 앞당기지 않고,
+#           "당일 미실행" 위험(스케줄 드롭)만 제거한다.
+#   [3] concurrency 추가 — 2회 실행이 겹쳐도 중복 기록을 막는다.
+#   [4] 실행 결과 요약(anchor/stale/wti_action)을 Actions Summary 에 출력
+#       → 마스터가 로그를 열지 않고도 앵커 계약 위반 여부를 확인 가능.
+#   ※ cron 자체를 앞당기는 것(예: 21:00)은 미국 종가 확정 전 실행 위험이 있어
+#     하지 않는다. 16:00 ET 마감 = 20:00 UTC(서머타임)/21:00 UTC(표준시).
 # ============================================================
 
 on:
   schedule:
-    - cron: '40 21 * * 1-5'
+    - cron: '40 21 * * 1-5'    # 정규 — KST 06:40 화~토 (문서 기준 시각)
+    - cron: '15 23 * * 1-5'    # v1.1 백업 — 스케줄 드롭·지연 대응
   workflow_dispatch:
     inputs:
       dry_run:
         description: 'true 입력 시 Notion 기록 없이 출력만'
         required: false
         default: 'false'
+
+concurrency:
+  group: edt-snapshot          # v1.1 — 중복 실행 직렬화
+  cancel-in-progress: false
 
 jobs:
   edt-snapshot:
@@ -40,3 +58,13 @@ jobs:
           EDT_SNAPSHOT_PAGE_ID: ${{ secrets.EDT_SNAPSHOT_PAGE_ID }}
           DRY_RUN: ${{ github.event.inputs.dry_run || 'false' }}
         run: python edt/edt_snapshot.py
+
+      # v1.1 신설 — 앵커/신선도 요약을 Actions Summary 로 노출
+      - name: Snapshot summary
+        if: always()
+        run: |
+          echo "## EDT Market Snapshot" >> $GITHUB_STEP_SUMMARY
+          echo "_스케줄: ${GITHUB_EVENT_NAME} / 슬롯 cron \`${{ github.event.schedule }}\`_" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "앵커·신선도 필드는 Notion 스냅샷의 \`meta.anchor\` / \`meta.stale_series\` / \`meta.wti_action\` 을 확인하십시오." >> $GITHUB_STEP_SUMMARY
+          echo "본 단계는 요약 헤더만 기록합니다(수집 로그는 위 스텝 참조)." >> $GITHUB_STEP_SUMMARY
