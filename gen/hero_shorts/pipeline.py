@@ -183,9 +183,9 @@ def cmd_tts(dialogue_plan_file, out_dir, backend="dummy", model=None, speaker=No
     return voiceover.synthesize_tts_clips(dialogue_plan_file, out_dir, backend=backend, model=model, speaker=speaker)
 
 
-def cmd_mix_audio(final_video, voice_audio, out_file):
+def cmd_mix_audio(final_video, voice_audio, out_file, bgm_audio=None):
     from . import voiceover
-    return voiceover.mix_voice_over(final_video, voice_audio, out_file)
+    return voiceover.mix_voice_over(final_video, voice_audio, out_file, bgm_audio=bgm_audio)
 
 
 def cmd_qc(plan_file, final_video):
@@ -431,7 +431,8 @@ def main(argv=None):
         if not voice_audio:
             raise RuntimeError("voice manifest에 merged_audio 없음")
         final_video = args.final_video or str(OUT / f"ep{args.ep}_final.mp4")
-        print(cmd_mix_audio(final_video, voice_audio, OUT / f"ep{args.ep}_final_voiced.mp4"))
+        print(cmd_mix_audio(final_video, voice_audio, OUT / f"ep{args.ep}_final_voiced.mp4",
+                            bgm_audio=manifest.get("bgm_file")))
     elif args.step == "caption":
         from .caption import save_caption
         plan_file = args.plan or str(OUT / f"ep{args.ep}_plan.json")
@@ -520,7 +521,8 @@ def main(argv=None):
         final = cmd_assemble(paths, OUT / f"ep{args.ep}_final.mp4")
         voice_plan = cmd_voice_plan(plan_file, OUT / f"ep{args.ep}_voice_plan.json")
         tts_manifest = cmd_tts(voice_plan, OUT, backend=args.tts_backend, model=args.tts_model, speaker=args.speaker)
-        voiced_final = cmd_mix_audio(final, tts_manifest["merged_audio"], OUT / f"ep{args.ep}_final_voiced.mp4")
+        voiced_final = cmd_mix_audio(final, tts_manifest["merged_audio"], OUT / f"ep{args.ep}_final_voiced.mp4",
+                                     bgm_audio=tts_manifest.get("bgm_file"))
         qc = cmd_qc(plan_file, voiced_final)
         (OUT / f"ep{args.ep}_qc.json").write_text(json.dumps(qc, ensure_ascii=False, indent=2), encoding="utf-8")
         from .caption import save_caption

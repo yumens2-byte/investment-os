@@ -16,7 +16,9 @@ import json
 import os
 import sys
 import tempfile
+import subprocess
 import unittest
+from unittest import mock
 from pathlib import Path
 from unittest.mock import patch
 
@@ -1139,5 +1141,196 @@ class TestV270ApprovalGate(unittest.TestCase):
                 result = pipeline.cmd_zernio_publish(plan, "v.mp4", cap, "https://example.com/v.mp4",
                                                      qc_result={"G1": 1, "G2": 1, "G3": 1, "G4": 1})
             self.assertEqual(result["outcome"], "published")                     # 기존 수동 흐름 유지
+
+class TestV280TtsUpgrade(unittest.TestCase):
+    """v2.8.0 — 나레이션 고정화자·2인 대사·BGM 덕킹·QC 확장."""
+
+    def _plan(self, tmp, with_dialogue=False):
+        cuts = [
+            {"cut_no": i, "role": role, "request": {"prompt": f"p{i}", "duration": 8,
+                                                    "resolution": "1080x1920", "aspect_ratio": "9:16"}}
+            for i, role in enumerate(["ESTABLISH_THREAT", "TURN"], start=1)
+        ]
+        if with_dialogue:
+            for c in cuts:
+                c["dialogue"] = {"lines": [
+                    {"role": "NARRATOR", "text": "시장이 조용히 움직인다."},
+                    {"role": "CHAR1", "text": "[sarcastic] 또 처음이네."},
+                ]}
+        plan_file = tmp / "plan.json"
+        plan_file.write_text(json.dumps({
+            "episode": 88, "title": "테스트", "type": "SWING", "outcome": "HOLD", "cuts": cuts,
+        }, ensure_ascii=False), encoding="utf-8")
+        return plan_file
+
+    def test_resolve_cast_mapping(self):
+        self.assertEqual(voiceover.parse_cast("CHAR1=Eve,CHAR2=Terry"), {"CHAR1": "Eve", "CHAR2": "Terry"})
+        self.assertEqual(voiceover.parse_cast(""), {})
+        self.assertEqual(voiceover.speaker_for_line("NARRATOR"), os.environ.get("HERO_TTS_SPEAKER") or "Austin")
+
+    def test_build_dialogue_plan_v2_lines(self):
+        with tempfile.TemporaryDirectory() as td:
+            tmp = Path(td)
+            os.environ["HERO_TTS_CAST"] = "CHAR1=Eve"
+            try:
+                payload = voiceover.build_dialogue_plan(json.loads(self._plan(tmp, with_dialogue=True).read_text(encoding="utf-8")))
+            finally:
+                os.environ.pop("HERO_TTS_CAST", None)
+            lines = payload["cuts"][0]["lines"]
+            self.assertEqual(len(lines), 2)
+            self.assertEqual(lines[0]["speaker"], os.environ.get("HERO_TTS_SPEAKER") or "Austin")
+            self.assertEqual(lines[1]["speaker"], "Eve")
+
+    def test_character_line_without_cast_fails_closed(self):
+        with tempfile.TemporaryDirectory() as td:
+            tmp = Path(td)
+            os.environ.pop("HERO_TTS_CAST", None)
+            payload = json.loads(self._plan(tmp, with_dialogue=True).read_text(encoding="utf-8"))
+            with self.assertRaises(ValueError):
+                voiceover.build_dialogue_plan(payload)
+
+    def test_auto_dialogue_env_optin(self):
+        with tempfile.TemporaryDirectory() as td:
+            tmp = Path(td)
+            os.environ["HERO_TTS_DIALOGUE"] = "1"
+            os.environ["HERO_TTS_CAST"] = "CHAR1=Samara"
+            try:
+                payload = voiceover.build_dialogue_plan(json.loads(self._plan(tmp).read_text(encoding="utf-8")))
+            finally:
+                os.environ.pop("HERO_TTS_DIALOGUE", None)
+                os.environ.pop("HERO_TTS_CAST", None)
+            self.assertEqual(len(payload["cuts"][0]["lines"]), 2)
+            self.assertIn("[", payload["cuts"][0]["lines"][1]["text"])  # 감정 태그 포함 단상
+
+    def test_gsk_tts_dialogue_params_format(self):
+        calls = {}
+        def fake_run(cmd, **kw):
+            calls["cmd"] = cmd
+            Path(cmd[cmd.index("-o") + 1]).write_bytes(b"RIFF-fake")
+            class R: returncode = 0; stdout = ""; stderr = ""
+            return R()
+        with mock.patch.object(voiceover.subprocess, "run", side_effect=fake_run):
+            voiceover._gsk_tts_dialogue(
+                [{"role": "NARRATOR", "text": "a", "speaker": "Austin"},
+                 {"role": "CHAR1", "text": "b", "speaker": "Eve"}], "/tmp/v280_dlg.wav")
+        cmd = calls["cmd"]
+        self.assertIn("Speaker1: a", cmd[2])
+        self.assertIn("Speaker2: b", cmd[2])
+        params = json.loads(cmd[cmd.index("-p") + 1])
+        self.assertEqual(params["speakers"], [
+            {"speaker": "Speaker1", "voice_name": "Austin"},
+            {"speaker": "Speaker2", "voice_name": "Eve"},
+        ])
+
+    def test_gsk_tts_dialogue_more_than_two_fails(self):
+        with self.assertRaises(RuntimeError):
+            voiceover._gsk_tts_dialogue(
+                [{"text": "a", "speaker": "Austin"}, {"text": "b", "speaker": "Eve"},
+                 {"text": "c", "speaker": "Terry"}], "/tmp/v280_x.wav")
+
+    def test_gsk_tts_tier_and_stability_params(self):
+        calls = {}
+        def fake_run(cmd, **kw):
+            calls["cmd"] = cmd
+            Path(cmd[cmd.index("-o") + 1]).write_bytes(b"RIFF-fake")
+            class R: returncode = 0; stdout = ""; stderr = ""
+            return R()
+        old = (os.environ.get("HERO_TTS_TIER"), os.environ.get("HERO_TTS_STABILITY"))
+        os.environ["HERO_TTS_TIER"] = "turbo"
+        os.environ["HERO_TTS_STABILITY"] = "0.65"
+        try:
+            with mock.patch.object(voiceover.subprocess, "run", side_effect=fake_run):
+                voiceover._gsk_tts("나레이션", "/tmp/v280_n.wav", speaker="Austin")
+        finally:
+            for k, v in (("HERO_TTS_TIER", old[0]), ("HERO_TTS_STABILITY", old[1])):
+                if v is None: os.environ.pop(k, None)
+                else: os.environ[k] = v
+        params = json.loads(calls["cmd"][calls["cmd"].index("-p") + 1])
+        self.assertEqual(params["tier"], "turbo")
+        self.assertEqual(params["stability"], 0.65)
+
+    def test_generate_bgm_forces_instrumental_and_duration(self):
+        calls = {}
+        def fake_run(cmd, **kw):
+            calls["cmd"] = cmd
+            Path(cmd[cmd.index("-o") + 1]).write_bytes(b"RIFF-fake")
+            class R: returncode = 0; stdout = ""; stderr = ""
+            return R()
+        with mock.patch.object(voiceover.subprocess, "run", side_effect=fake_run):
+            voiceover.generate_bgm("/tmp/v280_bgm.mp3", 45, prompt="dark tension, 90 BPM")
+        self.assertEqual(calls["cmd"][calls["cmd"].index("-m") + 1], "elevenlabs/music")
+        self.assertIn("instrumental only", calls["cmd"][2])
+        params = json.loads(calls["cmd"][calls["cmd"].index("-p") + 1])
+        self.assertEqual(params["duration"], 45)
+
+    def test_generate_bgm_empty_prompt_fails_closed(self):
+        os.environ.pop("HERO_BGM_PROMPT", None)
+        with self.assertRaises(RuntimeError):
+            voiceover.generate_bgm("/tmp/v280_bgm.mp3", 30)
+
+    def test_dummy_multiline_concat_distinct_freqs(self):
+        with tempfile.TemporaryDirectory() as td:
+            tmp = Path(td)
+            a = tmp / "l0.wav"; b = tmp / "l1.wav"
+            voiceover._dummy_tts("가나다", a, 2.0, freq_offset=0)
+            voiceover._dummy_tts("가나다", b, 2.0, freq_offset=90)
+            self.assertNotEqual(voiceover.probe_duration(a), 0)
+            merged = tmp / "m.wav"
+            voiceover.concat_audio([str(a), str(b)], merged)
+            self.assertGreaterEqual(voiceover.probe_duration(merged), 3.9)
+
+    def test_mix_with_bgm_ducking(self):
+        with tempfile.TemporaryDirectory() as td:
+            tmp = Path(td)
+            video = tmp / "v.mp4"
+            subprocess.run(["ffmpeg", "-y", "-f", "lavfi", "-i", "testsrc=size=256x256:rate=15:duration=4",
+                            "-f", "lavfi", "-i", "sine=frequency=300:duration=4", "-c:v", "libx264",
+                            "-pix_fmt", "yuv420p", "-c:a", "aac", str(video)], capture_output=True)
+            voice = tmp / "voice.wav"; bgm = tmp / "bgm.wav"
+            subprocess.run(["ffmpeg", "-y", "-f", "lavfi", "-i", "sine=frequency=200:duration=4", str(voice)],
+                           capture_output=True)
+            subprocess.run(["ffmpeg", "-y", "-f", "lavfi", "-i", "sine=frequency=90:duration=6", str(bgm)],
+                           capture_output=True)
+            out = tmp / "voiced.mp4"
+            voiceover.mix_voice_over(video, voice, out, bgm_audio=bgm)
+            self.assertTrue(out.exists())
+            self.assertTrue(voiceover.has_audio_stream(out))
+            self.assertLess(abs(voiceover.probe_duration(out) - 4.0), 1.0)
+            qc = voiceover.verify_audio_outputs(out)
+            self.assertTrue(qc["audible"])
+
+    def test_mix_bgm_missing_file_fails_closed(self):
+        with tempfile.TemporaryDirectory() as td:
+            tmp = Path(td)
+            video = tmp / "v.mp4"; voice = tmp / "voice.wav"
+            subprocess.run(["ffmpeg", "-y", "-f", "lavfi", "-i", "testsrc=size=64x64:rate=10:duration=1",
+                            "-c:v", "libx264", "-pix_fmt", "yuv420p", str(video)], capture_output=True)
+            subprocess.run(["ffmpeg", "-y", "-f", "lavfi", "-i", "sine=frequency=200:duration=1", str(voice)],
+                           capture_output=True)
+            with self.assertRaises(RuntimeError):
+                voiceover.mix_voice_over(video, voice, tmp / "o.mp4", bgm_audio=tmp / "nope.wav")
+
+    def test_verify_audio_outputs_flags_silence(self):
+        with tempfile.TemporaryDirectory() as td:
+            tmp = Path(td)
+            silent = tmp / "silence.wav"
+            subprocess.run(["ffmpeg", "-y", "-f", "lavfi", "-i", "anullsrc=r=16000:cl=mono:d=1", str(silent)],
+                           capture_output=True)
+            qc = voiceover.verify_audio_outputs(silent)
+            self.assertFalse(qc["audible"])
+
+    def test_synthesize_dummy_backend_with_lines_manifest(self):
+        with tempfile.TemporaryDirectory() as td:
+            tmp = Path(td)
+            os.environ["HERO_TTS_CAST"] = "CHAR1=Eve"
+            try:
+                plan_file = self._plan(tmp, with_dialogue=True)
+                vp = voiceover.save_dialogue_plan(plan_file, tmp / "vp.json")
+                manifest = voiceover.synthesize_tts_clips(vp, tmp, backend="dummy")
+            finally:
+                os.environ.pop("HERO_TTS_CAST", None)
+            self.assertEqual(len(manifest["clips"][0]["lines"]), 2)
+            self.assertTrue(Path(manifest["merged_audio"]).exists())
+            self.assertIsNone(manifest["bgm_file"])  # dummy 백엔드는 BGM 미생성(비용 0 경로)
 
 unittest.main(verbosity=2)
