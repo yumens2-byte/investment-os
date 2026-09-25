@@ -1,8 +1,42 @@
 """
 ============================================================
-EDT Market Snapshot Collector v1.2
+EDT Market Snapshot Collector v1.3
 ============================================================
 변경 이력:
+  v1.4 (2026-09-26) — ANCHOR-01 교정 (v1.3 미적용 상태에서 실측 검증으로 발견)
+    · v1.3 결함: 앵커 관측일을 us10y(FRED) 단일 시리즈에서 취했다.
+      FRED 공표 지연이 1영업일이므로 매 실행마다 anchor_ok=false 오탐 발생.
+      실측(2026-09-26 07:0x KST): FRED 10Y 최신=09-24 인데,
+        같은 시점 스냅샷에 yfinance 09-25 종가가 이미 존재(sp500/WTI/VIX/DXY).
+        → 위반이 아님에도 [WARN] ANCHOR 불일치가 발화했다.
+    · 교정: 관측 앵커 = **전 소스 중 최신 관측일**(freshest wins).
+      meta.anchor 에 freshest_source / fred_last_us_trading_day 를 병기하여
+      "소스 자체 지연"과 "실제 데이터 미도달"을 구분한다.
+    · meta.observed_last_us_trading_day 신설 (last_us_trading_day 는 v1.2 의미 보존).
+    · 전 메트릭(FRED+yfinance)에 age_days 산출 적용.
+  v1.3 (2026-09-26) — 수집기 결함 4건 패치 (TRACK-A2-32 후속 / D-1·D-2·D-6 대응)
+    [A] FRED_SERIES 에 us30y(DGS30) 신설
+        ※ 실측 결함: v1.2 스냅샷에 30Y 필드 자체가 없어
+          21 v1.14 TH-IMM-05 이중선(경보 5.375/확정 5.40/트리거 5.55) 판정이
+          구조적으로 불가능했다. CP-1 에서 [DATA GAP] 으로 반복 노출된 원인.
+    [B] 신선도 게이트(staleness gate) 신설
+        · 시리즈별 최대 허용 관측 경과일 STALE_MAX_DAYS
+        · 관측 지연 시 metric.stale=True / metric.age_days / meta.stale_series
+        ※ 실측 결함: fetch_fred 는 관측 최신값을 무조건 채택한다.
+          DCOILWTICO 가 2026-09-15 자($107.02)에 정체된 상태에서도
+          "최신값"으로 채택되어 Ep91~Ep94 파이프라인에 주입되었다.
+    [C] WTI 승격 경로 강화 (RULE WTI-PROMO-01)
+        · 롤오버 판정 시 승격 후보(FRED)가 stale 이면 승격 금지
+        · 승격 불가 시 yfinance 직전 종가로 롤백(rollback) — 3분기 처리
+        ※ 실측 결함: v1.2 는 stale FRED 도 무조건 승격하여
+          "최신 실측"을 "7일 전 값"으로 덮어썼다.
+    [D] meta.anchor 신설 — 앵커 계약 검증
+        · expected_last_us_trading_day / anchor_lag_days / anchor_ok
+        ※ 실측 결함: 17 v1.11 RULE PUB-01 은 앵커를 "직전 미국 종가"로 규정하나
+          스냅샷은 그 검증 신호를 출력하지 않아 위반이 조용히 통과했다.
+          실측: 2026-09-26 06:43 KST 조회분 last_us_trading_day=09-23 (기대 09-25, lag 2영업일)
+    [E] YF_TICKERS 에 sp500(^GSPC) 신설 — arc_state.market_snapshot 필수 필드 대응
+    [F] meta.schedule_slot 신설 — 회차 슬롯 식별(월·수·금 발행 캘린더 대조용)
   v1.2 (2026-09-19) — 파일럿 테스트 반영: 롤오버 오탐 제거
     · 단일 변동률(4%) 판정은 오탐률 67% 확인 → 만기 캘린더 게이트 추가
       실측: 09-10 +6.7% / 09-11 -4.61% (실제 급변, 승격되면 안 됨)
@@ -21,6 +55,11 @@ EDT Market Snapshot Collector v1.2
       되어 실제 시장 변동(-1.6%)과 무관한 -$4.8 계단 하락이 발생했다.
       Oil Shock 트리거($100)가 단일 임계라 오판정 직전까지 갔다.
   v1.0 — 최초 작성
+
+⚠️ v1.3 은 **가산(additive) 패치**다. 기존 필드 삭제·의미 변경 0건.
+   추가 필드: metric.stale / metric.age_days / meta.stale_series /
+              meta.anchor / meta.schedule_slot / metrics.us30y / metrics.sp500
+   → 하위 소비자(12 v1.14 / 21 v1.13 / 21 v1.14)는 무수정으로 동작한다.
 
 목적:
   EDT Universe 파이프라인 Phase A(시장데이터 수집)를 위해
@@ -46,7 +85,7 @@ EDT Market Snapshot Collector v1.2
 import json
 import os
 import sys
-from datetime import datetime, timedelta, timezone
+from datetime import date, datetime, timedelta, timezone
 
 import requests
 
@@ -54,7 +93,7 @@ import requests
 # 설정
 # ------------------------------------------------------------
 
-SCHEMA_VERSION = "edt_snapshot_v1.2"
+SCHEMA_VERSION = "edt_snapshot_v1.4"
 KST = timezone(timedelta(hours=9))
 
 FRED_API_KEY = os.environ.get("FRED_API_KEY", "")
@@ -71,10 +110,24 @@ ROLL_WINDOW_BDAYS = 5       # 만기 5영업일 전 ~ 만기 당일
 # 만기 캘린더를 적용할 선물 기반 지표 (현물·지수는 제외)
 FUTURES_KEYS = {"wti"}
 
+# v1.3 [B] — 시리즈별 최대 허용 관측 경과일(달력일).
+#   lag_days_typical(FRED 통상 지연) + 주말 흡수 여유.
+#   초과 시 stale=True 로 기록하고, 승격 후보 자격을 박탈한다.
+STALE_MAX_DAYS = {
+    "us10y": 4, "us2y": 4, "us30y": 4, "t10y2y": 4,
+    "effr": 4, "sofr": 4, "vix_fred": 4,
+    "hy_oas": 6,           # 등급 중간 / 통상 lag 3일
+    "wti_fred": 5,         # 등급 높음 / 통상 lag 2일
+}
+STALE_MAX_DEFAULT = 4
+
 # FRED 시리즈 정의: key -> (series_id, 표시명, 12 v1.5 등급, 통상 지연일)
 FRED_SERIES = {
     "us10y":    ("DGS10",        "10Y Treasury Yield (%)",      "높음", 1),
     "us2y":     ("DGS2",         "2Y Treasury Yield (%)",       "높음", 1),
+    # v1.3 [A] 신설 — 21 v1.14 TH-IMM-05 이중선 판정 필수 지표.
+    #   v1.2 까지 30Y 가 스냅샷에 부재하여 CP-1 에서 [DATA GAP] 이 반복 발생했다.
+    "us30y":    ("DGS30",        "30Y Treasury Yield (%)",      "높음", 1),
     "t10y2y":   ("T10Y2Y",       "10Y-2Y Spread (%p)",          "높음", 1),
     "effr":     ("EFFR",         "Effective Fed Funds Rate (%)","높음", 1),
     "sofr":     ("SOFR",         "SOFR (%)",                    "높음", 1),
@@ -91,6 +144,8 @@ YF_TICKERS = {
     # v1.1부터 wti_fred(FRED 현물)와 이중화하여 의심 시 승격한다.
     "wti": ("CL=F",     "WTI Crude ($)",        "중간"),
     "dxy": ("DX-Y.NYB", "Dollar Index (DXY)",   "중간"),
+    # v1.3 [E] 신설 — arc_state.market_snapshot 의 sp500 필드 대응.
+    "sp500": ("^GSPC",  "S&P 500 Close",        "높음"),
 }
 
 
@@ -150,6 +205,56 @@ def in_roll_window(as_of_str: str) -> bool:
         if 0 <= gap <= ROLL_WINDOW_BDAYS:
             return True
     return False
+
+
+# ------------------------------------------------------------
+# 신선도 / 앵커 판정 (v1.3 신설)
+# ------------------------------------------------------------
+
+def parse_date(s):
+    if not s:
+        return None
+    try:
+        return datetime.strptime(s, "%Y-%m-%d").date()
+    except (ValueError, TypeError):
+        return None
+
+
+def age_days(as_of_str: str, ref: date):
+    """관측일 → 기준일 경과 달력일. 파싱 불가 시 None."""
+    d = parse_date(as_of_str)
+    if d is None:
+        return None
+    return (ref - d).days
+
+
+def is_fresh(key: str, as_of_str: str, ref: date) -> bool:
+    """RULE STALE-01 — 시리즈별 최대 허용 경과일 이내인가."""
+    age = age_days(as_of_str, ref)
+    if age is None:
+        return False
+    return age <= STALE_MAX_DAYS.get(key, STALE_MAX_DEFAULT)
+
+
+def expected_us_trading_day(now_kst: datetime) -> date:
+    """RULE ANCHOR-01 — 해당 실행 시점에 '직전 미국 종가'가 존재해야 하는 날짜.
+
+    미국 정규장은 16:00 ET 마감 = KST 익일 05:00(서머타임)/06:00(표준시).
+    따라서 KST 실행일 D 의 직전 완료 세션은 미국일 기준 D-1 이며,
+    D-1 이 주말이면 직전 금요일로 후퇴한다.
+    """
+    d = now_kst.date() - timedelta(days=1)
+    while d.weekday() >= 5:
+        d -= timedelta(days=1)
+    return d
+
+
+def schedule_slot(now_kst: datetime) -> str:
+    """v1.3 [F] — 17 v1.11 발행 캘린더(월·수·금) 대조용 슬롯 라벨."""
+    wd = now_kst.weekday()          # 0=월 … 6=일
+    return {
+        0: "MON", 1: "TUE", 2: "WED", 3: "THU", 4: "FRI", 5: "SAT", 6: "SUN",
+    }.get(wd, "UNKNOWN")
 
 
 # ------------------------------------------------------------
@@ -235,12 +340,111 @@ def build_metric(name, value, as_of, prev, prev_date, source, grade, lag_days=No
         "source": source,
         "grade": grade,          # 12 v1.5 신뢰도 등급 (높음/중간/낮음/불가)
         "lag_days_typical": lag_days,
+        "stale": False,          # v1.3 [B] 신설
+        "age_days": None,        # v1.3 [B] 신설
     }
+
+
+def resolve_wti(wti: dict, wti_fred: dict, rollover_suspected: bool):
+    """RULE WTI-PROMO-01 (v1.3 [C]) — WTI 소스 확정.
+
+    반환: (확정 metric, action) — action ∈ {keep, promote, rollback, gap}
+
+    v1.2 결함: 승격 후보(FRED)의 신선도를 검증하지 않고 무조건 승격했다.
+      → DCOILWTICO 가 2026-09-15 자($107.02)에 정체된 상태에서도
+        "최신값"으로 채택되어 Ep91~Ep94 파이프라인에 주입되었다.
+    """
+    fred_ok = wti_fred.get("value") is not None and not wti_fred.get("stale")
+
+    if rollover_suspected:
+        if fred_ok:
+            m = dict(wti_fred)
+            m["name"] = "WTI Crude (FRED 승격 — 롤오버 의심)"
+            m["yf_raw"] = wti.get("value")          # 기각된 원본 보존
+            m["yf_as_of"] = wti.get("as_of")
+            m["promoted_reason"] = "롤오버 의심"
+            return m, "promote"
+        # 승격 후보가 stale → yfinance 직전 종가로 롤백 (오염점 회피)
+        if wti.get("prev") is not None:
+            m = build_metric(
+                "WTI Crude (yfinance 직전 종가 롤백 — 롤오버 회피)",
+                wti["prev"], wti.get("prev_date"), None, None,
+                "yfinance:CL=F(prev)", "중간",
+            )
+            m["yf_raw"] = wti.get("value")
+            m["yf_as_of"] = wti.get("as_of")
+            m["promoted_reason"] = "롤오버 의심 + FRED stale → 직전 종가 롤백"
+            m["stale"] = True
+            return m, "rollback"
+        return wti, "gap"
+
+    if wti.get("value") is None:
+        if fred_ok:
+            m = dict(wti_fred)
+            m["name"] = "WTI Crude (FRED 승격 — yfinance 실패)"
+            m["promoted_reason"] = "yfinance 실패"
+            return m, "promote"
+        return wti, "gap"
+
+    return wti, "keep"
+
+
+def resolve_anchor(metrics: dict, now_kst: datetime) -> dict:
+    """RULE ANCHOR-01 (v1.4 교정) — 앵커 계약 검증.
+
+    v1.3 결함: 관측 앵커를 us10y(FRED) 단일 시리즈로 삼았다.
+      FRED 공표 지연이 1영업일이므로, 매 실행마다 anchor_ok=False 오탐이 발생한다.
+      실제로는 yfinance 계열 지표가 당일 종가를 이미 보유하고 있는 경우가 대부분이다.
+    v1.4: 관측 앵커 = 전 소스 중 최신 관측일(freshest wins).
+      fred_last_us_trading_day 를 병기해 "소스 자체 지연"과
+      "실제 데이터 미도달"을 구분한다.
+    """
+    fred_day = (metrics.get("us10y") or {}).get("as_of")
+    observed, src = None, None
+    for key, m in metrics.items():
+        a = m.get("as_of")
+        if m.get("value") is None or not a:
+            continue
+        if observed is None or a > observed:
+            observed, src = a, m.get("source")
+
+    exp = expected_us_trading_day(now_kst)
+    out = {
+        "expected_last_us_trading_day": exp.isoformat(),
+        "observed_last_us_trading_day": observed,
+        "fred_last_us_trading_day": fred_day,
+        "freshest_source": src,
+        "freshest_sources": [],
+        "anchor_lag_bdays": None,
+        "anchor_ok": False,
+        "anchor_note": "",
+    }
+    if observed is None:
+        out["anchor_note"] = "[DATA GAP] 관측일 산출 불가 — 전 메트릭 수집 실패"
+        return out
+    freshest = sorted({m.get("source") for m in metrics.values()
+                       if m.get("value") is not None and m.get("as_of") == observed})
+    out["freshest_sources"] = freshest
+    out["anchor_lag_bdays"] = bdays_until(exp, parse_date(observed))
+    out["anchor_ok"] = (parse_date(observed) == exp)
+    if out["anchor_ok"]:
+        out["anchor_note"] = (
+            f"앵커 계약 충족 — 기대 {exp.isoformat()} = 관측 {observed} "
+            f"({len(freshest)}개 소스). "
+            f"FRED 10Y 최신 {fred_day} (소스 자체 지연, 위반 아님).")
+    else:
+        out["anchor_note"] = (
+            f"17 v1.11 RULE PUB-01 위반 — 기대 앵커 {exp.isoformat()}, "
+            f"관측 {observed} (lag {out['anchor_lag_bdays']}영업일). "
+            f"FRED 공표 지연 또는 수집기 스케줄 지연.")
+    return out
 
 
 def collect() -> dict:
     metrics = {}
     failures = []
+    now_kst = datetime.now(KST)
+    ref_date = now_kst.date()
 
     # 1) FRED 공식 소스
     for key, (sid, name, grade, lag) in FRED_SERIES.items():
@@ -251,6 +455,20 @@ def collect() -> dict:
         else:
             failures.append(key)
             metrics[key] = build_metric(name, None, None, None, None, f"FRED:{sid}", "불가", lag)
+
+    # 1-B) v1.3 [B] 신선도 게이트 — 관측 지연 시 stale 마킹
+    stale_series = []
+    for key in FRED_SERIES:
+        m = metrics.get(key)
+        if not m or m.get("value") is None:
+            continue
+        m["age_days"] = age_days(m.get("as_of"), ref_date)
+        if not is_fresh(key, m.get("as_of"), ref_date):
+            m["stale"] = True
+            stale_series.append(key)
+            print(f"[WARN] {key}: 관측 {m.get('as_of')} — 경과 {m['age_days']}일 "
+                  f"(허용 {STALE_MAX_DAYS.get(key, STALE_MAX_DEFAULT)}일) 초과 → stale "
+                  f"※ 승격 후보 자격 박탈", file=sys.stderr)
 
     # 2) yfinance 소스
     rollover_suspected = []                                   # v1.1 신설
@@ -277,50 +495,69 @@ def collect() -> dict:
             failures.append(key)
             metrics[key] = build_metric(name, None, None, None, None, f"yfinance:{tk}", "불가")
 
-    # 3) VIX 이중화: yfinance 우선, 실패 시 FRED VIXCLS 승격
-    if metrics["vix"]["value"] is None and metrics["vix_fred"]["value"] is not None:
-        metrics["vix"] = dict(metrics["vix_fred"])
-        metrics["vix"]["name"] = "VIX Close (FRED fallback)"
+    # 3) VIX 이중화: yfinance 우선, 실패 시 FRED VIXCLS 승격 (stale 게이트 적용)
+    if metrics["vix"]["value"] is None and metrics["vix_fred"].get("value") is not None:
+        if not metrics["vix_fred"].get("stale"):
+            metrics["vix"] = dict(metrics["vix_fred"])
+            metrics["vix"]["name"] = "VIX Close (FRED fallback)"
+        else:
+            print("[WARN] VIX: yfinance 실패 + FRED stale → 승격 보류", file=sys.stderr)
 
-    # 3-B) WTI 이중화 (v1.1 신설) — 롤오버 의심 또는 yfinance 실패 시 FRED 현물 승격
-    #      평시에는 당일성이 좋은 yfinance를 유지하고, 이상 시에만 FRED로 교체한다.
-    if metrics.get("wti_fred", {}).get("value") is not None:
-        if ("wti" in rollover_suspected) or (metrics["wti"]["value"] is None):
-            yf_raw = metrics["wti"]["value"]
-            yf_as_of = metrics["wti"]["as_of"]
-            reason = "롤오버 의심" if "wti" in rollover_suspected else "yfinance 실패"
-            metrics["wti"] = dict(metrics["wti_fred"])
-            metrics["wti"]["name"] = f"WTI Crude (FRED 승격 — {reason})"
-            metrics["wti"]["yf_raw"] = yf_raw        # 기각된 원본 보존
-            metrics["wti"]["yf_as_of"] = yf_as_of
-            metrics["wti"]["promoted_reason"] = reason
-            print(f"[INFO] WTI: FRED 승격 ({reason}). yfinance 원본 {yf_raw} 기각",
-                  file=sys.stderr)
+    # 3-B) WTI 이중화 (v1.1 신설 / v1.3 [C] 강화)
+    #      평시에는 당일성이 좋은 yfinance를 유지하고,
+    #      롤오버 의심 또는 yfinance 실패 시에만 FRED를 승격 후보로 검토한다.
+    wti_action = "keep"
+    if metrics.get("wti") is not None:
+        resolved, wti_action = resolve_wti(
+            metrics["wti"], metrics.get("wti_fred", {}) or {},
+            "wti" in rollover_suspected,
+        )
+        if wti_action in ("promote", "rollback"):
+            metrics["wti"] = resolved
+            print(f"[INFO] WTI: {wti_action} — value={resolved.get('value')} "
+                  f"as_of={resolved.get('as_of')}", file=sys.stderr)
+        elif wti_action == "gap":
+            print("[WARN] WTI: 승격 후보 stale + 직전값 부재 → [DATA GAP]", file=sys.stderr)
 
-    # 4) 거래일 판정 (DGS10 최신 관측일 기준)
-    last_trading_day = metrics["us10y"]["as_of"]
-    now_kst = datetime.now(KST)
+    # 3-C) v1.4 — 전 메트릭(FRED + yfinance) 관측 경과일 산출 (앵커 판정 입력)
+    for key, m in metrics.items():
+        if m.get("value") is not None and m.get("as_of"):
+            m["age_days"] = age_days(m.get("as_of"), ref_date)
+
+    # 4) 거래일 판정 + 앵커 계약 검증 (v1.3 [D] 신설 / v1.4 교정)
+    anchor = resolve_anchor(metrics, now_kst)
+    last_trading_day = anchor["fred_last_us_trading_day"]     # v1.2 의미 보존
+    observed_last_day = anchor["observed_last_us_trading_day"]
     is_new_data = False
-    if last_trading_day:
-        gap = (now_kst.date() - datetime.strptime(last_trading_day, "%Y-%m-%d").date()).days
-        is_new_data = gap <= 4  # 주말+지연 허용 범위
+    if observed_last_day:
+        gap = (now_kst.date() - parse_date(observed_last_day)).days
+        is_new_data = gap <= 4      # 주말+지연 허용 범위
+    if not anchor["anchor_ok"]:
+        print(f"[WARN] ANCHOR 불일치: {anchor['anchor_note']}", file=sys.stderr)
 
     snapshot = {
         "schema_version": SCHEMA_VERSION,
         "generated_at_utc": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
         "generated_at_kst": now_kst.strftime("%Y-%m-%d %H:%M:%S KST"),
         "meta": {
-            "last_us_trading_day": last_trading_day,
+            "last_us_trading_day": last_trading_day,          # FRED 10Y 기준 (v1.2 의미 보존)
+            "observed_last_us_trading_day": observed_last_day,  # v1.4 — 전 소스 최신 관측일
             "is_new_data": is_new_data,
             "failed_metrics": failures,
             "rollover_suspected": rollover_suspected,   # v1.1 신설
             "outlier_no_promote": outlier_only,         # v1.2 신설 — 급변이나 승격 안 함
+            "stale_series": stale_series,               # v1.3 [B] 신설
+            "wti_action": wti_action,                   # v1.3 [C] 신설
+            "anchor": anchor,                           # v1.3 [D] 신설
+            "schedule_slot": schedule_slot(now_kst),    # v1.3 [F] 신설
             "excluded_by_design": ["fear_greed_index (web_search 유지)"],
             "edt_rule": "12 DAILY_DELTA v1.5 — 본 snapshot은 신뢰도 1순위 소스. "
                         "generated_at 24h 초과 시 EDT 측 기존 절차 폴백. "
-                        "v1.2: 선물 지표는 12 v1.14 DSG-04/DSG-05 및 "
-                        "21 v1.13 OST-01/OST-02 교차검증을 거쳐 확정한다. "
-                        "rollover_suspected=롤오버 판정(FRED 승격) / "
+                        "v1.3: 시리즈별 신선도 게이트(STALE-01)와 앵커 계약 검증(ANCHOR-01)을 "
+                        "적용한다. stale_series=승격·채택 부적격 지표 / "
+                        "anchor.anchor_ok=false 시 CP-1 은 앵커 불일치를 명시하고 "
+                        "17 v1.11 RULE PUB-02·PUB-04 절차를 발동해야 한다. "
+                        "rollover_suspected=롤오버 판정 / "
                         "outlier_no_promote=실제 급변(원본 유지, CP-1 교차검증 권고).",
         },
         "metrics": metrics,
