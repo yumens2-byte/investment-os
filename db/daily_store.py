@@ -126,7 +126,11 @@ def store_daily_analysis(data: dict, regime_score: int = 0) -> bool:
         if isinstance(allocation, dict) and "allocation" in allocation:
             allocation = allocation["allocation"]
         score = data.get("market_score", {})
-        risk_data = data.get("portfolio_risk", {})
+        if not isinstance(allocation, dict) or not isinstance(score, dict):
+            raise ValueError("etf_allocation 또는 market_score 형식 오류")
+        trading_signal = signal.get("trading_signal")
+        if not isinstance(trading_signal, str) or not trading_signal.strip():
+            raise ValueError("trading_signal.trading_signal 누락 또는 형식 오류")
 
         # ETF 순위 추출 (allocation 비율 기준 내림차순)
         etf_rank = {}
@@ -147,11 +151,11 @@ def store_daily_analysis(data: dict, regime_score: int = 0) -> bool:
             "analysis_date": _today_kst(),
             "regime": regime.get("market_regime", "Unknown"),
             "risk_level": regime.get("market_risk_level", "MEDIUM"),
-            "trading_signal": signal.get("signal", "HOLD"),
+            "trading_signal": trading_signal,
             "regime_score": regime_score,
-            "etf_rank": json.dumps(etf_rank, ensure_ascii=False),
-            "etf_allocation": json.dumps(allocation, ensure_ascii=False),
-            "market_score": json.dumps(score, ensure_ascii=False),
+            "etf_rank": etf_rank,
+            "etf_allocation": allocation,
+            "market_score": score,
             "buy_watch": buy_watch if buy_watch else [],
             "reduce_list": reduce_list if reduce_list else [],
         }
@@ -184,18 +188,29 @@ def store_daily_news(data: dict, rss_result: dict = None) -> bool:
         rss_result: collect_news_sentiment() 반환값
     """
     try:
-        news_summary = data.get("news_summary", {})
         news_analysis = data.get("news_analysis", {})
+        if not isinstance(news_analysis, dict):
+            raise ValueError("news_analysis 형식 오류")
 
         # RSS 감성
-        rss_sentiment = news_summary.get("sentiment", "Neutral")
-        rss_score = _safe_float(news_summary.get("weighted_score", 0))
-        rss_count = news_summary.get("headline_count", 0)
+        if not isinstance(rss_result, dict):
+            raise ValueError("rss_result 누락 또는 형식 오류")
+        rss_sentiment = rss_result.get("news_sentiment")
+        rss_score = _safe_float(rss_result.get("sentiment_score"))
+        rss_count = rss_result.get("total_headlines")
+        if (rss_sentiment not in ("Bullish", "Neutral", "Bearish")
+                or rss_score is None
+                or isinstance(rss_count, bool)
+                or not isinstance(rss_count, int)
+                or rss_count < 0):
+            raise ValueError("rss_result 감성·점수·헤드라인 건수 계약 오류")
 
         # Gemini 분석
         gemini_sentiment = news_analysis.get("overall_sentiment", "")
         top_issues = news_analysis.get("top_issues", [])
         key_risk = news_analysis.get("key_risk", "")
+        if not isinstance(top_issues, list):
+            raise ValueError("top_issues 형식 오류")
 
         # 주요 헤드라인 (상위 10건)
         top_headlines = []
@@ -203,6 +218,8 @@ def store_daily_news(data: dict, rss_result: dict = None) -> bool:
             top_headlines = rss_result["headlines"][:10]
         elif data.get("output_helpers", {}).get("top_headlines"):
             top_headlines = data["output_helpers"]["top_headlines"]
+        if not isinstance(top_headlines, list):
+            raise ValueError("top_headlines 형식 오류")
 
         row = {
             "news_date": _today_kst(),
@@ -210,9 +227,9 @@ def store_daily_news(data: dict, rss_result: dict = None) -> bool:
             "rss_score": rss_score,
             "rss_headline_count": rss_count,
             "gemini_sentiment": gemini_sentiment,
-            "top_issues": json.dumps(top_issues, ensure_ascii=False),
+            "top_issues": top_issues,
             "key_risk": key_risk,
-            "top_headlines": json.dumps(top_headlines, ensure_ascii=False),
+            "top_headlines": top_headlines,
         }
 
         _get_client().table("daily_news").upsert(

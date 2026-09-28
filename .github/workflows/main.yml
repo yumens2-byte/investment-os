@@ -193,12 +193,18 @@ jobs:
           cache: pip
 
       - run: pip install -r requirements.txt
+      - run: python -m pip install 'pytest>=8,<10'
 
       # pilot_test는 외부 API 없이 픽스처로 동작 — Playwright/fonts 불필요
       - run: python main.py test --round all
         env:
           DRY_RUN: "true"
           LOG_LEVEL: WARNING
+      - name: Daily store and pipeline boundary tests
+        run: python -m pytest -q tests/test_daily_store_contract.py tests/test_daily_query_mixed_json.py tests/test_market_holiday_timezone.py tests/test_duplicate_checker_scope.py
+        env:
+          DRY_RUN: "true"
+          FORCE_RUN: "false"
 
   # ═══════════════════════════════════════════════════════════
   #  morning | KST 월~금 06:36  (cron: 36 21 * * 0-4 / UTC 일~목)

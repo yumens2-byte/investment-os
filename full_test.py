@@ -100,7 +100,9 @@ for s in ["morning","intraday","close","weekly"]:
 print("\n── [8] 파일 정리 확인 ─────────────────────────────────────────")
 check("dashboard_builder.py 존재", os.path.exists("publishers/dashboard_builder.py"))
 check("image_generator.py 존재",   os.path.exists("publishers/image_generator.py"))
-check("dashboard_builder_v2.py 제거", not os.path.exists("publishers/dashboard_builder_v2.py"))
+with open("publishers/image_generator.py", encoding="utf-8") as _router_file:
+    check("샘플용 dashboard_builder_v2 라우팅 제외",
+          "dashboard_builder_v2" not in _router_file.read())
 
 print("\n── [9] dashboard_html_builder import + session=full 라우팅 ─────")
 try:
@@ -113,10 +115,13 @@ try:
     import inspect
     from publishers.image_generator import generate_image
     src = inspect.getsource(generate_image)
-    has_full   = 'session == "full"' in src
     has_html   = 'build_html_dashboard' in src
     has_mpl    = 'build_dashboard' in src
-    check("image_generator full 분기", has_full)
+    from unittest.mock import patch
+    with patch("publishers.dashboard_html_builder.build_html_dashboard", return_value="full.png") as _html:
+        check("image_generator full 세션 라우팅",
+              generate_image({}, session="full") == "full.png"
+              and _html.call_args.kwargs["session"] == "full")
     check("image_generator HTML 라우팅", has_html)
     check("image_generator matplotlib 유지", has_mpl)
 except Exception as e:
@@ -128,8 +133,7 @@ try:
     src = inspect.getsource(run_view.run)
     has_full_branch = 'session_type == "full"' in src
     check("run_view full 세션 분기", has_full_branch)
-    has_full_label = '"full"' in src and '"Full Brief' in src
-    check("run_view full 레이블 정의", has_full_label)
+    check("run_view full 레이블 정의", run_view._session_label("full") == "Full Brief 📊")
 except Exception as e:
     check("run_view full 분기 검증", False, str(e))
 

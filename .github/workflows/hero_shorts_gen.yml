@@ -31,9 +31,11 @@ jobs:
           echo "▶ STEP=$STEP ONLY=$ONLY (기본 2 — 단건 강제)"
           if [ "$STEP" = "generate" ]; then
             [ -f gen/data/out/ep86_plan.json ] || python3 -m gen.hero_shorts.pipeline plan   # plan 부재 시 노션 원장 직독 재생성(0원)
-            ARGS="generate --plan gen/data/out/ep86_plan.json --backend fal"
-            [ -n "$ONLY" ] && ARGS="$ARGS --only $ONLY"
-            python3 -m gen.hero_shorts.pipeline $ARGS
+            ARGS=(generate --plan gen/data/out/ep86_plan.json --backend fal)
+            if [ -n "$ONLY" ]; then
+              ARGS+=(--only "$ONLY")
+            fi
+            python3 -m gen.hero_shorts.pipeline "${ARGS[@]}"
           else
             python3 -m gen.hero_shorts.pipeline "${STEP:-plan}"
           fi

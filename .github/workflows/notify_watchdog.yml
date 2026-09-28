@@ -26,13 +26,14 @@ name: "🐕‍🦺 Watchdog"
       - "🎨 Comic Daily Pipeline"
       - "📚 Comic Weekly Pipeline"
       - "📝 Comic Novel (Sunday)"
-      - EDT Market Snapshot
+      - "⚠️ EDT Market Snapshot"
+      - "⚠️ EDT Snapshot Watchdog"
       - Prediction League & Data Quiz
       - Viral Content
       - "📊 Viral Daily Report"
       - "📊 Viral Performance Tracker"
       - Weekend Content
-      - "🎬 Hero Shorts Gen (v2.4.3 — gen 폴더)"
+      - "🎬 Hero Shorts Gen (v2.4.7 — gen 폴더)"
 
     types:
       - completed
