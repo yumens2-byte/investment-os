@@ -528,7 +528,7 @@ def run(mode: str = "tweet", session: str = None) -> dict:
         logger.warning(f"[Step 6-ML] 다국어 발행 실패 (영향 없음): {me}")
 
     # ── Step 7: 이력 기록 ──────────────────────────────────────
-    if pub_result.get("success"):
+    if pub_result.get("success") and not DRY_RUN:
         logger.info("[Step 7] 발행 이력 기록")
         record_published(
             primary_text, data, tweet_id=str(tweet_id), session=session_type

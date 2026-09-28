@@ -290,8 +290,6 @@ def publish_thread(posts: list, reply_to: str = None) -> dict:
             "dry_run": bool,
         }
     """
-    time.sleep(random.randint(15, 30))  # 트윗 간 쿨다운
-
     delay_lo, delay_hi = _resolve_thread_delay_range(len(posts))
 
     logger.info(
@@ -308,6 +306,8 @@ def publish_thread(posts: list, reply_to: str = None) -> dict:
             "tweet_ids": ["DRY_RUN"] * len(posts),
             "dry_run": True,
         }
+
+    time.sleep(random.randint(15, 30))  # 실발행 진입 쿨다운
 
     client = _get_client()
     if client is None:

@@ -122,7 +122,7 @@ def test_dry_run_skips_publish_loop(monkeypatch):
 
     assert result["dry_run"] is True
     assert result["tweet_ids"] == ["DRY_RUN"] * 3
-    assert len(slept) == 1  # 진입 쿨다운만
+    assert slept == []  # preview는 실발행 쿨다운도 수행하지 않음
 
 
 # ─────────────────────────────────────────────────────────────────────────

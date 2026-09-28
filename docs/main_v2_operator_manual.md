@@ -8,7 +8,7 @@ Notion 정본: [운영자 매뉴얼](https://app.notion.com/p/3e99208cbdc38184aa
 
 1. GitHub Actions의 **Investment OS Auto Publish**에서 세션·트리거·브랜치·run URL·예약 시각과 실제 시작 시각을 확인한다. PR/push의 Pilot Test는 게시 작업이 아니다.
 2. 수동 실행은 `workflow_dispatch`의 `session`, `mode`, `dry_run`을 확인한다. `alert`와 `full`에서는 mode 입력이 무시된다. 기본 `dry_run` 선택지는 `false`이므로 실행 전 값을 직접 확인한다.
-3. **현재 `DRY_RUN=true`를 완전한 게시 차단으로 간주하지 않는다.** X는 모의 동작하지만 Telegram 발송·랭킹 알림 등 일부 경로는 별도 구현이므로 수동 검증에 실제 채널 자격 증명을 공급하지 않는다. 스케줄은 `secrets.DRY_RUN`, 수동은 입력값 우선이다.
+3. **`DRY_RUN=true`에서 X와 공통 Telegram 발행 함수의 외부 요청은 차단된다.** 그러나 전체 세션의 모든 발행 경로·DLQ·기록 오염에 대한 통합 검증은 끝나지 않았다. 수동 검증에 실제 채널 자격 증명을 공급하지 않는다. 스케줄은 `secrets.DRY_RUN`, 수동은 입력값 우선이다.
 4. 실행 중인 동일 세션은 job concurrency로 직렬화되지만 다른 세션의 파일 캐시 전체가 공통 잠금으로 보호되지는 않는다. 테스트와 운영을 동시에 공유 작업 디렉터리에서 실행하지 않는다.
 
 ## 2. 일상 점검
@@ -41,4 +41,4 @@ GitHub Actions 성공만으로 X/TG 대상별 전송 성공을 확정하지 않�
 
 사고 기록에는 세션, GitHub run ID/attempt, KST 및 UTC/ET 시각, 대상 거래일(알 수 없으면 미확정), source 관측 시각, 검증 결과, X/TG 각 ID, 실패 단계, 재처리 판단자와 사유를 남긴다. 캐시를 복원하더라도 이전 게시 ID 확인 전 실발행하지 않는다. 상태가 불명확하면 UNKNOWN으로 유지한다.
 
-현행 코드에는 원자적 publication 장부와 완전한 preview 게이트가 아직 없다. 따라서 이 문서의 수동 대조는 그 기능이 구현·검증될 때까지 필요한 운영 통제다.
+현행 코드에는 원자적 publication 장부와 전체 세션의 완전한 preview 게이트가 아직 없다. 따라서 이 문서의 수동 대조는 그 기능이 구현·검증될 때까지 필요한 운영 통제다.

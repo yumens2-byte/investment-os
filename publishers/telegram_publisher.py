@@ -11,6 +11,7 @@ import os
 from typing import Optional
 
 import requests
+from config.settings import DRY_RUN
 
 logger = logging.getLogger(__name__)
 
@@ -20,8 +21,7 @@ FREE_CHAT_ID = os.getenv("TELEGRAM_FREE_CHANNEL_ID", "")
 PAID_CHAT_ID = os.getenv("TELEGRAM_PAID_CHANNEL_ID", "")
 EN_CHAT_ID   = os.getenv("TELEGRAM_EN_CHANNEL_ID", "")   # C-11: 영어 채널
 JP_CHAT_ID   = os.getenv("TELEGRAM_JP_CHANNEL_ID", "")   # C-11: 일본어 채널
-# 텔레그램은 무료 서비스 — DRY_RUN 무관하게 항상 실제 전송
-# X(Twitter)의 DRY_RUN과 독립적으로 동작
+# DRY_RUN에서는 채널 설정 여부와 무관하게 외부 요청을 차단한다.
 API_BASE     = f"https://api.telegram.org/bot{BOT_TOKEN}"
 TIMEOUT_MSG  = 15   # 텍스트 타임아웃
 TIMEOUT_IMG  = 30   # 이미지 타임아웃
@@ -45,6 +45,11 @@ def _is_configured() -> bool:
     return bool(BOT_TOKEN)
 
 
+def _preview_result(channel: str, kind: str) -> list[dict]:
+    logger.info("[TG] DRY_RUN — %s 발행 생략 (channel=%s)", kind, channel)
+    return [{"skipped": True, "dry_run": True, "channel": channel, "kind": kind}]
+
+
 # ── 공개 인터페이스 ─────────────────────────────────────────
 def send_message(
     text: str,
@@ -62,6 +67,9 @@ def send_message(
     Returns:
         각 채널별 API 응답 리스트
     """
+    if DRY_RUN:
+        return _preview_result(channel, "message")
+
     if not _is_configured():
         logger.warning("[TG] BOT_TOKEN 미설정 — 텔레그램 발행 건너뜀")
         return []
@@ -123,6 +131,9 @@ def send_photo(
     Returns:
         각 채널별 API 응답 리스트
     """
+    if DRY_RUN:
+        return _preview_result(channel, "photo")
+
     if not _is_configured():
         logger.warning("[TG] BOT_TOKEN 미설정 — 텔레그램 발행 건너뜀")
         return []
@@ -172,6 +183,9 @@ def send_document(
     Returns:
         각 채널별 API 응답 리스트
     """
+    if DRY_RUN:
+        return _preview_result(channel, "document")
+
     if not _is_configured():
         logger.warning("[TG] BOT_TOKEN 미설정 — 텔레그램 발행 건너뜀")
         return []
