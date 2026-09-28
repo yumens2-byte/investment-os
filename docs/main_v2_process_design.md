@@ -60,7 +60,7 @@ workflow의 job `if`는 cron 문자열과 정확히 일치해야 한다. 스케�
 
 1. DATA-01~03 신규 적재 계약: 구현 완료, 로컬 계약·혼합 JSON 조회 13건 및 파일럿 단독 42/42 통과. 실제 runner·운영 DB write 미검증.
 2. DATA-04~06: PCR·관측 시각·거래 대상일·부분 적재 실패를 모델링하고 퀴즈 소비자 및 재처리 테스트를 추가.
-3. PUB-04: preview에서 X·Telegram·랭킹·DLQ 외부 전송 0건을 증명. 현재 `DRY_RUN`만으로 Telegram 전체 차단을 보장하지 않는다.
+3. PUB-04: 공통 X·Telegram 발행 함수의 preview 차단을 검증. 랭킹·DLQ를 포함한 전체 세션의 외부 전송 0건은 추가 통합 검증이 필요하다.
 4. PUB-01~03: 별도 DB 마이그레이션과 발행 장부, 동시 선점·스레드 부분 성공·UNKNOWN 대조 테스트 후 채널별 단계 전환.
 5. ALERT/OPS/SEC: Alert 파일·DB 이력 shadow 비교, 누락 cron 감시, 실제 키 소비자 조사 후 RLS/GRANT 단계적 적용.
 

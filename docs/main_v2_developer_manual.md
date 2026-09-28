@@ -41,7 +41,7 @@ PYTHONPATH=. DRY_RUN=true .venv/bin/python tests/test_comic_pipeline.py
 
 ## 4. 발행 변경 규칙과 미완료 항목
 
-실제 `DRY_RUN`은 모든 외부 발행을 차단하지 않는다. preview 구현 시 X, Telegram 무료·유료, 랭킹, 번역/부가 게시, DLQ 모두에 대해 네트워크 발행 호출 0건을 계약 테스트로 확인한다. 파일 캐시가 발행 장부는 아니므로 신규 DB 테이블은 조건부 원자 선점·외부 ID·attempt·UNKNOWN을 포함해야 한다. 타임아웃을 성공 또는 재시도 가능 실패로 추정하지 않는다.
+공통 X/TG 발행 함수는 `DRY_RUN`에서 네트워크 발행을 차단한다. preview 확장 시 랭킹, 번역/부가 게시, DLQ 등 전체 세션의 네트워크 발행 호출 0건을 통합 테스트로 확인한다. 파일 캐시가 발행 장부는 아니므로 신규 DB 테이블은 조건부 원자 선점·외부 ID·attempt·UNKNOWN을 포함해야 한다. 타임아웃을 성공 또는 재시도 가능 실패로 추정하지 않는다.
 
 후속 작업 순서는 DATA-04~06 → PUB-04 → PUB-01~03 → ALERT/OPS → SEC다. 현재 Tier 1 시그널 테스트는 ZIP 원본에서도 144/145(위기 growth_score 기대 불일치), Hero Shorts 자체 테스트는 81개 중 파일 경로 의존 오류 3건이다. 신규 변경과 무관한 기존 실패도 CI 게이트로 승격하기 전에 원인을 수정해야 한다. 상세 실행 결과는 `source_level_impact_review_2026_09_28.md`를 참조한다.
 

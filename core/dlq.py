@@ -31,6 +31,7 @@ import uuid
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional, Callable
+from config.settings import DRY_RUN
 
 logger = logging.getLogger(__name__)
 
@@ -204,6 +205,12 @@ def process_queue() -> dict:
           "remaining": 1,
         }
     """
+    # Preview must not consume live failures or mark mock X results as delivered.
+    if DRY_RUN:
+        pending = len(_load_queue())
+        return {"total": pending, "success": 0, "failed": 0,
+                "dead_lettered": 0, "remaining": pending, "skipped": True}
+
     # 핸들러 자동 등록 (최초 1회)
     _auto_register_handlers()
 

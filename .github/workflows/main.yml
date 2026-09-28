@@ -201,7 +201,7 @@ jobs:
           DRY_RUN: "true"
           LOG_LEVEL: WARNING
       - name: Daily store and pipeline boundary tests
-        run: python -m pytest -q tests/test_daily_store_contract.py tests/test_daily_query_mixed_json.py tests/test_market_holiday_timezone.py tests/test_duplicate_checker_scope.py
+        run: python -m pytest -q tests/test_daily_store_contract.py tests/test_daily_query_mixed_json.py tests/test_market_holiday_timezone.py tests/test_duplicate_checker_scope.py tests/test_external_publish_preview.py
         env:
           DRY_RUN: "true"
           FORCE_RUN: "false"
