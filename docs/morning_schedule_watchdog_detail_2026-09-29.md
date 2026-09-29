@@ -115,6 +115,15 @@ flowchart TD
 - 감시기 단위·기존 workflow 정책 테스트 14건 통과, Python 컴파일 및 YAML 파싱 통과. GitHub 상의 신규 감시 workflow 실행과 7일 shadow 관측은 **원격 반영 후** 검증한다.
 - 현재 shadow에는 사건 영속 저장·중복 알림·Telegram 전송을 구현하지 않았다. 알림 활성화 전 5절 저장소 계약과 보안·RLS를 구현하고 통합 검증해야 한다. 워크플로 실패가 기존 종료 알림으로 이어지지 않도록 shadow workflow는 기존 `notify_watchdog.yml` 목록에서 제외했다.
 
+### 7.2 원격 PR shadow 베타 실측 (2026-09-29 KST)
+
+- PR #18의 읽기 전용 shadow run `36508118699`는 실제 Actions API로 `SCHEDULE_FAILED`를 반환하며 성공 종료했다. 예약 모닝 run `36506919661`의 `Morning Brief` job 실패를 정확히 식별했다. 오전 09:05 수동 성공과 09:48 Alert 전용 예약 실행을 모닝 성공으로 오판하지 않았다.
+- **초기 누락 판단 정정:** 06:36 예정 예약 모닝이 10:14경 시작했다. 즉 최종 결과는 영구 누락이 아니라 **3시간 이상 지연되어 시작한 예약 모닝의 실패**다. 향후 최초 `MISSED_SCHEDULE` 후 예약 run이 나타나면 사건을 `LATE_RUNNING`/`SCHEDULE_FAILED`로 전이하고 정정 통지한다.
+- 늦은 예약 run에서 `DRY_RUN=False`, `run_market` 데이터·출력 검증 PASS, Supabase 3/3 upsert 로그를 확인했다. `run_view`의 중복 검사가 같은 날 수동 모닝 이력을 감지하여 X 후속 발행을 차단하고 exit 2로 종료했다.
+- **부작용 경계:** 중복 검사 이전의 `run_market` 단계에서 Telegram 텍스트 발행 완료 로그가 1건 있다. 따라서 중복 차단이 전체 외부 발행을 막지는 않는다. 발행 전 중복 게이트를 앞당기거나 채널별 사전 차단을 설계하는 별도 변경이 필요하다. 기존 운영 채널의 수신 여부는 로그만으로 확인하지 않는다.
+- 이번 shadow는 자동 재실행·Telegram 통지·DB 변경을 수행하지 않았다. 이 날 발생한 DB upsert와 Telegram 호출은 **기존 `main.yml` 예약 모닝**에서 수행된 것이며 신규 감시 워크플로에서 수행된 것이 아니다.
+- PR 최초 CI의 guardrail은 `pytest` 콘솔 스크립트에서 프로젝트 루트가 import 경로에 없어 `ModuleNotFoundError: core`로 실패했다. CI 명령을 `python -m pytest`로 수정해 PR에서 재검증한다. 로컬의 같은 명령에서는 14건 통과했다.
+
 ### 기존 Phase 1 설계와 달라지는 점
 
 기존 문서의 “`event=schedule` run 존재”만으로 판정하는 4.3절은 다중 cron `main.yml`에 적용하면 Alert 성공을 모닝 성공으로 오인한다. `created_at >= slot - tolerance`만으로도 어떤 cron이었는지 식별할 수 없다. 본 문서는 **run → Morning Brief job** 대조를 필수화한다. 또한 수동 job 성공과 실제 발행 복구를 분리하며, 휴장일에 cron 자체를 감시 대상에서 제외하지 않는다.
