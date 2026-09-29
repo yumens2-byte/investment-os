@@ -1,0 +1,47 @@
+name: Morning Schedule Watchdog (Shadow)
+
+on:
+  pull_request:
+    paths:
+      - 'core/morning_watchdog.py'
+      - 'tests/test_morning_watchdog.py'
+      - '.github/workflows/morning_schedule_watchdog.yml'
+  schedule:
+    - cron: '15 22 * * 0-4' # KST Monday-Friday 07:15
+    - cron: '15 23 * * 0-4' # KST Monday-Friday 08:15
+    - cron: '15 0 * * 1-5'  # KST Monday-Friday 09:15
+  workflow_dispatch:
+
+permissions: {}
+
+concurrency:
+  group: morning-schedule-watchdog
+  cancel-in-progress: false
+
+jobs:
+  inspect:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      actions: read
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Read-only schedule check
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          set -o pipefail
+          python -m core.morning_watchdog | tee /tmp/morning-watchdog.json
+          {
+            echo '## Morning Schedule Watchdog — shadow mode'
+            echo ''
+            echo 'No dispatch, publication, or Telegram notification is performed.'
+            echo ''
+            echo '```json'
+            cat /tmp/morning-watchdog.json
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
