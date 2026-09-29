@@ -29,6 +29,8 @@ on:
       - '.github/workflows/*.yml'
       - 'tests/test_watchdog_workflow.py'
       - 'tests/test_workflow_operations.py'
+      - 'tests/test_morning_watchdog.py'
+      - 'core/morning_watchdog.py'
   push:
     branches: [main]
     paths:
@@ -38,6 +40,8 @@ on:
       - '.github/workflows/*.yml'
       - 'tests/test_watchdog_workflow.py'
       - 'tests/test_workflow_operations.py'
+      - 'tests/test_morning_watchdog.py'
+      - 'core/morning_watchdog.py'
   workflow_dispatch:
 
 jobs:
@@ -57,7 +61,7 @@ jobs:
       - name: Watchdog 및 운영 정책 회귀 테스트
         run: |
           python -m pip install pytest
-          pytest -q tests/test_watchdog_workflow.py tests/test_workflow_operations.py
+          pytest -q tests/test_watchdog_workflow.py tests/test_workflow_operations.py tests/test_morning_watchdog.py
 
       - name: GitHub Actions 정적 검사
         run: |
