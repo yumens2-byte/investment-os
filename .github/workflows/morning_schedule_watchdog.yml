@@ -1,6 +1,11 @@
 name: Morning Schedule Watchdog (Shadow)
 
 on:
+  pull_request:
+    paths:
+      - 'core/morning_watchdog.py'
+      - 'tests/test_morning_watchdog.py'
+      - '.github/workflows/morning_schedule_watchdog.yml'
   schedule:
     - cron: '15 22 * * 0-4' # KST Monday-Friday 07:15
     - cron: '15 23 * * 0-4' # KST Monday-Friday 08:15

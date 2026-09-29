@@ -110,7 +110,7 @@ flowchart TD
 
 ### 7.1 2026-09-29 로컬 베타 결과 및 남은 경계
 
-- `core/morning_watchdog.py`, `.github/workflows/morning_schedule_watchdog.yml`을 읽기 전용 shadow mode로 구현했다. GitHub API 조회 후 Actions 요약에 상태를 남긴다. `UNKNOWN`이면 job을 실패시켜 관측 실패를 숨기지 않는다.
+- `core/morning_watchdog.py`, `.github/workflows/morning_schedule_watchdog.yml`을 읽기 전용 shadow mode로 구현했다. PR의 관련 파일 변경 시에도 한 번 실행해 실제 GitHub API 판정을 베타 검증한다. GitHub API 조회 후 Actions 요약에 상태를 남긴다. `UNKNOWN`이면 job을 실패시켜 관측 실패를 숨기지 않는다.
 - 실제 9월 29일 Actions에서 관찰한 09:48 예약 Alert 성공/Morning Brief skipped 및 09:05 수동 Morning Brief 성공을 fixture로 재현한 결과 `MANUAL_RUN_SUCCEEDED_UNVERIFIED`를 반환했다. 실제 외부 발행 로그는 별도 대조가 필요하고 detector는 이를 복구 완료로 승격하지 않는다.
 - 감시기 단위·기존 workflow 정책 테스트 14건 통과, Python 컴파일 및 YAML 파싱 통과. GitHub 상의 신규 감시 workflow 실행과 7일 shadow 관측은 **원격 반영 후** 검증한다.
 - 현재 shadow에는 사건 영속 저장·중복 알림·Telegram 전송을 구현하지 않았다. 알림 활성화 전 5절 저장소 계약과 보안·RLS를 구현하고 통합 검증해야 한다. 워크플로 실패가 기존 종료 알림으로 이어지지 않도록 shadow workflow는 기존 `notify_watchdog.yml` 목록에서 제외했다.
