@@ -209,6 +209,16 @@ def test_streamer_tweet_follows_x_gate(tmp_path, channel, expected_yt):
     assert h.m["check_streamer_duplicate"].call_count == expected_yt
 
 
+def test_streamer_tweet_blocked_by_fact_guard_is_not_published(tmp_path):
+    """F3: 가드가 tweet 을 비우면 Step 6-YT 는 X 발행을 하지 않는다."""
+    data = {**SAMPLE_DATA, "streamer_consensus": {"tweet": "", "direction": "UP",
+                                                  "fact_guard": {"blocked": True}}}
+    with Harness(tmp_path, data=data) as h:
+        run_view.run(mode="tweet", session="morning", channel="all")
+    assert h.m["check_streamer_duplicate"].call_count == 0
+    assert h.m["publish_tweet"].call_count + h.m["publish_tweet_with_image"].call_count == 1  # 본 트윗만
+
+
 def test_channel_face_blocked_second_time_same_day(tmp_path):
     with Harness(tmp_path) as h:
         first = run_view.run(mode="tweet", session="morning", channel="face")
@@ -363,3 +373,4 @@ def test_workflow_pilot_runs_new_tests():
     assert "tests/test_facebook_publisher.py" in runs
     assert "tests/test_publish_channel.py" in runs
     assert "tests/test_fg_display.py" in runs
+    assert "tests/test_streamer_fact_guard.py" in runs

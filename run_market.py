@@ -41,6 +41,11 @@ v1.8.0 (2026-10-05) — FB-1 발행 채널 선택 연동
 v1.8.1 (2026-10-05) — FB-1 운영베타 준비 보완
   - channel != all 이면 공유 상태 기록도 생략: Step 8-W(weekly_log), Step 8-DB(Supabase daily_*).
     근거: daily_snapshots/analysis/news 는 KST 날짜 on_conflict upsert 라 재실행 시 당일 행이 덮어써진다.
+
+v1.8.2 (2026-10-05) — F3 유튜버 요약 사실 정합성 가드
+  - streamer_consensus 주입 직후 engines/streamer_fact_guard.apply() 적용.
+    실제 지표와 반대되는 bullet 줄만 삭제, 정합 줄 0개면 tweet="" (Step 6-YT 미발행).
+  - 가드 예외 시 tweet="" (검증 안 된 요약 미발행).
 """
 import argparse
 import logging
@@ -56,7 +61,7 @@ logging.basicConfig(
 )
 logger = logging.getLogger("run_market")
 
-VERSION = "1.8.1"
+VERSION = "1.8.2"
 
 
 def _detect_session() -> str:
@@ -645,6 +650,19 @@ def run(session: str) -> dict:
             "tweet": streamer_result.get("tweet", ""),
             "video_count": streamer_result.get("video_count", 0),
         }
+        # F3 (v1.8.2): 실제 지표와 반대되는 요약 줄 삭제 — 정합 줄만 발행 (Step 6-YT)
+        try:
+            from engines.streamer_fact_guard import apply as _streamer_fact_guard
+            data["streamer_consensus"] = _streamer_fact_guard(data["streamer_consensus"], data)
+            _fg = data["streamer_consensus"]["fact_guard"]
+            logger.info(
+                f"[Step 6-YT-Guard] 유튜버 요약 정합성: bullet {_fg['bullets_before']}→{_fg['bullets_after']} "
+                f"| 삭제 {len(_fg['removed_tweet_lines'])}줄 | 발행차단={_fg['blocked']}"
+            )
+        except Exception as e:  # noqa: BLE001 — 가드 실패도 발행 차단으로 흡수
+            # 가드 자체 실패 시 검증되지 않은 요약을 내보내지 않는다 (보수적 처리)
+            logger.warning(f"[Step 6-YT-Guard] 정합성 가드 실패 — 유튜버 요약 트윗 발행 안 함: {e}")
+            data["streamer_consensus"]["tweet"] = ""
 
     # ── Step 7: Validation ─────────────────────────────────────
     logger.info("[Step 7] Validation 실행")
