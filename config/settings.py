@@ -1,7 +1,9 @@
 """
-Investment OS — Settings (v1.5.0)
+Investment OS — Settings (v1.6.0)
 모든 상수와 설정을 중앙 관리한다.
 v1.5.0 변경: Reddit(유료화) 제거 → 다중 RSS 소스로 대체
+v1.6.0 변경 (2026-10-05, FB-1): 발행 채널 선택(PUBLISH_CHANNEL·channel_allows) +
+       Facebook 페이지 발행 설정(FACE_*) 추가
 """
 import os
 from pathlib import Path
@@ -457,6 +459,49 @@ CODENAME = "EDT Investment"
 # ── Telegram ────────────────────────────────────────────
 TELEGRAM_FREE_CHANNEL  = "free"   # 무료 채널 식별자
 TELEGRAM_PAID_CHANNEL  = "paid"   # 유료 채널 식별자
+
+# ── 발행 채널 선택 (FB-1, 2026-10-05) ───────────────────────
+# main.yml workflow_dispatch input `channel` → env PUBLISH_CHANNEL.
+#   all  : X + Telegram + Facebook(FACE_ENABLED=true 일 때)   ← schedule 기본값
+#   x    : X 만
+#   face : Facebook 만 (FACE_ENABLED 와 무관 — 수동 dispatch 전용 경로)
+# 허용값 밖의 값은 전 채널 차단(보수적 처리) — channel_allows() 참조.
+PUBLISH_CHANNEL_ALLOWED = ("all", "x", "face")
+PUBLISH_CHANNEL = os.getenv("PUBLISH_CHANNEL", "all").strip().lower() or "all"
+
+
+def channel_allows(target: str, channel: str | None = None) -> bool:
+    """발행 대상(target: "x" | "tg" | "face")이 현재 채널 선택에서 허용되는지.
+
+    channel 인자를 주지 않으면 환경변수 PUBLISH_CHANNEL 값을 사용한다.
+    """
+    ch = (channel if channel is not None else PUBLISH_CHANNEL).strip().lower()
+    if ch == "all":
+        return target in ("x", "tg", "face")
+    if ch == "x":
+        return target == "x"
+    if ch == "face":
+        return target == "face"
+    return False
+
+
+# ── Facebook 페이지 발행 (FB-1, 2026-10-05) ─────────────────
+# Facebook 전용 값은 FACE_ 접두 (threads-promo 와 동일 규칙).
+FACE_PAGE_ID    = os.getenv("FACE_PAGE_ID", "").strip()
+FACE_PAGE_TOKEN = os.getenv("FACE_PAGE_TOKEN", "").strip()
+FACE_ENABLED    = os.getenv("FACE_ENABLED", "false").strip().lower() == "true"
+FACE_SESSIONS   = tuple(
+    s.strip().lower()
+    for s in os.getenv("FACE_SESSIONS", "morning,narrative,full").split(",")
+    if s.strip()
+)
+# threads-promo src/config.py 의 FACE_GRAPH_BASE 와 동일 버전 사용.
+FACE_GRAPH_BASE       = "https://graph.facebook.com/v25.0"
+# Graph API Page Photos 레퍼런스: "Files can not exceed 10MB".
+FACE_PHOTO_MAX_BYTES  = 10 * 1024 * 1024
+FACE_HTTP_TIMEOUT_SEC = 60
+FB_HISTORY_FILE       = PUBLISHED_DIR / "fb_history.json"
+FB_HISTORY_MAX        = 200
 
 # 세션별 영문 표시명
 SESSION_LABELS = {

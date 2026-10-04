@@ -39,13 +39,35 @@ v1.31.0 (2026-09-06) — N-1 narrative 발행 구조 재편:
   [결과] X 발행 3건 → 1스레드(최대 2트윗), 동일 본문 중복 0건,
          발행 간 딜레이는 publish_thread의 기존 랜덤 대기를 사용.
   - result에 narrative_source / visual_variant 추가
+
+v1.32.0 (2026-10-05) — FB-1 Facebook 채널 추가 + 발행 채널 선택:
+  [채널] run(channel=) / env PUBLISH_CHANNEL (main.yml dispatch input `channel`)
+    all  : X + TG + FB(FACE_ENABLED=true & 세션 ∈ FACE_SESSIONS)  ← schedule 기본
+    x    : X 만 (Step 6, 6-YT, C-17 X)
+    face : FB 만 (FACE_ENABLED 무관, 세션 ∈ FACE_SESSIONS)
+  [게이트]
+    - Step 0  DLQ 재처리      : all 에서만 (x/face 는 큐 보존)
+    - Step 4  X 중복검사      : x 허용 시에만 (face 는 core/fb_history 사용)
+                                X 중복 감지 시 X·TG 는 기존처럼 차단(success=False,
+                                reason=duplicate_detected)하되 FB 는 자체 이력으로 계속 판정
+    - Step 6/6-YT X 발행      : x 허용 시에만
+    - Step 6-TG / 6-ML        : tg 허용 시에만 (all)
+    - Step 6-X2 C-17 X 전용   : channel=x 에서 morning 빅테크 실적 X 트윗만 발행
+    - Step 6-FB               : 신규. 실패·예외는 X·TG 결과에 영향 없음
+    - Step 7  X 이력 기록     : x 허용 시에만
+  [success 기준] all/x = X 발행 결과(기존과 동일) / face = FB 게시 결과
+  [불변] channel=all 의 X·TG 발행 순서·내용·조건은 v1.31.0 과 동일.
 """
 import argparse
 import logging
 import sys
 from datetime import datetime, timezone
 
-from config.settings import LOG_LEVEL, DRY_RUN
+from config.settings import (
+    LOG_LEVEL, DRY_RUN,
+    PUBLISH_CHANNEL, PUBLISH_CHANNEL_ALLOWED, channel_allows,
+    FACE_ENABLED, FACE_SESSIONS,
+)
 
 logging.basicConfig(
     level=getattr(logging, LOG_LEVEL, logging.INFO),
@@ -54,7 +76,7 @@ logging.basicConfig(
 )
 logger = logging.getLogger("run_view")
 
-VERSION = "1.31.0"
+VERSION = "1.32.0"
 
 
 def _resolve_session_type(data: dict, session: str | None) -> str:
@@ -112,28 +134,157 @@ def _sentimentize_tweet(primary_text: str, session_type: str, data: dict) -> lis
         return [primary_text]
 
 
-def run(mode: str = "tweet", session: str = None) -> dict:
+def _publish_big_tech_x_only() -> None:
+    """Step 6-X2 (v1.32.0): channel=x 전용 — C-17 빅테크 실적 X 트윗만 발행.
+
+    channel=all 에서는 기존 Step 6-TG 내부 경로(X+TG 쌍 발행)가 그대로 수행된다.
+    이 함수는 TG 블록이 실행되지 않는 channel=x 에서 X 쪽 발행만 동일 로직으로 수행한다.
+    """
+    try:
+        from engines.earnings_checker import get_today_earnings
+        earnings = get_today_earnings()
+        big_tech = earnings.get("big_tech", []) if earnings.get("success") else []
+        if not big_tech:
+            return
+        from engines.stock_analyzer import analyze_big_tech_earnings
+        from publishers.x_publisher import publish_tweet as _pub_stock
+        for sr in analyze_big_tech_earnings(big_tech):
+            if sr.get("success") and sr.get("tweet"):
+                _pub_stock(sr["tweet"])
+                logger.info(f"[Step 6-X2] C-17 빅테크 실적 X 발행: {sr['ticker']}")
+    except Exception as e:  # noqa: BLE001 — 채널 격리: 어떤 예외도 X·TG 로 전파 금지
+        logger.warning(f"[Step 6-X2] C-17 빅테크 실적 X 발행 실패 (무시): {e}")
+
+
+def _fb_applicable(session_type: str, channel: str) -> tuple[bool, str]:
+    """Step 6-FB 수행 대상 여부 (채널·스위치·세션 화이트리스트). (가능 여부, 불가 사유)"""
+    if not channel_allows("face", channel):
+        return False, "channel_not_allowed"
+    if channel != "face" and not FACE_ENABLED:
+        return False, "face_disabled"
+    if session_type not in FACE_SESSIONS:
+        return False, f"session_not_allowed:{session_type}"
+    return True, ""
+
+
+def _publish_facebook(
+    session_type: str,
+    data: dict,
+    narr_result: dict,
+    image_path: str | None,
+    channel: str,
+) -> dict:
+    """Step 6-FB (v1.32.0): Facebook 페이지 게시. 예외를 밖으로 던지지 않는다.
+
+    반환: {"status": ok|failed|unknown|dry_run|skipped, "post_id", "kind", "reason"}
+    """
+    applicable, why_not = _fb_applicable(session_type, channel)
+    if not applicable:
+        return {"status": "skipped", "reason": why_not}
+
+    try:
+        from core import fb_history
+        from publishers.facebook_publisher import publish_page_post
+        from publishers.fb_formatter import to_facebook_text
+
+        blocked, why = fb_history.is_blocked(session_type)
+        if blocked:
+            logger.warning(f"[Step 6-FB] 당일 동일 세션 게시 이력 — 차단 ({why})")
+            return {"status": "skipped", "reason": why}
+
+        # 본문 원천: TG free 텍스트 (narrative 는 Step 3 결과 재사용 → Gemini 재호출 없음)
+        if session_type == "narrative":
+            narrative_text = narr_result.get("narrative", "")
+            if not narrative_text:
+                return {"status": "skipped", "reason": "narrative_empty"}
+            from engines.narrative_engine import format_narrative_telegram
+            source_html = format_narrative_telegram(narrative_text, data)
+        else:
+            from publishers.telegram_publisher import format_free_signal
+            source_html = format_free_signal(data, session=session_type)
+
+        fb_text = to_facebook_text(source_html)
+        if not fb_text:
+            return {"status": "skipped", "reason": "empty_text"}
+
+        res = publish_page_post(fb_text, image_path=image_path, session=session_type)
+        status = res.get("status", "failed")
+
+        if status in ("ok", "unknown"):
+            fb_history.record(
+                session_type, status, fb_text,
+                post_id=res.get("post_id", ""), kind=res.get("kind", ""),
+            )
+        return {
+            "status":  status,
+            "post_id": res.get("post_id", ""),
+            "kind":    res.get("kind", ""),
+            "reason":  res.get("reason", ""),
+        }
+    except Exception as e:  # noqa: BLE001 — 채널 격리: 어떤 예외도 X·TG 로 전파 금지
+        logger.warning(f"[Step 6-FB] Facebook 게시 예외 (X·TG 영향 없음): {e}")
+        return {"status": "failed", "reason": f"exception:{type(e).__name__}"}
+
+
+def _select_visual_preserving_history(select_visual, data: dict):
+    """narrative_visual 이력 파일을 호출 전 상태로 복구하며 select_visual 실행 (v1.32.0)."""
+    from publishers.narrative_visual import _history_path
+    path = _history_path()
+    existed = path.exists()
+    snapshot = path.read_bytes() if existed else b""
+    try:
+        return select_visual(data)
+    finally:
+        try:
+            if existed:
+                path.write_bytes(snapshot)
+            elif path.exists():
+                path.unlink()
+        except OSError as e:
+            logger.warning(f"[Step 5.5] narrative visual 이력 복구 실패: {e}")
+
+
+def run(mode: str = "tweet", session: str = None, channel: str | None = None) -> dict:
     """
     출력 파이프라인 실행.
     mode:    "tweet" (단일 트윗) or "thread" (X 쓰레드)
     session: 외부에서 강제 지정 시 output_helpers보다 우선 (full 세션용)
+    channel: "all" | "x" | "face" — None 이면 env PUBLISH_CHANNEL (v1.32.0)
     """
+    channel = (channel if channel is not None else PUBLISH_CHANNEL).strip().lower()
+    allow_x  = channel_allows("x", channel)
+    allow_tg = channel_allows("tg", channel)
+    x_duplicate = False   # Step 4 X 중복 감지 여부 (v1.32.0)
+
     logger.info(f"{'='*50}")
-    logger.info(f"[run_view] v{VERSION} 시작 — mode={mode} | DRY_RUN={DRY_RUN}")
+    logger.info(
+        f"[run_view] v{VERSION} 시작 — mode={mode} | channel={channel} | DRY_RUN={DRY_RUN}"
+    )
     logger.info(f"{'='*50}")
 
+    if channel not in PUBLISH_CHANNEL_ALLOWED:
+        logger.error(
+            f"[run_view] 허용되지 않은 channel={channel!r} "
+            f"(허용: {', '.join(PUBLISH_CHANNEL_ALLOWED)}) — 전 채널 발행 차단"
+        )
+        return {"success": False, "reason": "invalid_channel", "channel": channel}
+
     # ── Step 0: DLQ 재처리 (B-17) ────────────────────────────
-    try:
-        from core.dlq import process_queue, get_queue_size
-        q_size = get_queue_size()
-        if q_size > 0:
-            logger.info(f"[Step 0] DLQ 재처리 시작: {q_size}건")
-            dlq_result = process_queue()
-            logger.info(f"[Step 0] DLQ 완료: {dlq_result}")
-        else:
-            logger.info("[Step 0] DLQ 비어있음 — 스킵")
-    except Exception as e:
-        logger.warning(f"[Step 0] DLQ 처리 실패 (영향 없음): {e}")
+    #   v1.32.0: DLQ 는 X·TG 재발행이므로 channel=all 에서만 처리한다 (x/face 는 큐 보존).
+    if channel == "all":
+        try:
+            from core.dlq import process_queue, get_queue_size
+            q_size = get_queue_size()
+            if q_size > 0:
+                logger.info(f"[Step 0] DLQ 재처리 시작: {q_size}건")
+                dlq_result = process_queue()
+                logger.info(f"[Step 0] DLQ 완료: {dlq_result}")
+            else:
+                logger.info("[Step 0] DLQ 비어있음 — 스킵")
+        except Exception as e:
+            logger.warning(f"[Step 0] DLQ 처리 실패 (영향 없음): {e}")
+    else:
+        logger.info(f"[Step 0] channel={channel} — DLQ 재처리 생략 (큐 보존)")
 
     # ── Step 1: core_data.json 로드 ────────────────────────────
     logger.info("[Step 1] core_data.json 로드")
@@ -240,20 +391,32 @@ def run(mode: str = "tweet", session: str = None) -> dict:
     #   상시 차단되므로 레짐 기준 검사만 우회한다. 본문 해시 검사는 유지.
     _skip_regime = (session_type == "narrative")
 
-    if is_duplicate(
+    # v1.32.0: history.json 은 X 발행 이력이므로 X 가 포함된 채널에서만 검사한다.
+    #   channel=face 는 Step 6-FB 에서 core/fb_history 로 별도 판정한다.
+    if not allow_x:
+        logger.info(f"[Step 4] channel={channel} — X 중복검사 생략 (FB 이력은 Step 6-FB에서 판정)")
+    elif is_duplicate(
         primary_text,
         data,
         skip_regime_hash=_skip_regime,
         session=session_type,
     ):
-        logger.warning("[run_view] 중복 감지 — 발행 차단")
-        return {
-            "success":      False,
-            "reason":       "duplicate_detected",
-            "text_preview": primary_text[:80],
-        }
-
-    logger.info("[Step 4] 중복 없음 — 발행 진행")
+        # v1.32.0: X·TG 는 기존과 동일하게 차단(발행 0건, success=False, reason 동일).
+        #   단, Facebook 은 자체 이력(fb_history)으로 판정하므로 X 중복이 FB 를 막지 않도록
+        #   X·TG 게이트만 닫고 이후 단계(이미지 생성 → Step 6-FB)를 계속 진행한다.
+        if not _fb_applicable(session_type, channel)[0]:
+            # FB 대상이 아니면 기존(v1.31.0)과 완전히 동일하게 즉시 종료
+            logger.warning("[run_view] 중복 감지 — 발행 차단")
+            return {
+                "success":      False,
+                "reason":       "duplicate_detected",
+                "text_preview": primary_text[:80],
+            }
+        logger.warning("[run_view] 중복 감지 — X·TG 발행 차단 (FB 는 자체 이력으로 판정)")
+        x_duplicate = True
+        allow_x = allow_tg = False
+    else:
+        logger.info("[Step 4] 중복 없음 — 발행 진행")
 
     # ── Step 5: 발행 직전 최종 데이터 검증 로그 ───────────────
     logger.info("[Step 5] 발행 직전 데이터 확인")
@@ -268,7 +431,12 @@ def run(mode: str = "tweet", session: str = None) -> dict:
             # N-3: narrative는 고정 레이아웃 1종 대신 후보 로테이션 사용.
             #   'none'이 뽑히면 의도적으로 이미지 없이 텍스트만 발행한다.
             from publishers.narrative_visual import select_visual
-            image_path, visual_variant = select_visual(data)
+            if allow_x:
+                image_path, visual_variant = select_visual(data)
+            else:
+                # v1.32.0: X 미발행 경로(face / X 중복)는 X 이미지 로테이션 이력을
+                #   바꾸지 않도록 이력 파일을 원상 복구한다.
+                image_path, visual_variant = _select_visual_preserving_history(select_visual, data)
             logger.info(f"[Step 5.5] narrative visual variant={visual_variant}")
         else:
             from publishers.image_generator import generate_image
@@ -289,39 +457,45 @@ def run(mode: str = "tweet", session: str = None) -> dict:
     #   스레드(len>1) + 이미지 없음 → 텍스트 스레드
     #   단일 트윗 + 이미지 있음   → 이미지 트윗 (기존 동일)
     #   단일 트윗 + 이미지 없음   → 텍스트 트윗
-    logger.info(f"[Step 6] X 발행 (mode={mode}, posts={len(posts)}트윗)")
-    from publishers.x_publisher import publish_tweet, publish_tweet_with_image, publish_thread
+    if allow_x:
+        logger.info(f"[Step 6] X 발행 (mode={mode}, posts={len(posts)}트윗)")
+        from publishers.x_publisher import publish_tweet, publish_tweet_with_image, publish_thread
 
-    if mode == "thread" or len(posts) > 1:
-        if image_path:
-            # 이미지 + 스레드 조합:
-            # 첫 트윗(후킹)에 이미지 첨부 → 나머지(본문+CTA)를 reply 스레드로 연결
-            first_result = publish_tweet_with_image(posts[0], image_path)
-            first_id     = first_result.get("tweet_id")
-            if first_result.get("success") and len(posts) > 1 and first_id:
-                rest_result = publish_thread(posts[1:], reply_to=str(first_id))
-                pub_result  = {
-                    "success":   rest_result.get("success", False),
-                    "tweet_id":  first_id,
-                    "tweet_ids": [first_id] + rest_result.get("tweet_ids", []),
-                }
-                logger.info(
-                    f"[Step 6] 이미지+스레드 발행 완료: "
-                    f"첫트윗={first_id} | 전체={len(posts)}트윗"
-                )
+        if mode == "thread" or len(posts) > 1:
+            if image_path:
+                # 이미지 + 스레드 조합:
+                # 첫 트윗(후킹)에 이미지 첨부 → 나머지(본문+CTA)를 reply 스레드로 연결
+                first_result = publish_tweet_with_image(posts[0], image_path)
+                first_id     = first_result.get("tweet_id")
+                if first_result.get("success") and len(posts) > 1 and first_id:
+                    rest_result = publish_thread(posts[1:], reply_to=str(first_id))
+                    pub_result  = {
+                        "success":   rest_result.get("success", False),
+                        "tweet_id":  first_id,
+                        "tweet_ids": [first_id] + rest_result.get("tweet_ids", []),
+                    }
+                    logger.info(
+                        f"[Step 6] 이미지+스레드 발행 완료: "
+                        f"첫트윗={first_id} | 전체={len(posts)}트윗"
+                    )
+                else:
+                    pub_result = first_result
             else:
-                pub_result = first_result
+                pub_result = publish_thread(posts)
+        elif image_path and image_tweet_text:
+            pub_result = publish_tweet_with_image(image_tweet_text, image_path)
         else:
-            pub_result = publish_thread(posts)
-    elif image_path and image_tweet_text:
-        pub_result = publish_tweet_with_image(image_tweet_text, image_path)
+            pub_result = publish_tweet(primary_text)
+
     else:
-        pub_result = publish_tweet(primary_text)
+        _why = "x_duplicate" if x_duplicate else "x_not_selected"
+        logger.info(f"[Step 6] channel={channel} — X 발행 생략 ({_why})")
+        pub_result = {"success": False, "skipped": True, "reason": _why}
 
     tweet_id = pub_result.get("tweet_id") or pub_result.get("tweet_ids", [""])[0]
 
     # ── Step 6-YT: C-16 유튜버 요약 트윗 (morning만) ──────────
-    if session_type == "morning":
+    if session_type == "morning" and allow_x:
         try:
             streamer = data.get("streamer_consensus_v2") or data.get("streamer_consensus", {})
             streamer_tweet = streamer.get("tweet", "")
@@ -364,178 +538,203 @@ def run(mode: str = "tweet", session: str = None) -> dict:
         except Exception as e:
             logger.warning(f"[Step 6-YT] 유튜버 트윗 발행 실패 (영향 없음): {e}")
 
-    # ── Step 6-TG: 텔레그램 발행 (전체 세션) ─────────────────────
-    logger.info(f"[Step 6-TG] 텔레그램 발행 시작 (session={session_type})")
-    try:
-        from publishers.telegram_publisher import (
-            send_message, send_photo, format_free_signal, send_document
-        )
-
-        if session_type == "weekly" or (session_type == "close" and mode == "thread"):
-            from core.weekly_tracker import get_weekly_summary, get_ai_scorecard
-            from publishers.weekly_formatter import (
-                format_weekly_telegram,
-                format_ai_scorecard_tweet,
-                format_ai_scorecard_telegram,
+    # v1.32.0: Step 6-TG / 6-ML 은 TG 가 포함된 채널(all)에서만 수행한다.
+    if allow_tg:
+        # ── Step 6-TG: 텔레그램 발행 (전체 세션) ─────────────────────
+        logger.info(f"[Step 6-TG] 텔레그램 발행 시작 (session={session_type})")
+        try:
+            from publishers.telegram_publisher import (
+                send_message, send_photo, format_free_signal, send_document
             )
-            summary   = get_weekly_summary()
-            tg_text   = format_weekly_telegram(summary)
-            send_message(tg_text, channel="free")
 
-            try:
-                from publishers.x_publisher import publish_tweet
-                scorecard = get_ai_scorecard(summary)
-                if scorecard.get("total", 0) > 0:
-                    sc_tweet = format_ai_scorecard_tweet(scorecard, summary.get("week",""))
-                    sc_tg    = format_ai_scorecard_telegram(scorecard, summary.get("week",""))
-                    publish_tweet(sc_tweet)
-                    send_message(sc_tg, channel="free")
-                    logger.info("[Step 6-TG] AI 성적표 발행 완료")
-            except Exception as e:
-                logger.warning(f"[Step 6-TG] AI 성적표 발행 실패 (영향 없음): {e}")
+            if session_type == "weekly" or (session_type == "close" and mode == "thread"):
+                from core.weekly_tracker import get_weekly_summary, get_ai_scorecard
+                from publishers.weekly_formatter import (
+                    format_weekly_telegram,
+                    format_ai_scorecard_tweet,
+                    format_ai_scorecard_telegram,
+                )
+                summary   = get_weekly_summary()
+                tg_text   = format_weekly_telegram(summary)
+                send_message(tg_text, channel="free")
 
-            try:
-                from publishers.weekly_pdf_builder import build_weekly_pdf
-                pdf_path    = build_weekly_pdf(summary)
-                pdf_caption = f"📄 Investment OS Weekly Report\n{summary.get('week','')}"
-                send_document(pdf_path, caption=pdf_caption, channel="paid")
-                logger.info(f"[Step 6-TG] 주간 PDF 유료 채널 발송 완료: {pdf_path}")
-            except Exception as e:
-                logger.warning(f"[Step 6-TG] 주간 PDF 생성/발송 실패 (영향 없음): {e}")
+                try:
+                    from publishers.x_publisher import publish_tweet
+                    scorecard = get_ai_scorecard(summary)
+                    if scorecard.get("total", 0) > 0:
+                        sc_tweet = format_ai_scorecard_tweet(scorecard, summary.get("week",""))
+                        sc_tg    = format_ai_scorecard_telegram(scorecard, summary.get("week",""))
+                        publish_tweet(sc_tweet)
+                        send_message(sc_tg, channel="free")
+                        logger.info("[Step 6-TG] AI 성적표 발행 완료")
+                except Exception as e:
+                    logger.warning(f"[Step 6-TG] AI 성적표 발행 실패 (영향 없음): {e}")
 
-        elif session_type == "full":
-            free_text = format_free_signal(data, session=session_type)
-            send_message(free_text, channel="free")
-            if image_path:
-                send_photo(image_path, caption=free_text, channel="paid")
-            else:
-                logger.warning("[Step 6-TG] 이미지 없음 — 유료 채널 텍스트만 발행")
-                send_message(free_text, channel="paid")
-            from publishers.paid_report_formatter import format_paid_report, generate_ai_etf_rationale
-            paid_text = format_paid_report(data)
-            send_message(paid_text, channel="paid")
+                try:
+                    from publishers.weekly_pdf_builder import build_weekly_pdf
+                    pdf_path    = build_weekly_pdf(summary)
+                    pdf_caption = f"📄 Investment OS Weekly Report\n{summary.get('week','')}"
+                    send_document(pdf_path, caption=pdf_caption, channel="paid")
+                    logger.info(f"[Step 6-TG] 주간 PDF 유료 채널 발송 완료: {pdf_path}")
+                except Exception as e:
+                    logger.warning(f"[Step 6-TG] 주간 PDF 생성/발송 실패 (영향 없음): {e}")
 
-            try:
-                ai_rationale = generate_ai_etf_rationale(data)
-                if ai_rationale:
-                    send_message(f"💡 <b>AI 투자 근거 분석</b>\n\n{ai_rationale}", channel="paid")
-                    logger.info("[Step 6-TG] C-3 AI ETF 근거 유료 발행 완료")
-            except Exception as e:
-                logger.warning(f"[Step 6-TG] C-3 AI ETF 근거 실패 (무시): {e}")
-
-            # C-13: Gemini Vision 차트 분석 — 현재 비활성
-            # if image_path:
-            #     try:
-            #         from engines.chart_analyzer import analyze_chart
-            #         chart = analyze_chart(image_path, data)
-            #         if chart.get("success"):
-            #             send_message(chart["telegram"], channel="paid")
-            #     except Exception as ve:
-            #         logger.warning(f"[Step 6-TG] C-13 차트 분석 실패: {ve}")
-
-            # B-21B: 카드뉴스 3장 — 현재 비활성
-            # try:
-            #     from comic.card_news_generator import generate_cards
-            #     card_paths = generate_cards(data)
-            #     if card_paths:
-            #         for cp in card_paths:
-            #             send_photo(cp, caption="", channel="paid")
-            # except Exception as ce:
-            #     logger.warning(f"[Step 6-TG] B-21B 카드뉴스 실패: {ce}")
-
-        elif session_type == "narrative":
-            # v1.31.0 (N-1): X 발행은 Step 3+6에서 이미 1스레드로 처리했다.
-            #   기존에 여기서 수행하던 publish_tweet / publish_tweet_with_image
-            #   2건은 Step 6과 합쳐 총 3건·본문 중복 2건을 만들던 원인(D-1)이라
-            #   제거했다. 이 분기는 텔레그램 발행만 담당한다.
-            #   generate_narrative()는 Step 3에서 이미 호출했으므로 그 결과를
-            #   재사용한다 — Gemini 호출 횟수는 1회로 유지된다.
-            try:
-                from engines.narrative_engine import format_narrative_telegram
-
-                narrative_text = narr_result.get("narrative", "")
-                source         = narr_result.get("source", "fallback")
-
-                if narrative_text:
-                    tg_text = format_narrative_telegram(narrative_text, data)
-                    send_message(tg_text, channel="free")
-                    send_message(tg_text, channel="paid")
-                    logger.info(
-                        f"[Step 6-TG] AI 내러티브 TG 발행 완료 "
-                        f"(source={source}, visual={visual_variant or '-'})"
-                    )
+            elif session_type == "full":
+                free_text = format_free_signal(data, session=session_type)
+                send_message(free_text, channel="free")
+                if image_path:
+                    send_photo(image_path, caption=free_text, channel="paid")
                 else:
-                    logger.warning("[Step 6-TG] AI 내러티브 비어있음 — TG 스킵")
-            except Exception as e:
-                logger.warning(f"[Step 6-TG] AI 내러티브 TG 발행 실패 (영향 없음): {e}")
-
-            # C-5: 오늘의 시장 역사 — 현재 비활성
-            # try:
-            #     from engines.history_engine import generate_history_today
-            #     history = generate_history_today()
-            #     if history.get("success"):
-            #         from publishers.x_publisher import publish_tweet as _pub_hist
-            #         _pub_hist(history["tweet"])
-            #         send_message(history["telegram"], channel="free")
-            # except Exception as he:
-            #     logger.warning(f"[Step 6-TG] C-5 시장 역사 실패: {he}")
-
-        else:
-            # morning / intraday / close
-            free_text = format_free_signal(data, session=session_type)
-            send_message(free_text, channel="free")
-
-            if session_type == "morning":
-                earnings = {}
-                try:
-                    from engines.earnings_checker import get_today_earnings
-                    earnings = get_today_earnings()
-                    if earnings.get("success") and earnings.get("tg_line"):
-                        send_message(earnings["tg_line"], channel="free")
-                        logger.info(f"[Step 6-TG] D-3 실적 캘린더: {len(earnings.get('earnings',[]))}개")
-                except Exception as ee:
-                    logger.warning(f"[Step 6-TG] D-3 실적 캘린더 실패 (무시): {ee}")
+                    logger.warning("[Step 6-TG] 이미지 없음 — 유료 채널 텍스트만 발행")
+                    send_message(free_text, channel="paid")
+                from publishers.paid_report_formatter import format_paid_report, generate_ai_etf_rationale
+                paid_text = format_paid_report(data)
+                send_message(paid_text, channel="paid")
 
                 try:
-                    big_tech = earnings.get("big_tech", [])
-                    if big_tech:
-                        from engines.stock_analyzer import analyze_big_tech_earnings
-                        stock_results = analyze_big_tech_earnings(big_tech)
-                        for sr in stock_results:
-                            if sr.get("success") and sr.get("tweet"):
-                                from publishers.x_publisher import publish_tweet as _pub_stock
-                                _pub_stock(sr["tweet"])
-                                send_message(sr.get("tg_text", sr["tweet"]), channel="free")
-                                logger.info(f"[Step 6-TG] C-17 빅테크 실적: {sr['ticker']}")
-                except Exception as se:
-                    logger.warning(f"[Step 6-TG] C-17 빅테크 실적 실패 (무시): {se}")
+                    ai_rationale = generate_ai_etf_rationale(data)
+                    if ai_rationale:
+                        send_message(f"💡 <b>AI 투자 근거 분석</b>\n\n{ai_rationale}", channel="paid")
+                        logger.info("[Step 6-TG] C-3 AI ETF 근거 유료 발행 완료")
+                except Exception as e:
+                    logger.warning(f"[Step 6-TG] C-3 AI ETF 근거 실패 (무시): {e}")
 
-        logger.info("[Step 6-TG] 텔레그램 발행 완료")
-    except Exception as e:
-        logger.warning(f"[Step 6-TG] 텔레그램 발행 예외 (X 발행 영향 없음): {e}")
+                # C-13: Gemini Vision 차트 분석 — 현재 비활성
+                # if image_path:
+                #     try:
+                #         from engines.chart_analyzer import analyze_chart
+                #         chart = analyze_chart(image_path, data)
+                #         if chart.get("success"):
+                #             send_message(chart["telegram"], channel="paid")
+                #     except Exception as ve:
+                #         logger.warning(f"[Step 6-TG] C-13 차트 분석 실패: {ve}")
 
-    # ── Step 6-ML: 다국어 발행 (C-11) ────────────────────────
-    try:
-        from publishers.translator import publish_multilingual, MULTILINGUAL_ENABLED
-        if MULTILINGUAL_ENABLED and session_type not in ("narrative", "weekly"):
-            _ml_text = format_free_signal(data, session=session_type)
-            if _ml_text:
-                ml_result = publish_multilingual(_ml_text)
-                _langs = [l for l, v in ml_result.items() if v]
-                if _langs:
-                    logger.info(f"[Step 6-ML] 다국어 발행 완료: {', '.join(_langs)}")
-    except Exception as me:
-        logger.warning(f"[Step 6-ML] 다국어 발행 실패 (영향 없음): {me}")
+                # B-21B: 카드뉴스 3장 — 현재 비활성
+                # try:
+                #     from comic.card_news_generator import generate_cards
+                #     card_paths = generate_cards(data)
+                #     if card_paths:
+                #         for cp in card_paths:
+                #             send_photo(cp, caption="", channel="paid")
+                # except Exception as ce:
+                #     logger.warning(f"[Step 6-TG] B-21B 카드뉴스 실패: {ce}")
+
+            elif session_type == "narrative":
+                # v1.31.0 (N-1): X 발행은 Step 3+6에서 이미 1스레드로 처리했다.
+                #   기존에 여기서 수행하던 publish_tweet / publish_tweet_with_image
+                #   2건은 Step 6과 합쳐 총 3건·본문 중복 2건을 만들던 원인(D-1)이라
+                #   제거했다. 이 분기는 텔레그램 발행만 담당한다.
+                #   generate_narrative()는 Step 3에서 이미 호출했으므로 그 결과를
+                #   재사용한다 — Gemini 호출 횟수는 1회로 유지된다.
+                try:
+                    from engines.narrative_engine import format_narrative_telegram
+
+                    narrative_text = narr_result.get("narrative", "")
+                    source         = narr_result.get("source", "fallback")
+
+                    if narrative_text:
+                        tg_text = format_narrative_telegram(narrative_text, data)
+                        send_message(tg_text, channel="free")
+                        send_message(tg_text, channel="paid")
+                        logger.info(
+                            f"[Step 6-TG] AI 내러티브 TG 발행 완료 "
+                            f"(source={source}, visual={visual_variant or '-'})"
+                        )
+                    else:
+                        logger.warning("[Step 6-TG] AI 내러티브 비어있음 — TG 스킵")
+                except Exception as e:
+                    logger.warning(f"[Step 6-TG] AI 내러티브 TG 발행 실패 (영향 없음): {e}")
+
+                # C-5: 오늘의 시장 역사 — 현재 비활성
+                # try:
+                #     from engines.history_engine import generate_history_today
+                #     history = generate_history_today()
+                #     if history.get("success"):
+                #         from publishers.x_publisher import publish_tweet as _pub_hist
+                #         _pub_hist(history["tweet"])
+                #         send_message(history["telegram"], channel="free")
+                # except Exception as he:
+                #     logger.warning(f"[Step 6-TG] C-5 시장 역사 실패: {he}")
+
+            else:
+                # morning / intraday / close
+                free_text = format_free_signal(data, session=session_type)
+                send_message(free_text, channel="free")
+
+                if session_type == "morning":
+                    earnings = {}
+                    try:
+                        from engines.earnings_checker import get_today_earnings
+                        earnings = get_today_earnings()
+                        if earnings.get("success") and earnings.get("tg_line"):
+                            send_message(earnings["tg_line"], channel="free")
+                            logger.info(f"[Step 6-TG] D-3 실적 캘린더: {len(earnings.get('earnings',[]))}개")
+                    except Exception as ee:
+                        logger.warning(f"[Step 6-TG] D-3 실적 캘린더 실패 (무시): {ee}")
+
+                    try:
+                        big_tech = earnings.get("big_tech", [])
+                        if big_tech:
+                            from engines.stock_analyzer import analyze_big_tech_earnings
+                            stock_results = analyze_big_tech_earnings(big_tech)
+                            for sr in stock_results:
+                                if sr.get("success") and sr.get("tweet"):
+                                    from publishers.x_publisher import publish_tweet as _pub_stock
+                                    _pub_stock(sr["tweet"])
+                                    send_message(sr.get("tg_text", sr["tweet"]), channel="free")
+                                    logger.info(f"[Step 6-TG] C-17 빅테크 실적: {sr['ticker']}")
+                    except Exception as se:
+                        logger.warning(f"[Step 6-TG] C-17 빅테크 실적 실패 (무시): {se}")
+
+            logger.info("[Step 6-TG] 텔레그램 발행 완료")
+        except Exception as e:
+            logger.warning(f"[Step 6-TG] 텔레그램 발행 예외 (X 발행 영향 없음): {e}")
+
+        # ── Step 6-ML: 다국어 발행 (C-11) ────────────────────────
+        try:
+            from publishers.translator import publish_multilingual, MULTILINGUAL_ENABLED
+            if MULTILINGUAL_ENABLED and session_type not in ("narrative", "weekly"):
+                _ml_text = format_free_signal(data, session=session_type)
+                if _ml_text:
+                    ml_result = publish_multilingual(_ml_text)
+                    _langs = [l for l, v in ml_result.items() if v]
+                    if _langs:
+                        logger.info(f"[Step 6-ML] 다국어 발행 완료: {', '.join(_langs)}")
+        except Exception as me:
+            logger.warning(f"[Step 6-ML] 다국어 발행 실패 (영향 없음): {me}")
+    else:
+        logger.info(f"[Step 6-TG] channel={channel} — 텔레그램·다국어 발행 생략")
+        # channel=x: TG 블록 내부의 C-17 빅테크 실적 X 트윗만 별도 수행
+        if channel == "x" and session_type == "morning":
+            _publish_big_tech_x_only()
+
+    # ── Step 6-FB: Facebook 페이지 게시 (v1.32.0, FB-1) ─────────
+    #   X·TG 이후 독립 실행. 실패·예외는 X·TG 결과와 종료코드에 영향 없음(all/x 기준).
+    fb_result = _publish_facebook(session_type, data, narr_result, image_path, channel)
+    logger.info(
+        f"[Step 6-FB] status={fb_result.get('status')} "
+        f"kind={fb_result.get('kind', '') or '-'} "
+        f"post_id={fb_result.get('post_id', '') or '-'} "
+        f"reason={fb_result.get('reason', '') or '-'}"
+    )
 
     # ── Step 7: 이력 기록 ──────────────────────────────────────
-    if pub_result.get("success") and not DRY_RUN:
+    if allow_x and pub_result.get("success") and not DRY_RUN:
         logger.info("[Step 7] 발행 이력 기록")
         record_published(
             primary_text, data, tweet_id=str(tweet_id), session=session_type
         )
 
+    # v1.32.0: success 기준 — all/x = X 발행 결과(기존 동일), face = FB 게시 결과
+    if x_duplicate:
+        overall_success = False   # 기존과 동일: 중복 → success=False (rc=2)
+    elif channel == "face":
+        overall_success = fb_result.get("status") in ("ok", "dry_run")
+    else:
+        overall_success = pub_result.get("success", False)
+
     result = {
-        "success":      pub_result.get("success", False),
+        "success":      overall_success,
         "mode":         mode,
         "tweet_id":     tweet_id,
         "dry_run":      DRY_RUN,
@@ -544,7 +743,17 @@ def run(mode: str = "tweet", session: str = None) -> dict:
         "text_preview": primary_text[:80],
         "posts_count":  len(posts),
         "timestamp":    datetime.now(timezone.utc).isoformat(),
+        # v1.32.0 (FB-1)
+        "publish_channel": channel,
+        "fb_status":    fb_result.get("status", ""),
+        "fb_post_id":   fb_result.get("post_id", ""),
+        "fb_kind":      fb_result.get("kind", ""),
+        "fb_reason":    fb_result.get("reason", ""),
     }
+    if x_duplicate:
+        result["reason"] = "duplicate_detected"
+    elif channel == "face" and not overall_success:
+        result["reason"] = f"fb_{fb_result.get('status', 'failed')}:{fb_result.get('reason', '')}"
 
     # v1.31.0: narrative 세션 진단 정보
     if session_type == "narrative":
@@ -554,8 +763,8 @@ def run(mode: str = "tweet", session: str = None) -> dict:
 
     logger.info(f"{'='*50}")
     logger.info(
-        f"[run_view] 완료 — success={result['success']} | "
-        f"id={tweet_id} | posts={len(posts)}"
+        f"[run_view] 완료 — success={result['success']} | channel={channel} | "
+        f"id={tweet_id} | posts={len(posts)} | fb={result['fb_status']}"
     )
     logger.info(f"{'='*50}")
 

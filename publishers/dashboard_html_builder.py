@@ -2,6 +2,7 @@
 publishers/dashboard_html_builder.py
 ======================================
 HTML/Playwright 기반 대시보드 이미지 생성기
+v3.2.1 (2026-10-05, F1) — F&G 패널 제목에 출처 표기 (Crypto F&G / Stock F&G (CNN))
 v3.1.0 — 미사용 데이터 활용 (3순위): full 세션 대시보드 신규 지표 추가
   - Crypto 섹션: BTC Basis State + BTC 소셜 감성(LunarCrush) 표시
   - FRED Macro 섹션: Initial Claims + Inflation Exp 5Y 행 추가
@@ -23,7 +24,7 @@ from typing import Optional
 
 logger = logging.getLogger(__name__)
 
-VERSION = "v3.2.0"
+VERSION = "v3.2.1"
 logger.info(f"[HtmlDash] {VERSION} 로드")
 
 REGIME_COLOR = {
@@ -90,6 +91,9 @@ def _build_full_html(data: dict, dt_utc: datetime, session_label: str = "Full <e
     fg_chg   = fg.get("change", 0) or 0
     fg_emoji = fg.get("emoji", "")
     fg_c     = _fg_color(fg_value)
+    # F1 (2026-10-05): 패널 제목에 F&G 출처 표기 (코인 alternative.me / 주식 CNN)
+    from publishers.fg_display import panel_title
+    fg_title = panel_title(data)
 
     btc_usd = crypto.get("btc_usd", 0) or 0
     btc_chg = crypto.get("btc_change_pct", 0) or 0
@@ -397,7 +401,7 @@ body{{width:1080px;overflow:hidden;background:#070b11;font-family:'Barlow',sans-
       <div class="fi"><div class="fl">USD/JPY</div><div class="fv">{usdjpy:.2f}</div></div>
     </div>
   </div>
-  <div class="s"><div class="sl">Fear & Greed</div>
+  <div class="s"><div class="sl">{fg_title}</div>
     <div class="fg"><div class="fgv" style="color:{fg_c}">{fg_value}</div><div><div class="fgl" style="color:{fg_c}">{fg_emoji} {fg_label}</div><div class="fgs">prev {fg_prev} · chg {fg_chg:+d}</div></div></div>
   </div>
   <div class="s"><div class="sl">FRED Macro</div>
@@ -611,6 +615,8 @@ def _build_compact_html(data: dict, dt_utc: datetime, session: str) -> str:
         fg_emoji = fg.get("emoji", "")
         fg_chg   = fg.get("change", 0) or 0
         fg_c     = _fg_color(fg_value)
+        from publishers.fg_display import panel_title  # F1 (2026-10-05)
+        fg_title = panel_title(data)
         body = f"""
 <div class="col">
   <div class="s">{_snap_block()}</div>
@@ -619,7 +625,7 @@ def _build_compact_html(data: dict, dt_utc: datetime, session: str) -> str:
     <div class="mr" style="margin-top:2px"><div class="mn">Risk</div><div class="mv" style="color:{rkc}">{risk_level}</div></div>
   </div>
   <div class="s"><div class="sl">Market Score</div>{_score_block()}</div>
-  <div class="s"><div class="sl">Fear & Greed</div>
+  <div class="s"><div class="sl">{fg_title}</div>
     <div class="fg"><div class="fgv" style="color:{fg_c}">{fg_value}</div><div><div class="fgl" style="color:{fg_c}">{fg_emoji} {fg_label}</div><div class="fgs">chg {fg_chg:+d}</div></div></div>
   </div>
 </div>

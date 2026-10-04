@@ -3,6 +3,9 @@ publishers/x_formatter.py
 JSON Core Data → X 트윗 텍스트 변환.
 출력 형식은 project-summary.html 기준.
 
+v1.5.2 (2026-10-05, F1): F&G 표기 정정 — format_image_tweet morning 줄과 legacy AI 프롬프트에서
+  주식(CNN)·코인(alternative.me) F&G 를 출처와 함께 구분 (publishers/fg_display.py)
+
 v1.5.0 (2026-05-06): morning 세션 AI 톤 보정 P0 개선 (Q4.c — morning 한정)
   - core/tone_policy.py 연동 (페르소나+톤+규칙+예시 4요소 프롬프트)
   - core/ai_output_validator.py 연동 (7종 통합 검증 + 어색함 휴리스틱)
@@ -47,7 +50,7 @@ from config.settings import X_MAX_TWEET_LENGTH, X_HASHTAGS  # noqa: F401
 
 logger = logging.getLogger(__name__)
 
-VERSION = "1.5.1"
+VERSION = "1.5.2"
 logger.info(f"[XFormatter] v{VERSION} 로드")
 
 
@@ -436,16 +439,11 @@ def format_image_tweet(data: dict, session: str = "morning") -> str:
     line4 = summary
 
     # Fear & Greed (morning 세션만 추가)
+    # F1 (2026-10-05): 주식(CNN)·코인(alternative.me) F&G 출처 구분 표기
     fg_line = ""
     if session == "morning":
-        fg = data.get("fear_greed", {})
-        if fg and fg.get("value"):
-            fg_emoji = fg.get("emoji", "😐")
-            fg_val   = fg.get("value", 0)
-            fg_lbl   = fg.get("label", "")
-            fg_chg   = fg.get("change", 0)
-            chg_str  = f" ({fg_chg:+d})" if fg_chg else ""
-            fg_line  = f"{fg_emoji} F&G: {fg_val}/100 {fg_lbl}{chg_str}"
+        from publishers.fg_display import compact_line
+        fg_line = compact_line(data)
 
     # ── v1.4.0: Crypto Basis · BTC 소셜감성 · PCR 직접 표시 ──────
     signals_line = ""
@@ -697,7 +695,6 @@ def _generate_ai_tweet_legacy_v140(data: dict, session_label: str = "Market Snap
         regime_info = data.get("market_regime", {})
         trading_info = data.get("trading_signal", {})
         alloc = data.get("etf_allocation", {}).get("allocation", data.get("etf_allocation", {}))
-        fg = data.get("fear_greed", {})
         signals_data = data.get("signals", {})
 
         sp500 = snap.get("sp500", 0.0)
@@ -707,8 +704,9 @@ def _generate_ai_tweet_legacy_v140(data: dict, session_label: str = "Market Snap
         regime = regime_info.get("market_regime", "Unknown")
         risk = regime_info.get("market_risk_level", "MEDIUM")
         signal = trading_info.get("trading_signal", "HOLD")
-        fg_val = fg.get("value", 50) if fg else 50
-        fg_label = fg.get("label", "") if fg else ""
+        # F1 (2026-10-05): F&G 출처 구분 (주식 CNN / 코인 alternative.me)
+        from publishers.fg_display import prompt_lines as _fg_lines
+        _fg_prompt_lines = _fg_lines(data)
 
         # v1.3.0: 미사용 신호 추출
         crypto_basis_state = signals_data.get("crypto_basis_state", "") or ""
@@ -731,8 +729,8 @@ def _generate_ai_tweet_legacy_v140(data: dict, session_label: str = "Market Snap
             f"- 세션: {session_label}\n"
             f"- SPY: {sp500:+.2f}%, VIX: {vix:.1f}, WTI: ${oil:.1f}, US10Y: {us10y:.2f}%\n"
             f"- 레짐: {regime}, 리스크: {risk}, 시그널: {signal}\n"
-            f"- F&G: {fg_val} ({fg_label})\n"
-            f"- Top ETF: {', '.join(top3)}\n"
+            + "".join(f"{_ln}\n" for _ln in _fg_prompt_lines)
+            + f"- Top ETF: {', '.join(top3)}\n"
             + (f"- BTC Basis: {crypto_basis_state}\n" if crypto_basis_state and crypto_basis_state not in ("Unknown", "") else "")
             + (f"- PCR: {pcr_state}\n" if pcr_state and pcr_state not in ("Unknown", "—") else "")
             + f"조건:\n"

@@ -3,6 +3,8 @@ publishers/telegram_publisher.py
 ==================================
 Telegram Bot API 발행 모듈 — 듀얼 채널 (무료 / 유료)
 
+v1.1.0 (2026-10-05, F1): morning F&G 표기 정정 — 주식(CNN)·코인(alternative.me) 분리 표기
+
 무료 채널: 시그널 텍스트 요약
 유료 채널: 풀버전 대시보드 이미지 (PNG)
 """
@@ -14,6 +16,8 @@ import requests
 from config.settings import DRY_RUN
 
 logger = logging.getLogger(__name__)
+
+VERSION = "1.1.0"
 
 # ── 환경변수 ────────────────────────────────────────────────
 BOT_TOKEN    = os.getenv("TELEGRAM_BOT_TOKEN", "")
@@ -291,12 +295,11 @@ def format_free_signal(data: dict, session: str = "morning") -> str:
 
     # ── Morning Brief — 전략 중심 + 뉴스 요약 + Fear & Greed ──
     if session == "morning":
-        # Fear & Greed 추출
-        fg = data.get("fear_greed", {})
-        fg_val    = fg.get("value")
-        fg_label  = fg.get("label", "")
-        fg_emoji  = fg.get("emoji", "😐")
-        fg_change = fg.get("change", 0)
+        # Fear & Greed — F1(2026-10-05): data["cnn_fg"](주식) / data["fear_greed"](코인, source 기준) 구분
+        from publishers.fg_display import crypto_fg, legacy_fg, stock_fg
+        fg_stock  = stock_fg(data)
+        fg_crypto = crypto_fg(data)
+        fg_legacy = legacy_fg(data)
 
         # BTC/ETH 추출
         crypto   = data.get("crypto", {})
@@ -348,12 +351,28 @@ def format_free_signal(data: dict, session: str = "morning") -> str:
                 f"₿ BTC: <b>${btc:,.0f}</b>  {btc_sign}{abs(btc_chg):.1f}%",
             ]
 
-        # Fear & Greed 추가
-        if fg_val is not None:
-            change_str = f"({'▲' if fg_change > 0 else '▼'}{abs(fg_change)}pt)" if fg_change != 0 else ""
+        # Fear & Greed 추가 — F1: 주식(CNN)·코인 지수를 출처와 함께 분리 표기
+        def _chg(v: int) -> str:
+            return f"({'▲' if v > 0 else '▼'}{abs(v)}pt)" if v else ""
+
+        if fg_stock or fg_crypto:
+            lines.append("")
+            if fg_stock:
+                lines.append(
+                    f"{fg_stock['emoji']} 주식 심리(CNN F&G): "
+                    f"<b>{fg_stock['value']}/100 {fg_stock['label']}</b>"
+                )
+            if fg_crypto:
+                lines.append(
+                    f"₿ 코인 심리(Crypto F&G): <b>{fg_crypto['value']}/100 {fg_crypto['label']}</b> "
+                    f"{_chg(fg_crypto['change'])}".rstrip()
+                )
+        elif fg_legacy:
+            # source 없는 레거시 데이터 — 출처 미상이므로 기존 표기 유지
             lines += [
                 "",
-                f"{fg_emoji} 시장심리: <b>{fg_val}/100 {fg_label}</b> {change_str}",
+                f"{fg_legacy['emoji']} 시장심리: <b>{fg_legacy['value']}/100 {fg_legacy['label']}</b> "
+                f"{_chg(fg_legacy['change'])}".rstrip(),
             ]
 
         # 뉴스 헤드라인 추가

@@ -19,6 +19,8 @@ AI 톤 정책 단일 진입점 (x_formatter v1.5.0~).
 변경이력:
   v1.0.0 (2026-05-06) 신설. morning 3셀(HIGH/MEDIUM/LOW) 정의.
   v1.3.0 (2026-09-06) N-2: narrative 3셀 추가 + _SUPPORTED_SESSIONS 도입.
+  v1.3.1 (2026-10-05) F1: 프롬프트 F&G 라인 출처 구분(주식 CNN / 코인 alternative.me).
+         값이 없으면 라인 생략 (기존: 기본값 50 을 F&G 로 기재).
                       morning 3셀은 무변경 (회귀 없음).
 """
 from __future__ import annotations
@@ -27,7 +29,7 @@ import logging
 from dataclasses import dataclass
 from typing import Optional
 
-VERSION = "1.3.0"
+VERSION = "1.3.1"
 
 logger = logging.getLogger(__name__)
 logger.info(f"[TonePolicy] v{VERSION} 로드")
@@ -355,7 +357,6 @@ def build_tweet_prompt(
     snap         = data.get("market_snapshot", {}) or {}
     regime_info  = data.get("market_regime", {}) or {}
     trading_info = data.get("trading_signal", {}) or {}
-    fg           = data.get("fear_greed", {}) or {}
     signals_data = data.get("signals", {}) or {}
 
     sp500  = snap.get("sp500")
@@ -365,8 +366,6 @@ def build_tweet_prompt(
     regime_name = regime_info.get("market_regime", "Unknown")
     risk        = regime_info.get("market_risk_level", "MEDIUM")
     signal      = trading_info.get("trading_signal", "HOLD")
-    fg_val      = fg.get("value", 50) if fg else 50
-    fg_label    = fg.get("label", "") if fg else ""
 
     # ETF Top3
     alloc_field = data.get("etf_allocation", {}) or {}
@@ -386,7 +385,9 @@ def build_tweet_prompt(
             f"- SPY: {sp500:+.2f}%, VIX: {vix:.1f}, WTI: ${oil:.1f}, US10Y: {us10y:.2f}%"
         )
     data_lines.append(f"- 레짐: {regime_name}, 리스크: {risk}, 시그널: {signal}")
-    data_lines.append(f"- F&G: {fg_val} ({fg_label})")
+    # F1 (2026-10-05): F&G 출처 구분 — 주식(CNN) / 코인(alternative.me)
+    from publishers.fg_display import prompt_lines as _fg_prompt_lines
+    data_lines.extend(_fg_prompt_lines(data))
     if top3:
         data_lines.append(f"- Top ETF: {', '.join(top3)}")
     if crypto_basis_state and crypto_basis_state not in ("Unknown", ""):

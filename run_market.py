@@ -30,13 +30,24 @@ v1.6.0 (2026-04-11) — Priority A 6개 핵심 지표 추가
   → Macro Engine → Regime Engine → ETF Engine → Risk Engine
   → Phase 1A (T4-1 Basis, T4-4 Sentiment)
   → JSON 조립 → Validation → core_data.json 저장
+
+v1.8.0 (2026-10-05) — FB-1 발행 채널 선택 연동
+  - PUBLISH_CHANNEL(all|x|face)이 all 이 아니면 run_market 내부 TG 발송을 하지 않는다.
+      Step 3.5 레짐 크로스체크 TG 2곳, Step 8-R ETF 랭킹 변화 TG
+  - Step 8-R 은 channel != all 이면 detect_rank_change 자체를 호출하지 않는다
+    (rank_history 상태 보존 — 다음 all 실행에서 정상 감지).
+  - channel=all 동작은 v1.7.0 과 동일.
+
+v1.8.1 (2026-10-05) — FB-1 운영베타 준비 보완
+  - channel != all 이면 공유 상태 기록도 생략: Step 8-W(weekly_log), Step 8-DB(Supabase daily_*).
+    근거: daily_snapshots/analysis/news 는 KST 날짜 on_conflict upsert 라 재실행 시 당일 행이 덮어써진다.
 """
 import argparse
 import logging
 import sys
 from datetime import datetime, timezone
 
-from config.settings import LOG_LEVEL, DRY_RUN
+from config.settings import DRY_RUN, LOG_LEVEL, PUBLISH_CHANNEL, channel_allows
 
 logging.basicConfig(
     level=getattr(logging, LOG_LEVEL, logging.INFO),
@@ -44,6 +55,8 @@ logging.basicConfig(
     datefmt="%Y-%m-%d %H:%M:%S",
 )
 logger = logging.getLogger("run_market")
+
+VERSION = "1.8.1"
 
 
 def _detect_session() -> str:
@@ -130,7 +143,10 @@ def _validate_core_inputs(
 
 def run(session: str) -> dict:
     logger.info("=" * 50)
-    logger.info(f"[run_market] 시작 — session={session} | DRY_RUN={DRY_RUN}")
+    logger.info(
+        f"[run_market] v{VERSION} 시작 — session={session} | "
+        f"channel={PUBLISH_CHANNEL} | DRY_RUN={DRY_RUN}"
+    )
     logger.info("=" * 50)
 
     # ── Step 1: 데이터 수집 ────────────────────────────────────
@@ -394,35 +410,37 @@ def run(session: str) -> dict:
                 )
 
                 # ── 보완 3: TG 알림 (Risk Level 변경 포함) ──
-                try:
-                    from publishers.telegram_publisher import send_message
-                    risk_msg = f"\n🔺 Risk Level {old_risk} → {new_risk} 상향 적용" if new_risk != old_risk else ""
-                    send_message(
-                        f"⚠️ [레짐 크로스체크 불일치]\n"
-                        f"Rule: {regime_result['market_regime']} ({old_risk})\n"
-                        f"Gemini 제안: {suggested} | confidence: {confidence:.1f}\n"
-                        f"사유: {reason_txt}"
-                        f"{risk_msg}"
-                    )
-                except Exception:
-                    pass
+                if channel_allows("tg"):  # v1.8.0: channel=all 에서만 TG 발송
+                    try:
+                        from publishers.telegram_publisher import send_message
+                        risk_msg = f"\n🔺 Risk Level {old_risk} → {new_risk} 상향 적용" if new_risk != old_risk else ""
+                        send_message(
+                            f"⚠️ [레짐 크로스체크 불일치]\n"
+                            f"Rule: {regime_result['market_regime']} ({old_risk})\n"
+                            f"Gemini 제안: {suggested} | confidence: {confidence:.1f}\n"
+                            f"사유: {reason_txt}"
+                            f"{risk_msg}"
+                        )
+                    except Exception:
+                        pass
             else:
                 # confidence < 0.8 → 경고만
                 logger.info(
                     f"[Step 3.5] confidence={confidence:.1f} < 0.8 "
                     f"— 경고만, Risk Level 유지"
                 )
-                try:
-                    from publishers.telegram_publisher import send_message
-                    send_message(
-                        f"ℹ️ [레짐 크로스체크 참고]\n"
-                        f"Rule: {regime_result['market_regime']} | "
-                        f"Gemini 제안: {suggested}\n"
-                        f"confidence={confidence:.1f} (낮음) — 레짐 유지\n"
-                        f"사유: {reason_txt}"
-                    )
-                except Exception:
-                    pass
+                if channel_allows("tg"):  # v1.8.0: channel=all 에서만 TG 발송
+                    try:
+                        from publishers.telegram_publisher import send_message
+                        send_message(
+                            f"ℹ️ [레짐 크로스체크 참고]\n"
+                            f"Rule: {regime_result['market_regime']} | "
+                            f"Gemini 제안: {suggested}\n"
+                            f"confidence={confidence:.1f} (낮음) — 레짐 유지\n"
+                            f"사유: {reason_txt}"
+                        )
+                    except Exception:
+                        pass
 
     except Exception as e:
         logger.warning(f"[Step 3.5] Gemini 크로스체크 실패 (무시): {e}")
@@ -639,15 +657,23 @@ def run(session: str) -> dict:
     save_core_data(envelope, data_validation, output_validation)
 
     # ── Step 8-W: 주간 성적표 누적 기록 ────────────────────────
-    try:
-        from core.weekly_tracker import record_daily
-        record_daily(envelope.get("data", {}), dt_utc=datetime.now(timezone.utc))
-    except Exception as e:
-        logger.warning(f"[Step 8-W] 주간 기록 실패 (영향 없음): {e}")
+    #   v1.8.1: 공유 상태 기록은 channel=all(정기 실행)에서만 — x/face 재실행이
+    #   당일 기록을 재실행 시점 데이터로 덮어쓰지 않도록 한다.
+    if not channel_allows("tg"):
+        logger.info(f"[Step 8-W] channel={PUBLISH_CHANNEL} — 주간 기록 생략 (공유 상태 보존)")
+    else:
+        try:
+            from core.weekly_tracker import record_daily
+            record_daily(envelope.get("data", {}), dt_utc=datetime.now(timezone.utc))
+        except Exception as e:
+            logger.warning(f"[Step 8-W] 주간 기록 실패 (영향 없음): {e}")
 
     # ── Step 8-DB: Supabase 일별 데이터 적재 ──────────────────
     if DRY_RUN:
         logger.info("[Step 8-DB] DRY_RUN — Supabase 일별 적재 생략")
+    elif not channel_allows("tg"):
+        # v1.8.1: x/face 재실행은 당일 daily_* 행(KST 날짜 upsert)을 덮어쓰지 않는다.
+        logger.info(f"[Step 8-DB] channel={PUBLISH_CHANNEL} — Supabase 일별 적재 생략 (공유 상태 보존)")
     else:
         try:
             from db.daily_store import store_all_daily_data
@@ -668,7 +694,12 @@ def run(session: str) -> dict:
     try:
         from core.rank_tracker import detect_rank_change
         etf_rank = envelope.get("data", {}).get("etf_analysis", {}).get("etf_rank", {})
-        if etf_rank:
+        if etf_rank and not channel_allows("tg"):
+            logger.info(
+                f"[Step 8-R] channel={PUBLISH_CHANNEL} — 랭킹 변화 감지·TG 발송 생략 "
+                f"(rank_history 보존)"
+            )
+        elif etf_rank:
             # 수정
             change = detect_rank_change(
                 etf_rank,

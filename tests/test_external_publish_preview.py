@@ -1,4 +1,4 @@
-"""PUB-04: preview must never cross X/Telegram publishing boundaries."""
+"""PUB-04: preview must never cross X/Telegram/Facebook publishing boundaries."""
 
 import json
 from pathlib import Path
@@ -10,6 +10,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from publishers import telegram_publisher as tg
 from publishers import x_publisher as xp
 from core import dlq
+from publishers import facebook_publisher as fb
 
 
 def test_telegram_preview_blocks_message_photo_and_document_http():
@@ -82,3 +83,21 @@ def test_preview_does_not_consume_existing_delivery_queue(tmp_path):
     handlers.assert_not_called()
     assert result["skipped"] is True and result["remaining"] == 1
     assert json.loads(queue_path.read_text(encoding="utf-8")) == [item]
+
+
+def test_facebook_preview_blocks_http_and_image_read(tmp_path):
+    """FB-1 (2026-10-05): DRY_RUN 이면 설정이 있어도 Graph API 요청·이미지 open 이 없어야 한다."""
+    image = tmp_path / "dash.png"
+    image.write_bytes(b"png")
+    with patch.object(fb, "DRY_RUN", True), \
+         patch.object(fb, "FACE_PAGE_ID", "page-test"), \
+         patch.object(fb, "FACE_PAGE_TOKEN", "configured-test-token"), \
+         patch.object(fb.requests, "post") as post, \
+         patch("builtins.open") as file_open:
+        photo = fb.publish_page_post("preview", str(image), "morning")
+        feed = fb.publish_page_post("preview", None, "morning")
+
+    post.assert_not_called()
+    file_open.assert_not_called()
+    assert photo["dry_run"] and photo["kind"] == "photo"
+    assert feed["dry_run"] and feed["kind"] == "feed"
