@@ -72,19 +72,6 @@ name: Investment OS Auto Publish
 #             is_duplicate(skip_regime_hash=True)를 사용한다 (R-1).
 #     NB-5: narrative artifact에 data/images/ 추가 (NB-1 렌더 실물 검증용)
 #     ※ 본 리비전은 cron 문자열과 job if 문자열을 일절 변경하지 않았다.
-#   2026-10-05 FB-1 Facebook 채널 추가 (rev.2026-10-05)
-#     FB-1: dispatch input `channel` 신설 (all | x | face, 기본 all)
-#           all  = X + Telegram + Facebook(vars.FACE_ENABLED=true 일 때)
-#           x    = X 만 / face = Facebook 만 (FACE_ENABLED 무관)
-#           schedule 실행은 inputs 가 비어 있으므로 항상 all.
-#     FB-2: env PUBLISH_CHANNEL · FACE_PAGE_ID · FACE_PAGE_TOKEN ·
-#           FACE_ENABLED(vars, 기본 false) · FACE_SESSIONS(vars, 기본 morning,narrative,full)
-#     FB-3: fb-history 캐시 신설 (morning / full / narrative 3개 job)
-#           data/published/fb_history.json — 세션·KST 발행일 단위 FB 중복 게시 차단.
-#     FB-4: pilot_test pytest 목록에 FB·채널 테스트 2종 추가
-#     F1-1 (2026-10-05): pilot_test 목록에 F&G 표기 정정 테스트(test_fg_display) 추가
-#     ※ 본 리비전은 cron 문자열과 job if 문자열을 일절 변경하지 않았다.
-#       alert_check job 은 PUBLISH_CHANNEL 을 읽지 않는다(run_alert 무변경).
 #   2026-09-08 발행 중복/요일 정합화
 #     publish history는 세션+KST 발행일 범위에서만 재실행을 차단한다.
 #     또한 휴장일 판정도 runner UTC가 아닌 KST 날짜를 사용해 월요일 morning을
@@ -154,16 +141,6 @@ on:
         options:
           - "false"
           - "true"
-      # FB-1 (2026-10-05): 발행 채널 선택. alert 세션에는 적용되지 않는다.
-      channel:
-        description: "channel (all=X+TG+FB, x=X만, face=FB만 / alert 선택 시 무시됨)"
-        required: true
-        default: all
-        type: choice
-        options:
-          - all
-          - x
-          - face
   push:
     branches:
       - main
@@ -200,13 +177,6 @@ env:
   YOUTUBE_CHANNELS: ${{ secrets.YOUTUBE_CHANNELS }}
   MULTILINGUAL_ENABLED: ${{ secrets.MULTILINGUAL_ENABLED }}
   LUNAR_CRUSH_API_KEY: ${{ secrets.LUNAR_CRUSH_API_KEY }}
-  # FB-2 (2026-10-05): 발행 채널 + Facebook 페이지 발행
-  #   schedule 실행은 inputs.channel 이 빈 문자열 → 'all' 폴백.
-  PUBLISH_CHANNEL: ${{ github.event.inputs.channel || 'all' }}
-  FACE_PAGE_ID: ${{ secrets.FACE_PAGE_ID }}
-  FACE_PAGE_TOKEN: ${{ secrets.FACE_PAGE_TOKEN }}
-  FACE_ENABLED: ${{ vars.FACE_ENABLED || 'false' }}
-  FACE_SESSIONS: ${{ vars.FACE_SESSIONS || 'morning,narrative,full' }}
 
 jobs:
 
@@ -231,7 +201,7 @@ jobs:
           DRY_RUN: "true"
           LOG_LEVEL: WARNING
       - name: Daily store and pipeline boundary tests
-        run: python -m pytest -q tests/test_daily_store_contract.py tests/test_daily_query_mixed_json.py tests/test_market_holiday_timezone.py tests/test_duplicate_checker_scope.py tests/test_external_publish_preview.py tests/test_facebook_publisher.py tests/test_publish_channel.py tests/test_fg_display.py
+        run: python -m pytest -q tests/test_daily_store_contract.py tests/test_daily_query_mixed_json.py tests/test_market_holiday_timezone.py tests/test_duplicate_checker_scope.py tests/test_external_publish_preview.py
         env:
           DRY_RUN: "true"
           FORCE_RUN: "false"
@@ -323,15 +293,6 @@ jobs:
           restore-keys: |
             publish-history-${{ github.ref }}-
             publish-history-
-      # FB-3 (2026-10-05): Facebook 게시 이력. CACHE-FREEZE 규약 restore 패턴.
-      - name: Restore fb history cache
-        uses: actions/cache/restore@v4
-        with:
-          path: data/published/fb_history.json
-          key: fb-history-${{ github.ref }}-${{ github.run_id }}
-          restore-keys: |
-            fb-history-${{ github.ref }}-
-            fb-history-
 
       - name: Anti-bot random delay
         run: |
@@ -347,12 +308,6 @@ jobs:
         with:
           path: data/published/history.json
           key: publish-history-${{ github.ref }}-${{ github.run_id }}
-      - name: Save fb history cache
-        uses: actions/cache/save@v4
-        if: always()
-        with:
-          path: data/published/fb_history.json
-          key: fb-history-${{ github.ref }}-${{ github.run_id }}
 
       - name: Save core_data cache
         uses: actions/cache/save@v4
@@ -749,15 +704,6 @@ jobs:
           restore-keys: |
             publish-history-${{ github.ref }}-
             publish-history-
-      # FB-3 (2026-10-05): Facebook 게시 이력. CACHE-FREEZE 규약 restore 패턴.
-      - name: Restore fb history cache
-        uses: actions/cache/restore@v4
-        with:
-          path: data/published/fb_history.json
-          key: fb-history-${{ github.ref }}-${{ github.run_id }}
-          restore-keys: |
-            fb-history-${{ github.ref }}-
-            fb-history-
       - run: python main.py run all --session full --mode tweet
       - name: Save weekly log cache
         uses: actions/cache/save@v4
@@ -771,12 +717,6 @@ jobs:
         with:
           path: data/published/history.json
           key: publish-history-${{ github.ref }}-${{ github.run_id }}
-      - name: Save fb history cache
-        uses: actions/cache/save@v4
-        if: always()
-        with:
-          path: data/published/fb_history.json
-          key: fb-history-${{ github.ref }}-${{ github.run_id }}
       - uses: actions/upload-artifact@v4
         if: always()
         with:
@@ -869,15 +809,6 @@ jobs:
           restore-keys: |
             publish-history-${{ github.ref }}-
             publish-history-
-      # FB-3 (2026-10-05): Facebook 게시 이력. CACHE-FREEZE 규약 restore 패턴.
-      - name: Restore fb history cache
-        uses: actions/cache/restore@v4
-        with:
-          path: data/published/fb_history.json
-          key: fb-history-${{ github.ref }}-${{ github.run_id }}
-          restore-keys: |
-            fb-history-${{ github.ref }}-
-            fb-history-
 
       - name: Restore narrative visual history cache
         uses: actions/cache/restore@v4
@@ -909,12 +840,6 @@ jobs:
         with:
           path: data/published/history.json
           key: publish-history-${{ github.ref }}-${{ github.run_id }}
-      - name: Save fb history cache
-        uses: actions/cache/save@v4
-        if: always()
-        with:
-          path: data/published/fb_history.json
-          key: fb-history-${{ github.ref }}-${{ github.run_id }}
       - name: Save narrative visual history cache
         uses: actions/cache/save@v4
         if: always()
