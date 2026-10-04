@@ -82,6 +82,7 @@ name: Investment OS Auto Publish
 #     FB-3: fb-history 캐시 신설 (morning / full / narrative 3개 job)
 #           data/published/fb_history.json — 세션·KST 발행일 단위 FB 중복 게시 차단.
 #     FB-4: pilot_test pytest 목록에 FB·채널 테스트 2종 추가
+#     F1-1 (2026-10-05): pilot_test 목록에 F&G 표기 정정 테스트(test_fg_display) 추가
 #     ※ 본 리비전은 cron 문자열과 job if 문자열을 일절 변경하지 않았다.
 #       alert_check job 은 PUBLISH_CHANNEL 을 읽지 않는다(run_alert 무변경).
 #   2026-09-08 발행 중복/요일 정합화
@@ -230,7 +231,7 @@ jobs:
           DRY_RUN: "true"
           LOG_LEVEL: WARNING
       - name: Daily store and pipeline boundary tests
-        run: python -m pytest -q tests/test_daily_store_contract.py tests/test_daily_query_mixed_json.py tests/test_market_holiday_timezone.py tests/test_duplicate_checker_scope.py tests/test_external_publish_preview.py tests/test_facebook_publisher.py tests/test_publish_channel.py
+        run: python -m pytest -q tests/test_daily_store_contract.py tests/test_daily_query_mixed_json.py tests/test_market_holiday_timezone.py tests/test_duplicate_checker_scope.py tests/test_external_publish_preview.py tests/test_facebook_publisher.py tests/test_publish_channel.py tests/test_fg_display.py
         env:
           DRY_RUN: "true"
           FORCE_RUN: "false"
