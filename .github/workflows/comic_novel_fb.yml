@@ -1,4 +1,4 @@
-# Explicitly opt in via repository variable after schema/evidence checks and approval.
+# Approved production activation 2026-10-12; repository variable false pauses publishing.
 name: Comic Novel Facebook (Friday)
 
 on:
@@ -24,7 +24,7 @@ concurrency:
   cancel-in-progress: false
 
 env:
-  FACE_NOVEL_ENABLED: ${{ vars.FACE_NOVEL_ENABLED || 'false' }}
+  FACE_NOVEL_ENABLED: ${{ vars.FACE_NOVEL_ENABLED || 'true' }}
   FACE_NOVEL_FIRST_DATE: '2026-10-16'
   # Operational limit, not a Meta API maximum.
   FACE_NOVEL_MAX_CHARS: '10000'

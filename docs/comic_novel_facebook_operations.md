@@ -20,7 +20,7 @@
 2. 기존 `SUPABASE_KEY`가 신규 제한 RPC를 실행할 서버 권한인지 확인한다. 공개·일반 사용자 권한을 넓히지 않는다.
 3. 기존 과거 소설의 X 게시 완료 증거를 확인해 채널 이력에 등록한다. `published`만으로 확정하지 않는다.
 4. `FACE_PAGE_ID`와 `FACE_PAGE_TOKEN`이 의도한 Page인지 확인한다.
-5. 미리보기→대상 Page 검증 후 `FACE_NOVEL_ENABLED=true`로 활성화한다. 기본값 false다.
+5. 미리보기→대상 Page 검증 후 `FACE_NOVEL_ENABLED=true`로 활성화한다. 승인된 운영 배포에서는 workflow 기본값 true이며, 저장소 변수 false로 일시중지한다.
 
 ## 미리보기
 

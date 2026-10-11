@@ -1,4 +1,4 @@
--- UNAPPLIED schema deployment script. Production application requires separate approval.
+-- Comic Novel Facebook production schema; approved deployment 2026-10-12.
 -- PostgreSQL 14+ (native sha256); no pgcrypto extension required.
 BEGIN;
 ALTER TABLE public.comic_novels ADD COLUMN IF NOT EXISTS publish_fb_data date;
@@ -45,7 +45,6 @@ BEGIN
  SELECT * INTO n FROM public.comic_novels WHERE publish_date=p_source_date FOR UPDATE;
  IF NOT FOUND THEN RETURN jsonb_build_object('status','skip','reason','source_missing'); END IF;
  IF n.status IS DISTINCT FROM 'published' OR n.publish_date>(now() AT TIME ZONE 'Asia/Seoul')::date THEN RETURN jsonb_build_object('status','hold','reason','source_not_published_or_future'); END IF;
- IF n.status IS DISTINCT FROM 'published' OR n.publish_date>(now() AT TIME ZONE 'Asia/Seoul')::date THEN RETURN jsonb_build_object('status','hold','reason','source_not_eligible'); END IF;
  IF n.publish_fb_data IS NOT NULL THEN RETURN jsonb_build_object('status','skip','reason','already_published'); END IF;
  v_hash:=encode(sha256(convert_to(coalesce(n.title,'')||E'\n'||coalesce(n.episode_range,'')||E'\n'||coalesce(n.novel_text,''),'UTF8')),'hex');
  IF v_hash<>p_source_hash OR NOT EXISTS(SELECT 1 FROM public.comic_novel_channel_history WHERE channel='x' AND source_date=p_source_date AND status='ok' AND confirmed_count=expected_count AND source_content_hash=v_hash) THEN RETURN jsonb_build_object('status','hold','reason','x_evidence_missing_or_source_changed'); END IF;
