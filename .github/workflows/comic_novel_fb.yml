@@ -1,4 +1,4 @@
-# Deployment approved; activation paused until service-role credential verification.
+# Deployment approved; activation paused until GitHub OIDC production verification.
 name: Comic Novel Facebook (Friday)
 
 on:
@@ -7,14 +7,31 @@ on:
   workflow_dispatch:
     inputs:
       stage:
-        description: 'preview or Friday publish (reconciliation uses operator CLI)'
+        description: 'Preview, Friday publish, or operator-confirmed reconciliation'
         type: choice
-        options: [preview, publish]
+        options: [preview, publish, reconcile]
         default: preview
       dry_run:
-        description: 'Preview only; no Graph or DB writes'
+        description: 'Preview only; publish/reconcile require false'
         type: boolean
         default: true
+
+      claim_id:
+        description: 'Reconcile: existing claim ID'
+        type: string
+      post_id:
+        description: 'Reconcile: verified Facebook post ID'
+        type: string
+      confirmed_at:
+        description: 'Reconcile: actual publication ISO timestamp with timezone'
+        type: string
+      note:
+        description: 'Reconcile: operator verification evidence'
+        type: string
+      not_posted:
+        description: 'Reconcile: operator confirmed no Facebook post exists'
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -24,6 +41,7 @@ concurrency:
   cancel-in-progress: false
 
 env:
+  NOVEL_USE_GITHUB_OIDC: 'true'
   FACE_NOVEL_ENABLED: ${{ vars.FACE_NOVEL_ENABLED || 'false' }}
   FACE_NOVEL_FIRST_DATE: '2026-10-16'
   # Operational limit, not a Meta API maximum.
@@ -39,6 +57,9 @@ env:
 
 jobs:
   comic-novel-facebook:
+    permissions:
+      contents: read
+      id-token: write
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
@@ -53,8 +74,29 @@ jobs:
         run: |
           DELAY=$((RANDOM % 200))
           sleep "$DELAY"
-      - name: Consume one stored novel
-        run: python -m weekend.comic_novel_fb --stage "$REQUEST_STAGE" --output output/comic-novel-fb-report.json
+      - name: Consume or reconcile one stored novel
+        env:
+          RECONCILE_CLAIM_ID: ${{ inputs.claim_id }}
+          RECONCILE_POST_ID: ${{ inputs.post_id }}
+          RECONCILE_CONFIRMED_AT: ${{ inputs.confirmed_at }}
+          RECONCILE_NOTE: ${{ inputs.note }}
+          RECONCILE_NOT_POSTED: ${{ inputs.not_posted }}
+          RECONCILE_ACTOR: ${{ github.actor }}
+        run: |
+          args=(--stage "$REQUEST_STAGE" --output output/comic-novel-fb-report.json)
+          if [[ "$REQUEST_STAGE" == 'reconcile' ]]; then
+            if [[ "$DRY_RUN" != 'false' ]]; then
+              echo "Reconciliation requires dry_run=false and verified operator evidence"
+              exit 1
+            fi
+            args+=(--claim-id "$RECONCILE_CLAIM_ID" --actor "$RECONCILE_ACTOR" --note "$RECONCILE_NOTE")
+            if [[ "$RECONCILE_NOT_POSTED" == 'true' ]]; then
+              args+=(--not-posted)
+            else
+              args+=(--post-id "$RECONCILE_POST_ID" --confirmed-at "$RECONCILE_CONFIRMED_AT")
+            fi
+          fi
+          python -m weekend.comic_novel_fb "${args[@]}"
       - name: Upload sanitized result
         if: always()
         uses: actions/upload-artifact@v4

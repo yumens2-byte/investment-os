@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import hashlib
+import os
 from datetime import date, datetime, timedelta, timezone
 
 
@@ -11,13 +12,20 @@ def source_content_hash(title: str, episode_range: str, novel_text: str) -> str:
 
 class ComicNovelChannelStore:
     def __init__(self, client=None):
+        self.gateway = None
+        if client is None and os.getenv("NOVEL_USE_GITHUB_OIDC", "false").lower() == "true":
+            from db.comic_novel_gateway import ComicNovelGateway
+            self.gateway = ComicNovelGateway()
+            self.client = None
+            return
         if client is None:
             from db.supabase_client import get_client
             client = get_client()
         self.client = client
 
     def _rpc(self, name, params):
-        result = self.client.rpc(name, params).execute().data
+        result = (self.gateway.call(name, params) if self.gateway is not None
+                  else self.client.rpc(name, params).execute().data)
         if isinstance(result, list) and len(result) == 1:
             result = result[0]
         if not isinstance(result, dict):
@@ -25,6 +33,8 @@ class ComicNovelChannelStore:
         return result
 
     def select_oldest_pending(self, today_kst):
+        if self.gateway is not None:
+            return self.gateway.call("select_oldest_pending", {"today_kst": str(today_kst)})
         rows = (self.client.table("comic_novels")
                 .select("id,publish_date,title,episode_range,novel_text,status,publish_fb_data")
                 .is_("publish_fb_data", "null").eq("status", "published")
@@ -33,6 +43,8 @@ class ComicNovelChannelStore:
         return rows[0] if rows else None
 
     def get_x_evidence(self, source_date):
+        if self.gateway is not None:
+            return self.gateway.call("get_x_evidence", {"source_date": str(source_date)})
         rows = (self.client.table("comic_novel_channel_history").select("*")
                 .eq("channel", "x").eq("source_date", str(source_date))
                 .eq("status", "ok").limit(1).execute().data)
@@ -43,6 +55,8 @@ class ComicNovelChannelStore:
         return dict(legacy[0], status="ok", verification_basis="legacy_published_status") if legacy else {}
 
     def get_week_state(self, target, slot):
+        if self.gateway is not None:
+            return self.gateway.call("get_week_state", {"target": target, "slot": str(slot)})
         # Any unresolved send blocks all later slots; runner restarts are not leases.
         q = (self.client.table("comic_novel_channel_history").select("*")
              .eq("channel", "facebook").eq("target_key", target))
@@ -61,6 +75,12 @@ class ComicNovelChannelStore:
                 .gte("publish_fb_data", start.isoformat()).lt("publish_fb_data", end.isoformat())
                 .limit(1).execute().data)
         return {"status": "ok", "reason": "actual_week_done"} if rows else {}
+
+    def verify_history_access(self):
+        if self.gateway is not None:
+            return self.gateway.call("verify_history_access", {})
+        self.client.table("comic_novel_channel_history").select("id").limit(1).execute()
+        return True
 
     def claim_slot(self, source_date, target, slot, run_id, content_hash, source_hash):
         return self._rpc("novel_fb_claim", {"p_source_date": str(source_date), "p_target": target,

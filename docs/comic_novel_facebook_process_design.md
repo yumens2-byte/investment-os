@@ -40,8 +40,8 @@ sending 상태에서 프로세스가 종료되거나 게시 성공 후 DB 갱신
 - `.github/workflows/comic_novel_fb.yml`: UTC cron `17 13 * * 5`, 금요일 22:17 KST. 예약 실행에 0~199초 추가 지연이 있다. GitHub 자체 지연도 가능하다.
 - 최초 정규일: 2026-10-16. 금요일 조건은 애플리케이션에서도 검사한다.
 - workflow 동시 실행 그룹: `comic-novel-facebook`, 실행 중 취소 false, timeout 15분.
-- 운영 반영 승인 이후 연결 점검에서 anon 키 권한 오류가 확인되어 workflow 활성 기본값은 false로 보류했다. repository variable `FACE_NOVEL_ENABLED=false`는 명시적인 중지 설정이다. CLI 모듈 자체는 환경변수 없을 때 false다.
-- 수동 Actions는 preview/publish와 dry_run을 제공한다. 기본 선택은 preview, dry_run=true다. reconcile은 운영자 CLI로 수행한다.
+- 운영 반영 승인 이후 직접 연결의 anon 권한 오류가 확인되었다. 기존 키를 유지하는 GitHub OIDC gateway를 보완하며 실제 OIDC smoke 확인 전 workflow 활성 기본값은 false로 보류한다. repository variable `FACE_NOVEL_ENABLED=false`는 명시적인 중지 설정이다. CLI 모듈 자체는 환경변수 없을 때 false다.
+- 수동 Actions는 preview/publish/reconcile과 dry_run을 제공한다. 기본 선택은 preview, dry_run=true다. reconcile은 claim_id, post_id, confirmed_at, note, not_posted를 입력하며 actor는 github.actor로 기록한다. 운영자 실제 확인 증거가 필요하고 Graph 게시 요청을 하지 않는다.
 - exit 0: PREVIEW/PUBLISHED 및 정상 스킵. exit 1: 설정·DB·확정 게시 실패. exit 2: 증거 부족·불확실·내용 보류. Actions에서 보류도 실패 실행으로 드러난다.
 
 ## 4. 저장 및 원자성
@@ -65,4 +65,12 @@ legacy 보완 후 검증: Python 3.11.17 관련 회귀 196건 통과, 격리 PGl
 
 ## 운영 연결 확인 결과 — 2026-10-12
 
-코드 main 병합과 운영 DB 마이그레이션은 완료했다. 운영 GitHub 연결 점검은 database_history_read에서 APIError 42501: 기존 SUPABASE_KEY의 역할은 anon이다. 따라서 활성 기본값을 false로 보류했다. 새 이력·RPC에는 서버용 service_role 키가 필요하며 anon 발행 권한을 열지 않는다. 기존 SUPABASE_KEY 시크릿 값을 해당 프로젝트 service_role 키로 갱신한 뒤 읽기 전용 점검 및 첫 원본 preview를 다시 확인하고 활성화한다. 새 X 확인 경로도 같은 권한이 필요하다. Facebook 실제 게시와 날짜 갱신은 아직 0건이다.
+운영 DB 마이그레이션 및 기존 23행 legacy 확인은 완료했다. 최초 직접 연결 점검의 42501은 기존 SUPABASE_KEY가 anon이어서 발생했다. 사용자의 기존 키 유지·로그인 없는 처리 지시에 따라 SUPABASE_KEY를 변경하지 않고 GitHub OIDC 인증 Edge gateway를 사용한다. 신규 GitHub secret을 추가하거나 anon DB 읽기·발행 권한을 열지 않는다. NOVEL_USE_GITHUB_OIDC=true일 때 제한 작업은 gateway를 통한다. 게이트웨이 배포 및 실제 GitHub OIDC 무쓰기 smoke 결과를 확인할 때까지 Facebook 활성 기본값은 false다. Facebook 실제 게시와 날짜 갱신은 아직 0건이다.
+
+## 8. 인증 경계 및 호출 흐름
+
+Actions는 id-token: write로 GitHub 단기 OIDC 토큰을 발급받아 기존 SUPABASE_KEY를 apikey로 comic-novel-gateway에 요청한다. gateway는 RSA 서명·GitHub issuer·audience comic-novel:ccomoimhhttaklfadaos·정확한 repo/ID/main/workflow를 검증한 뒤 서버 내부 기본 service_role로 제한 읽기 또는 RPC를 수행한다. Sunday는 X 확인 쓰기, Friday는 Facebook 쓰기, CI push main은 읽기로 구분한다. 기존 키는 유지하고 anon DB 권한을 확대하지 않으며 추가 로그인·신규 GitHub secret을 요구하지 않는다. verify_jwt=false는 이 전용 검증을 사용하기 위한 배포 설정이다.
+
+쓰기 HTTP 호출은 한 번이며 불명확 실패를 자동 재시도하지 않는다. OIDC 적용은 표지 신규 생성·원본 변경·강제 발행 조건 우회를 추가하지 않는다. 운영 preview 및 Page ID 확인은 OIDC 무쓰기 smoke에서 검증하며 성공 결과 확인 후 활성화한다.
+
+최신 개발 검증 결과: Python 3.11 관련 회귀 230건, 격리 SQL 26건 통과. Edge 인증 테스트와 실제 GitHub OIDC smoke 결과는 아직 완료 확인 전이며 후속 운영 보고에서 확정한다.

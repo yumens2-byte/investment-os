@@ -1,102 +1,67 @@
-# Comic Novel Facebook 개발·운영 가이드
+# Comic Novel Facebook 운영 가이드
 
-기준일: 2026-10-12 KST. 운영 반영 전 검토용. 기존 원본 DB와 외부 게시를 변경하지 않은 상태에서 작성했다.
+기준일: 2026-10-12 KST. 사용자가 운영 반영을 승인했다. 운영 DB의 기본 스키마 및 기존 원본 확인 마이그레이션은 완료했으며, GitHub OIDC gateway 배포·실제 무쓰기 smoke 확인 전 Facebook 활성화는 보류한다. 실제 Facebook 게시와 publish_fb_data 갱신은 아직 0건이다.
 
-## 요구사항
+## 1. 현재 운영 데이터
 
-- `public.comic_novels`의 X 전체 발행 확인 데이터를 소비한다.
-- 금요일마다 Facebook 미발행 중 `publish_date ASC` 순서로 한 행만 발행한다.
-- 성공 후 `publish_fb_data DATE`에 실제 게시 시점의 KST 날짜를 기록한다.
-- 데이터가 없으면 정상 스킵한다. 새 소설·시장 분석을 생성하지 않는다.
-- 2026-10-16부터 시작할 설정을 준비했다. 시각은 기존 운영 시·분을 유지한 22:17 KST 제안이다.
+운영 프로젝트 ccomoimhhttaklfadaos, public 스키마, PostgreSQL 17.6에서 comic_novels 기존 23행을 유지했다. publish_fb_data DATE 컬럼은 적용되어 모두 NULL이다. 채널 이력은 0행이다. 사용자가 기존 23행의 X 전체 발행을 확인하여 comic_novel_legacy_x_confirmations에 날짜·원문 해시·확인자·시각을 기록했고 현재 원문 23행과 해시 일치를 확인했다. 가짜 X ID를 만들지 않았다. 이후 신규 원본은 전체 실제 X ID·건수·해시 검증을 유지한다.
 
-## 확인된 DB
+최초 소비 원본은 2026-04-05 EP.01~EP.04다. 미발행 중 publish_date ASC 순서로 한 행만 선택하며 가장 오래된 원본이 미확인이면 후속 원본을 추월하지 않는다. 빈 큐는 SKIPPED_NO_DATA로 정상 종료한다.
 
-읽기 조회에서 `public.comic_novels` 23행, 최소 날짜 2026-04-05(EP.01~EP.04), 최대 날짜 2026-10-12(EP.107~EP.108)를 확인했다. `publish_date`는 DATE NOT NULL, id는 integer PK, 날짜 유일 인덱스는 `uix_novel_date`이다. `publish_fb_data`는 조회 시점에 없다. 같은 프로젝트의 `icg` 스키마에도 동명 테이블이 있으므로 운영 원본 `public`을 명시한다.
+## 2. 인증과 활성화
 
-## 운영 반영 선행 조건
+기존 SUPABASE_KEY는 anon 값을 그대로 유지한다. 로그인·신규 GitHub secret·키 교체·anon DB 권한 확대를 요구하지 않는다. NOVEL_USE_GITHUB_OIDC=true에서 GitHub 단기 OIDC 토큰으로 comic-novel-gateway를 호출한다. DB의 제한 이력·RPC는 Edge 함수 내부 기본 service_role 권한으로 수행한다.
 
-1. `db/comic_novel_fb_schema.sql` 검토 후 운영 마이그레이션을 별도 승인·적용한다. 이 파일은 작성만으로 DB에 적용되지 않는다.
-2. 기존 `SUPABASE_KEY`가 신규 제한 RPC를 실행할 서버 권한인지 확인한다. 공개·일반 사용자 권한을 넓히지 않는다.
-3. 기존 과거 소설의 X 게시 완료 증거를 확인해 채널 이력에 등록한다. `published`만으로 확정하지 않는다.
-4. `FACE_PAGE_ID`와 `FACE_PAGE_TOKEN`이 의도한 Page인지 확인한다.
-5. 미리보기→대상 Page 검증 후 `FACE_NOVEL_ENABLED=true`로 활성화한다. 승인된 운영 배포에서는 workflow 기본값 true이며, 저장소 변수 false로 일시중지한다.
+gateway는 GitHub RSA 서명, issuer, audience comic-novel:ccomoimhhttaklfadaos, 정확한 저장소·repository/owner ID·main ref·workflow를 검증한다. Sunday는 X 확인 쓰기, Friday는 Facebook 제한 RPC 쓰기, CI main push는 읽기만 허용한다. verify_jwt=false는 Supabase 기본 JWT 대신 이 전용 OIDC 검사를 사용하는 설정이다.
 
-## 미리보기
+현재 FACE_NOVEL_ENABLED 기본 false다. gateway 배포 및 실제 GitHub OIDC smoke에서 DB 읽기·Page ID·최초 원본 preview를 확인한 후 활성화한다. repository variable FACE_NOVEL_ENABLED=false는 중지 설정이다. 사용자 운영 반영 승인은 이미 제공되어 있어 이 문서가 추가 승인을 요구하지 않는다.
 
-```bash
-DRY_RUN=true python -m weekend.comic_novel_fb --stage preview --output output/comic-novel-fb-preview.json
-```
+## 3. 금요일 연재
 
-미리보기는 DB 읽기만 사용한다. schema 적용 전 실행하면 신규 컬럼/이력/RPC 부재로 실패할 수 있다. DB 장애를 빈 데이터로 바꾸지 않는다.
+workflow comic_novel_fb.yml은 UTC cron 17 13 * * 5, 금요일 22:17 KST다. 최초 정규일 2026-10-16이며 예약 지연이 가능하다. 활성화·최초일·금요일·주차 제한은 애플리케이션에서도 확인한다. 동일 KST 주차의 성공 발행은 최대 1건이다.
 
-## 발행
+원본 제목·에피소드 범위·novel_text를 재사용하고 새 소설이나 표지를 생성하지 않는다. storage:// 표지 경로와 바이트 해시를 모두 확인한 경우에만 이미지를 재사용한다. OIDC 경로의 직접 storage client 부재 또는 표지 미확보 시 텍스트로 발행한다.
+
+## 4. preview와 연결 점검
+
+GitHub Actions 수동 실행에서 stage=preview, dry_run=true를 선택한다. preview는 제한 읽기만 수행하며 DB 발행 이력과 Graph 게시를 쓰지 않는다. 정상 원본이면 PREVIEW와 발행 본문을 반환한다. HOLD_X_UNCONFIRMED이면 legacy/실제 X 증거와 현재 원문 해시를 점검한다.
+
+배포 점검 스크립트 실행 형식은 다음과 같다. 운영 OIDC 실행에는 허용된 main Actions 런타임과 id-token: write가 필요하다. 로컬 쉘의 기존 anon 키만으로 제한 읽기·쓰기를 실행할 수 없다.
 
 ```bash
-FACE_NOVEL_ENABLED=true DRY_RUN=false python -m weekend.comic_novel_fb --stage publish --output output/comic-novel-fb-report.json
+NOVEL_USE_GITHUB_OIDC=true python scripts/verify_comic_novel_deployment.py
+DRY_RUN=true NOVEL_USE_GITHUB_OIDC=true python -m weekend.comic_novel_fb --stage preview --output output/comic-novel-fb-preview.json
 ```
 
-실발행은 KST 금요일·최초일·주차 제한을 적용한다. 정상 1건 후 종료하며 backlog를 한 번에 발행하지 않는다. 이 명령은 Page에 외부 게시하므로 운영 반영 승인 이전에는 실행하지 않는다.
+검증은 예상 DB 프로젝트, 이력 읽기, Graph GET /me의 Page ID 일치, preview를 확인한다. GET Page ID 확인은 실제 게시 권한 검증을 의미하지 않는다. VERIFIED도 실제 Facebook 게시 완료를 의미하지 않는다.
 
-## 게시 확인 복구
+## 5. 실발행
 
-실제 Page에 원문이 게시되었는지 확인한 뒤 해당 ID와 실제 게시 시점을 제공한다.
+활성화 후 Actions stage=publish, dry_run=false를 함께 선택한다. KST 금요일·최초일 조건을 통과한 경우에만 한 편을 발행한다. 아래 명령은 허용된 Actions 런타임의 실행 형식이다.
 
 ```bash
-python -m weekend.comic_novel_fb --stage reconcile --claim-id CLAIM_ID --post-id PAGE_POST_ID --confirmed-at '2026-10-16T22:18:00+09:00' --actor OPERATOR --note 'Page에서 원문·게시시각·ID 확인' --output output/comic-novel-fb-reconcile.json
+FACE_NOVEL_ENABLED=true DRY_RUN=false NOVEL_USE_GITHUB_OIDC=true python -m weekend.comic_novel_fb --stage publish --output output/comic-novel-fb-report.json
 ```
 
-실제로 미게시임을 확인한 경우에만 다음을 실행한다. 이 명령은 이력을 실패 상태로 바꾸며 Facebook 게시 요청은 하지 않는다. actor/note는 확인 증거를 기록하는 필수 입력이다.
+선점 후 sending을 영속 기록하고 게시를 한 번 요청한다. 실제 post ID 성공이면 이력 ok와 publish_fb_data를 하나의 트랜잭션으로 기록한다. 날짜는 확인된 게시 시각의 KST 날짜다. 같은 주 성공 후 재실행은 SKIPPED_WEEK_DONE이다. 시간 변경이나 최초일 변경으로 강제 게시하지 않는다.
+
+## 6. 보류와 복구
+
+claimed/sending/unknown은 시간 경과로 해제하지 않고 다음 주 발행도 차단한다. 게시 성공 후 DB 오류 또는 응답 불명확이면 Page·원문·게시 ID·시각·실행 로그를 대조한다. 이력 삭제나 날짜 NULL 복원으로 재발행하지 않는다.
+
+실제 게시를 확인했다면 Actions stage=reconcile, dry_run=false에 claim_id, post_id, confirmed_at, note를 입력한다. confirmed_at에는 timezone offset이 있는 실제 과거 게시 시각을 입력한다. actor는 github.actor다. 미게시를 확인했다면 not_posted=true와 claim_id/note만 제공하며 post_id/confirmed_at을 섞지 않는다. 두 복구 모두 Graph 게시 요청 없이 DB 상태만 보정한다.
+
+허용된 런타임의 CLI 실행 형식:
 
 ```bash
-python -m weekend.comic_novel_fb --stage reconcile --not-posted --claim-id CLAIM_ID --actor OPERATOR --note 'Page와 실행 로그에서 미게시 확인' --output output/comic-novel-fb-release.json
+NOVEL_USE_GITHUB_OIDC=true python -m weekend.comic_novel_fb --stage reconcile --claim-id CLAIM_ID --post-id PAGE_POST_ID --confirmed-at ACTUAL_TIMESTAMP_WITH_OFFSET --actor OPERATOR --note '실제 Page 원문·ID·게시시각 확인 근거' --output output/comic-novel-fb-reconcile.json
+NOVEL_USE_GITHUB_OIDC=true python -m weekend.comic_novel_fb --stage reconcile --not-posted --claim-id CLAIM_ID --actor OPERATOR --note 'Page 및 실행 로그에서 미게시 확인 근거' --output output/comic-novel-fb-release.json
 ```
 
-시간 경과·캐시 삭제·날짜 NULL만으로 재발행하지 않는다. Sending/unknown은 매주 후속 발행도 차단한다. 실제 게시 여부를 모르면 보류를 유지한다.
+X 성공 후 증거 저장 실패는 HOLD_DB_CONFIRM이며 자동 재게시하지 않는다. 기존 공용 X publisher 내부의 불명확 예외 재시도·텍스트 폴백 정책은 이번 변경에서 수정하지 않은 잔여 위험이다. 신규 Facebook/gateway 쓰기 요청은 자동 재시도하지 않는다.
 
-## 원본 X 경로 보완
+## 7. 최신 검증과 잔여 확인
 
-- dry-run은 신규 소설·상태·채널 이력을 저장하지 않는다.
-- 캐시 published는 재발행하지 않는다. 불확실 상태는 수동 확인이 필요하다.
-- `status=generated`일 때만 조건부 UPDATE로 X 실행 선점한다.
-- 실제 숫자 ID, 전체 건수, published_count, ID 중복을 검증한다.
-- X 실발행 이후 DB 증거 저장 실패는 `HOLD_DB_CONFIRM`이다. 자동 재발행하지 않는다.
-- X 확인 기능은 DB 배포 전 운영 코드에 반영하면 실패할 수 있으므로 DB·코드 배포 순서를 준수한다.
+Python 3.11 관련 회귀 230건, 격리 SQL 검증 26건 통과. 운영 DB 스키마·원본 보존·legacy 해시를 확인했다. SQL 격리 엔진 결과는 별도 네트워크 DB 세션 동시성 부하 테스트 완료를 의미하지 않는다.
 
-## 표지
-
-기존 DB에 X 표지 영속 경로·바이트 해시가 없으므로 초기 구현은 텍스트 발행이 기본이다. storage:// 경로 및 해시가 모두 등록된 이미지에 한해 같은 바이트를 재사용한다. 신규 원본 X 경로에서 표지 업로드를 자동 구현한 상태는 아니다. 표지를 새로 생성하지 않는다.
-
-## 검증 범위
-
-새 소비 모듈·X 성공 판정·저장소 계약 및 기존 Facebook/MVP 관련 테스트를 수행한다. DB RPC는 격리 Postgres 호환 엔진에서 검증하며 운영 DB 마이그레이션·실제 Page 발행 테스트는 별도 단계다. 검증 결과는 PR에 실제 통과 건수와 환경을 기록한다.
-
-## 제한 사항
-
-검증 런타임은 Python 3.12이며 Actions 설정은 기존 Python 3.11을 유지했다. 배포 전 GitHub CI에서 3.11 실행을 확인해야 한다. 기존 공용 X publisher는 전송 후 불확실한 예외에도 자체 재시도·텍스트 폴백을 할 수 있다. 이번 변경은 원본 실행 경합을 막지만 이 공용 publisher 내부의 재시도 정책을 변경하지 않았다. 신규 Facebook 경로는 쓰기 재시도를 하지 않는다.
-
-선점 함수는 consumer가 처음 읽은 원문 해시를 전달받아 DB의 현재 원문·X 증거와 비교한다. Sending 전에도 원문을 재확인한다. 이로써 본문 조회 이후 변경된 데이터를 과거 본문으로 게시하지 않는다.
-
-## 개발 검증 결과 (2026-10-12)
-
-- Python 신규·관련 회귀: 183 passed. 실제 외부 API와 운영 DB 쓰기는 mock 처리했다.
-- SQL: PostgreSQL 18.3 / PGlite 0.5.8 격리 엔진에서 22 checks PASS. 운영 DB는 PostgreSQL 17이며 운영 적용은 하지 않았다.
-- SQL 스크립트 재적용, DB 해시와 Node SHA-256 동일성, 확인 안 된 선두 데이터 추월 방지, 중복 선점 거절, 활성 주차 unique 제약, unknown 복구, 미래 확인시각 거절, 날짜 기록, 다음 주 처리, 미게시 해제, 원문 변경 차단, anon RPC 권한 차단을 확인했다.
-- PGlite는 한 엔진으로 실행했으므로 별도 네트워크 DB 세션의 실제 동시성 스트레스 테스트를 완료했다고 주장하지 않는다.
-- YAML 구조 및 기존 일요일 inline Python/shell 구문 확인 PASS.
-- 운영 단계에서 필요: PostgreSQL 17 실제 마이그레이션 검증, GitHub Python 3.11 CI, 과거 X 발행 증빙, Page 권한·실발행 파일럿.
-
-격리 SQL 테스트 재현:
-
-```bash
-npm install --prefix /tmp/comic-novel-pglite @electric-sql/pglite@0.5.8
-PGLITE_MODULE=/tmp/comic-novel-pglite/node_modules/@electric-sql/pglite/dist/index.js node tests/sql/comic_novel_fb.integration.mjs
-```
-
-## 2026-10-12 운영 승인 및 기존 원본 확인
-
-사용자가 현재 적재 23행은 전부 X 정상 발행본이며 published 상태로 확인 가능하다고 확인했다. 기존 원문 해시 스냅샷 23행을 legacy 확인 테이블에 등록하고 23행 해시 일치를 검증했다. 가짜 게시 ID는 생성하지 않았다. 신규 원본은 실제 X 전체 ID 검증을 유지한다. 최종 검증은 Python 3.11 196건, 격리 SQL 26건 통과다.
-
-## 운영 연결 확인 결과 — 2026-10-12
-
-코드 main 병합과 운영 DB 마이그레이션은 완료했다. 운영 GitHub 연결 점검은 database_history_read에서 APIError 42501: 기존 SUPABASE_KEY의 역할은 anon이다. 따라서 활성 기본값을 false로 보류했다. 새 이력·RPC에는 서버용 service_role 키가 필요하며 anon 발행 권한을 열지 않는다. 기존 SUPABASE_KEY 시크릿 값을 해당 프로젝트 service_role 키로 갱신한 뒤 읽기 전용 점검 및 첫 원본 preview를 다시 확인하고 활성화한다. 새 X 확인 경로도 같은 권한이 필요하다. Facebook 실제 게시와 날짜 갱신은 아직 0건이다.
+잔여 작업은 gateway 운영 배포, 실제 GitHub OIDC 무쓰기 smoke 및 최초 원본 preview, 활성화다. Page 게시 권한과 첫 실제 게시 성공·발행일 갱신은 실제 금요일 실행에서 별도로 확인한다. 이 문서의 작성 시점에는 아직 게시하지 않았다.

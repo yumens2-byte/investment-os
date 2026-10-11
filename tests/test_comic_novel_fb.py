@@ -257,7 +257,7 @@ def test_cli_not_posted_reconciliation_releases_only_with_no_graph(monkeypatch, 
         "--actor", "operator", "--note", "Page activity log checked; post absent", "--output", str(output)])
     assert code == 0
     assert json.loads(output.read_text())["status"] == "RECONCILED_NOT_POSTED"
-    fake_store.release_publication.assert_called_once_with("1", "operator", "Page activity log checked; post absent")
+    fake_store.release_publication.assert_called_once_with(1, "operator", "Page activity log checked; post absent")
     fake_store.reconcile_publication.assert_not_called()
     graph.assert_not_called()
 
