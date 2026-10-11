@@ -1,6 +1,6 @@
 # Comic Novel Facebook 운영 가이드
 
-기준일: 2026-10-12 KST. 사용자가 운영 반영을 승인했다. 운영 DB의 기본 스키마 및 기존 원본 확인 마이그레이션은 완료했으며, GitHub OIDC gateway 배포·실제 무쓰기 smoke 확인 전 Facebook 활성화는 보류한다. 실제 Facebook 게시와 publish_fb_data 갱신은 아직 0건이다.
+기준일: 2026-10-12 KST. 사용자가 운영 반영을 승인했다. 운영 DB의 기본 스키마 및 기존 원본 확인 마이그레이션은 완료했으며, GitHub OIDC gateway v1 ACTIVE 및 main 무쓰기 smoke VERIFIED를 확인하고 Facebook workflow 활성 기본값을 true로 반영한다. 저장소 변수 FACE_NOVEL_ENABLED=false로 중지할 수 있다. 실제 Facebook 게시와 publish_fb_data 갱신은 아직 0건이다.
 
 ## 1. 현재 운영 데이터
 
@@ -14,7 +14,7 @@
 
 gateway는 GitHub RSA 서명, issuer, audience comic-novel:ccomoimhhttaklfadaos, 정확한 저장소·repository/owner ID·main ref·workflow를 검증한다. Sunday는 X 확인 쓰기, Friday는 Facebook 제한 RPC 쓰기, CI main push는 읽기만 허용한다. verify_jwt=false는 Supabase 기본 JWT 대신 이 전용 OIDC 검사를 사용하는 설정이다.
 
-현재 FACE_NOVEL_ENABLED 기본 false다. gateway 배포 및 실제 GitHub OIDC smoke에서 DB 읽기·Page ID·최초 원본 preview를 확인한 후 활성화한다. repository variable FACE_NOVEL_ENABLED=false는 중지 설정이다. 사용자 운영 반영 승인은 이미 제공되어 있어 이 문서가 추가 승인을 요구하지 않는다.
+FACE_NOVEL_ENABLED workflow 기본값은 true다. gateway v1 ACTIVE 및 실제 main OIDC smoke에서 DB 읽기·Page ID·최초 원본 PREVIEW를 확인했다. repository variable FACE_NOVEL_ENABLED=false는 중지 설정이다. 사용자 운영 반영 승인은 이미 제공되어 있어 이 문서가 추가 승인을 요구하지 않는다.
 
 ## 3. 금요일 연재
 
@@ -62,6 +62,12 @@ X 성공 후 증거 저장 실패는 HOLD_DB_CONFIRM이며 자동 재게시하�
 
 ## 7. 최신 검증과 잔여 확인
 
-Python 3.11 관련 회귀 230건, 격리 SQL 검증 26건 통과. 운영 DB 스키마·원본 보존·legacy 해시를 확인했다. SQL 격리 엔진 결과는 별도 네트워크 DB 세션 동시성 부하 테스트 완료를 의미하지 않는다.
+Python 3.11 관련 회귀 230건, 격리 SQL 검증 26건 통과. 운영 DB 스키마·원본 보존·legacy 해시를 확인했다. Edge RSA 인증 테스트 22건도 통과했다. SQL 격리 엔진 결과는 별도 네트워크 DB 세션 동시성 부하 테스트 완료를 의미하지 않는다.
 
-잔여 작업은 gateway 운영 배포, 실제 GitHub OIDC 무쓰기 smoke 및 최초 원본 preview, 활성화다. Page 게시 권한과 첫 실제 게시 성공·발행일 갱신은 실제 금요일 실행에서 별도로 확인한다. 이 문서의 작성 시점에는 아직 게시하지 않았다.
+gateway 운영 배포·main OIDC 무쓰기 smoke·최초 원본 PREVIEW를 확인하고 workflow 활성 기본값 true를 반영한다. Page 게시 권한과 첫 실제 게시 성공·발행일 갱신은 실제 금요일 실행에서 별도로 확인한다. 이 문서의 작성 시점에는 아직 게시하지 않았다.
+
+## 운영 연결 확인 결과 — 2026-10-12
+
+[PR #20](https://github.com/yumens2-byte/investment-os/pull/20) main 병합 커밋 60a50c5d, Edge gateway v1 ACTIVE. [main 무쓰기 smoke](https://github.com/yumens2-byte/investment-os/actions/runs/38178503564/job/114585877383)는 VERIFIED이며 기존 database_key_role=anon, 예상 DB 프로젝트, page_identity_verified=true, preview_status=PREVIEW, source_publish_date=2026-04-05, database_writes=0, public_posts=0을 확인했다. 검증은 Python 230건·Edge RSA 22건·격리 SQL 26건 통과다.
+
+첫 정규 발행은 2026-10-16 금요일 22:17 KST다. 연결·Page ID·preview 확인은 실제 게시 권한 또는 실제 Facebook 게시 성공의 증명이 아니다. 실제 게시 및 publish_fb_data 기록은 아직 0건이며 첫 금요일 실행에서 확인한다.

@@ -4,7 +4,7 @@
 - 저장소: yumens2-byte/investment-os
 - 요청 범위: 기존 comic_novel 운영을 바탕으로 요구사항 정의, 상세설계 및 개발 착수
 - 문서 등록 대상: 기존 Notion C-7 EDT Universe 소설형 에피소드 발행 설계 영역. 등록 완료 여부는 작업 결과에서 별도로 확인한다.
-- 운영 반영 상태: 운영 DB 마이그레이션 및 기존 23행 확인 완료. 기존 SUPABASE_KEY는 변경하지 않는다. GitHub OIDC 제한 gateway 보완 후 실제 무쓰기 smoke 결과 확인까지 활성화 보류. 실제 Facebook 게시 미수행.
+- 운영 반영 상태: 운영 DB 마이그레이션 및 기존 23행 확인 완료. 기존 SUPABASE_KEY는 변경하지 않는다. GitHub OIDC gateway v1 ACTIVE, main 무쓰기 smoke VERIFIED 확인 후 workflow 활성 기본값 true 반영. 실제 Facebook 게시 미수행.
 
 ## 1. 목적 및 범위
 
@@ -90,9 +90,9 @@
 
 ## 8. 상세설계·개발 착수 상태
 
-상세설계와 구현을 완료했고 운영 DB 마이그레이션·23행 legacy 확인을 반영했다. OIDC gateway 배포와 실제 smoke 확인 전 활성화는 보류한다. 현재 개발 검증 결과는 Python 3.11 테스트 196건 및 SQL 격리 검증 26건 통과이다. 실제 Facebook 발행 완료를 의미하지 않는다. 테스트 최종 근거와 변경 파일은 PR 및 테스트 보고서에서 관리한다.
+상세설계와 구현을 완료했고 운영 DB 마이그레이션·23행 legacy 확인을 반영했다. OIDC gateway 배포와 실제 main smoke VERIFIED를 확인했고 workflow 활성 기본값 true를 반영한다. 현재 개발 검증 결과는 Python 3.11 테스트 196건 및 SQL 격리 검증 26건 통과이다. 실제 Facebook 발행 완료를 의미하지 않는다. 테스트 최종 근거와 변경 파일은 PR 및 테스트 보고서에서 관리한다.
 
-잔여 확인: OIDC gateway 배포·실제 smoke, 대상 Page와 최초 원본 preview, 운영 활성화 및 첫 실제 금요일 게시 결과. 기존 23행 X 확인과 운영 DB 마이그레이션은 완료했다.
+잔여 확인: 첫 실제 금요일 게시 권한·게시 성공·발행일 갱신 결과. OIDC gateway 배포·main smoke·대상 Page ID·최초 원본 PREVIEW는 확인했다. 기존 23행 X 확인과 운영 DB 마이그레이션은 완료했다.
 
 ## 9. 근거
 
@@ -103,4 +103,10 @@
 
 ## 10. 인증 보완 요구사항
 
-사용자 지시: 별도 로그인과 기존 SUPABASE_KEY 변경 없이 운영한다. NOVEL_USE_GITHUB_OIDC=true에서 GitHub Actions의 단기 OIDC 토큰으로 comic-novel-gateway를 호출한다. 공개 anon 역할에 DB 권한을 확대하지 않고 신규 GitHub secret도 추가하지 않는다. 서버 내부의 기본 service_role 키는 Edge 함수 안에서만 사용한다. Sunday 워크플로는 X 확인 쓰기, Friday 워크플로는 Facebook 제한 RPC 쓰기, CI main push는 읽기만 허용한다. 실제 OIDC smoke 확인 전 활성화하지 않는다.
+사용자 지시: 별도 로그인과 기존 SUPABASE_KEY 변경 없이 운영한다. NOVEL_USE_GITHUB_OIDC=true에서 GitHub Actions의 단기 OIDC 토큰으로 comic-novel-gateway를 호출한다. 공개 anon 역할에 DB 권한을 확대하지 않고 신규 GitHub secret도 추가하지 않는다. 서버 내부의 기본 service_role 키는 Edge 함수 안에서만 사용한다. Sunday 워크플로는 X 확인 쓰기, Friday 워크플로는 Facebook 제한 RPC 쓰기, CI main push는 읽기만 허용한다. 실제 main OIDC smoke VERIFIED 확인 후 workflow 활성 기본값 true를 반영한다. 저장소 변수 false로 중지할 수 있다.
+
+## 운영 연결 확인 결과 — 2026-10-12
+
+[PR #20](https://github.com/yumens2-byte/investment-os/pull/20) main 병합 커밋 60a50c5d, Edge gateway v1 ACTIVE. [main 무쓰기 smoke](https://github.com/yumens2-byte/investment-os/actions/runs/38178503564/job/114585877383)는 VERIFIED이며 기존 database_key_role=anon, 예상 DB 프로젝트, page_identity_verified=true, preview_status=PREVIEW, source_publish_date=2026-04-05, database_writes=0, public_posts=0을 확인했다. 검증은 Python 230건·Edge RSA 22건·격리 SQL 26건 통과다.
+
+첫 정규 발행은 2026-10-16 금요일 22:17 KST다. 연결·Page ID·preview 확인은 실제 게시 권한 또는 실제 Facebook 게시 성공의 증명이 아니다. 실제 게시 및 publish_fb_data 기록은 아직 0건이며 첫 금요일 실행에서 확인한다.

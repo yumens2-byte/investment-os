@@ -22,7 +22,7 @@
 
 Actions는 Python 3.11, `pip install -r requirements.txt`를 사용한다. 기존 secrets `SUPABASE_URL`, `SUPABASE_KEY`, `FACE_PAGE_ID`, `FACE_PAGE_TOKEN`, `TELEGRAM_BOT_TOKEN`, `TELEGRAM_FREE_CHANNEL_ID`를 사용한다. 키 값은 문서·명령·로그에 출력하지 않는다. SUPABASE_KEY는 기존 anon 값을 그대로 유지한다. 제한 작업은 NOVEL_USE_GITHUB_OIDC=true에서 전용 Edge gateway를 사용한다. 로그인이나 신규 GitHub secret, 키 교체를 요구하지 않는다.
 
-- `FACE_NOVEL_ENABLED`: 운영 연결 확인 보류 중 workflow 기본 false. repository variable false로 중지한다. 로컬 모듈 기본 false.
+- `FACE_NOVEL_ENABLED`: main OIDC smoke 확인 후 workflow 기본 true. repository variable false로 중지한다. 로컬 모듈 기본 false.
 - `NOVEL_USE_GITHUB_OIDC`: Actions에서는 true. GitHub OIDC 토큰으로 제한 gateway를 호출한다.
 - `FACE_NOVEL_FIRST_DATE`: 2026-10-16.
 - `FACE_NOVEL_MAX_CHARS`: 10000. Meta 최대 길이라고 주장하는 값이 아닌 운영 상한.
@@ -105,12 +105,18 @@ PGLITE_MODULE=/tmp/comic-novel-pglite/node_modules/@electric-sql/pglite/dist/ind
 
 ## 운영 연결 확인 결과 — 2026-10-12
 
-운영 DB 마이그레이션 및 기존 23행 legacy 확인은 완료했다. 최초 직접 연결 점검의 42501은 기존 SUPABASE_KEY가 anon이어서 발생했다. 사용자의 기존 키 유지·로그인 없는 처리 지시에 따라 SUPABASE_KEY를 변경하지 않고 GitHub OIDC 인증 Edge gateway를 사용한다. 신규 GitHub secret을 추가하거나 anon DB 읽기·발행 권한을 열지 않는다. NOVEL_USE_GITHUB_OIDC=true일 때 제한 작업은 gateway를 통한다. 게이트웨이 배포 및 실제 GitHub OIDC 무쓰기 smoke 결과를 확인할 때까지 Facebook 활성 기본값은 false다. Facebook 실제 게시와 날짜 갱신은 아직 0건이다.
+운영 DB 마이그레이션 및 기존 23행 legacy 확인은 완료했다. 최초 직접 연결 점검의 42501은 기존 SUPABASE_KEY가 anon이어서 발생했다. 사용자의 기존 키 유지·로그인 없는 처리 지시에 따라 SUPABASE_KEY를 변경하지 않고 GitHub OIDC 인증 Edge gateway를 사용한다. 신규 GitHub secret을 추가하거나 anon DB 읽기·발행 권한을 열지 않는다. NOVEL_USE_GITHUB_OIDC=true일 때 제한 작업은 gateway를 통한다. gateway v1 ACTIVE 및 실제 main OIDC 무쓰기 smoke VERIFIED를 확인했고 Facebook workflow 활성 기본값 true를 반영한다. 저장소 변수 false로 중지할 수 있다. Facebook 실제 게시와 날짜 갱신은 아직 0건이다.
 
 ## 9. OIDC gateway 인증·권한
 
 comic-novel-gateway는 GitHub 공개키로 RSA 서명, issuer, audience comic-novel:ccomoimhhttaklfadaos, 정확한 yumens2-byte/investment-os 저장소와 고정 repository/owner ID, refs/heads/main, 허용된 workflow 식별자를 검증한다. Sunday comic_novel workflow는 novel_x_confirm 쓰기만, Friday comic_novel_fb workflow는 Facebook 5개 RPC 쓰기만, CI push main은 읽기만 허용한다. Edge 함수의 verify_jwt=false는 GitHub OIDC 직접 검증을 사용하기 위한 설정이다. 서버 기본 service_role 키는 함수 내부에만 있으며 GitHub·클라이언트에 반환하지 않는다.
 
-reconcile CLI는 허용된 Friday Actions 런타임에서 증거 인자를 제공하거나 이미 승인된 서버 운영 환경에서만 수행한다. workflow_dispatch는 stage=reconcile과 claim_id, post_id, confirmed_at, note, not_posted 입력을 제공하며 actor는 github.actor를 사용한다. 실제 게시/미게시 증거를 운영자가 확인한 뒤 실행하며 Graph POST를 하지 않는다. 로컬 사용을 위해 로그인하거나 SUPABASE_KEY를 교체하지 않는다. cover loader는 OIDC store에 직접 storage client가 없으면 텍스트 발행으로 폴백한다. 실제 OIDC smoke를 통과하기 전 workflow 활성 기본값 false를 유지한다.
+reconcile CLI는 허용된 Friday Actions 런타임에서 증거 인자를 제공하거나 이미 승인된 서버 운영 환경에서만 수행한다. workflow_dispatch는 stage=reconcile과 claim_id, post_id, confirmed_at, note, not_posted 입력을 제공하며 actor는 github.actor를 사용한다. 실제 게시/미게시 증거를 운영자가 확인한 뒤 실행하며 Graph POST를 하지 않는다. 로컬 사용을 위해 로그인하거나 SUPABASE_KEY를 교체하지 않는다. cover loader는 OIDC store에 직접 storage client가 없으면 텍스트 발행으로 폴백한다. 실제 main OIDC smoke VERIFIED를 확인했으며 workflow 활성 기본값 true로 연재를 활성화한다. 저장소 변수 false로 중지할 수 있다.
 
-최신 개발 검증 결과: Python 3.11 관련 회귀 230건, 격리 SQL 26건 통과. Edge 인증 테스트와 실제 GitHub OIDC smoke 결과는 아직 완료 확인 전이며 후속 운영 보고에서 확정한다.
+최신 개발 검증 결과: Python 3.11 관련 회귀 230건, 격리 SQL 26건 통과. Edge RSA 인증 테스트 22건 통과, 실제 main OIDC smoke VERIFIED를 확인했다.
+
+## 운영 연결 확인 결과 — 2026-10-12
+
+[PR #20](https://github.com/yumens2-byte/investment-os/pull/20) main 병합 커밋 60a50c5d, Edge gateway v1 ACTIVE. [main 무쓰기 smoke](https://github.com/yumens2-byte/investment-os/actions/runs/38178503564/job/114585877383)는 VERIFIED이며 기존 database_key_role=anon, 예상 DB 프로젝트, page_identity_verified=true, preview_status=PREVIEW, source_publish_date=2026-04-05, database_writes=0, public_posts=0을 확인했다. 검증은 Python 230건·Edge RSA 22건·격리 SQL 26건 통과다.
+
+첫 정규 발행은 2026-10-16 금요일 22:17 KST다. 연결·Page ID·preview 확인은 실제 게시 권한 또는 실제 Facebook 게시 성공의 증명이 아니다. 실제 게시 및 publish_fb_data 기록은 아직 0건이며 첫 금요일 실행에서 확인한다.

@@ -1,4 +1,4 @@
-# Deployment approved; activation paused until GitHub OIDC production verification.
+# Deployment approved; GitHub OIDC read-only production verification passed.
 name: Comic Novel Facebook (Friday)
 
 on:
@@ -42,7 +42,7 @@ concurrency:
 
 env:
   NOVEL_USE_GITHUB_OIDC: 'true'
-  FACE_NOVEL_ENABLED: ${{ vars.FACE_NOVEL_ENABLED || 'false' }}
+  FACE_NOVEL_ENABLED: ${{ vars.FACE_NOVEL_ENABLED || 'true' }}
   FACE_NOVEL_FIRST_DATE: '2026-10-16'
   # Operational limit, not a Meta API maximum.
   FACE_NOVEL_MAX_CHARS: '10000'
