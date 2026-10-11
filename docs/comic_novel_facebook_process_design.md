@@ -40,7 +40,7 @@ sending 상태에서 프로세스가 종료되거나 게시 성공 후 DB 갱신
 - `.github/workflows/comic_novel_fb.yml`: UTC cron `17 13 * * 5`, 금요일 22:17 KST. 예약 실행에 0~199초 추가 지연이 있다. GitHub 자체 지연도 가능하다.
 - 최초 정규일: 2026-10-16. 금요일 조건은 애플리케이션에서도 검사한다.
 - workflow 동시 실행 그룹: `comic-novel-facebook`, 실행 중 취소 false, timeout 15분.
-- 2026-10-12 운영 반영 승인으로 workflow 활성 기본값은 true로 변경했다. repository variable `FACE_NOVEL_ENABLED=false`는 명시적인 중지 설정이다. CLI 모듈 자체는 환경변수 없을 때 false다.
+- 운영 반영 승인 이후 연결 점검에서 anon 키 권한 오류가 확인되어 workflow 활성 기본값은 false로 보류했다. repository variable `FACE_NOVEL_ENABLED=false`는 명시적인 중지 설정이다. CLI 모듈 자체는 환경변수 없을 때 false다.
 - 수동 Actions는 preview/publish와 dry_run을 제공한다. 기본 선택은 preview, dry_run=true다. reconcile은 운영자 CLI로 수행한다.
 - exit 0: PREVIEW/PUBLISHED 및 정상 스킵. exit 1: 설정·DB·확정 게시 실패. exit 2: 증거 부족·불확실·내용 보류. Actions에서 보류도 실패 실행으로 드러난다.
 
@@ -62,3 +62,7 @@ legacy 보완 후 검증: Python 3.11.17 관련 회귀 196건 통과, 격리 PGl
 - GET Graph `/me`의 Page ID 일치는 대상 확인이며 게시 권한의 실검증은 아니다.
 - 기존 공용 X publisher의 불명확 예외 재시도/텍스트 폴백 정책은 이번 작업에서 변경하지 않았다.
 - 장애 시 Page·실행 로그·이력을 대조하여 게시 확인 또는 미게시 확인을 먼저 수행한다. 데이터 삭제나 날짜 NULL 복원으로 재발행하지 않는다.
+
+## 운영 연결 확인 결과 — 2026-10-12
+
+코드 main 병합과 운영 DB 마이그레이션은 완료했다. 운영 GitHub 연결 점검은 database_history_read에서 APIError 42501: 기존 SUPABASE_KEY의 역할은 anon이다. 따라서 활성 기본값을 false로 보류했다. 새 이력·RPC에는 서버용 service_role 키가 필요하며 anon 발행 권한을 열지 않는다. 기존 SUPABASE_KEY 시크릿 값을 해당 프로젝트 service_role 키로 갱신한 뒤 읽기 전용 점검 및 첫 원본 preview를 다시 확인하고 활성화한다. 새 X 확인 경로도 같은 권한이 필요하다. Facebook 실제 게시와 날짜 갱신은 아직 0건이다.

@@ -96,3 +96,7 @@ PGLITE_MODULE=/tmp/comic-novel-pglite/node_modules/@electric-sql/pglite/dist/ind
 ## 2026-10-12 운영 승인 및 기존 원본 확인
 
 사용자가 현재 적재 23행은 전부 X 정상 발행본이며 published 상태로 확인 가능하다고 확인했다. 기존 원문 해시 스냅샷 23행을 legacy 확인 테이블에 등록하고 23행 해시 일치를 검증했다. 가짜 게시 ID는 생성하지 않았다. 신규 원본은 실제 X 전체 ID 검증을 유지한다. 최종 검증은 Python 3.11 196건, 격리 SQL 26건 통과다.
+
+## 운영 연결 확인 결과 — 2026-10-12
+
+코드 main 병합과 운영 DB 마이그레이션은 완료했다. 운영 GitHub 연결 점검은 database_history_read에서 APIError 42501: 기존 SUPABASE_KEY의 역할은 anon이다. 따라서 활성 기본값을 false로 보류했다. 새 이력·RPC에는 서버용 service_role 키가 필요하며 anon 발행 권한을 열지 않는다. 기존 SUPABASE_KEY 시크릿 값을 해당 프로젝트 service_role 키로 갱신한 뒤 읽기 전용 점검 및 첫 원본 preview를 다시 확인하고 활성화한다. 새 X 확인 경로도 같은 권한이 필요하다. Facebook 실제 게시와 날짜 갱신은 아직 0건이다.

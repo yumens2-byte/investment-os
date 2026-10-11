@@ -4,7 +4,7 @@
 - 저장소: yumens2-byte/investment-os
 - 요청 범위: 기존 comic_novel 운영을 바탕으로 요구사항 정의, 상세설계 및 개발 착수
 - 문서 등록 대상: 기존 Notion C-7 EDT Universe 소설형 에피소드 발행 설계 영역. 등록 완료 여부는 작업 결과에서 별도로 확인한다.
-- 운영 반영 상태: 운영 DB 변경, 스케줄 활성화, Facebook 실제 발행은 미수행.
+- 운영 반영 상태: 코드 main 병합 및 DB 마이그레이션 완료. 기존 SUPABASE_KEY=anon 권한 오류 42501로 활성화 보류. 서버용 키 설정 후 연결·preview 확인 필요. 실제 Facebook 게시 미수행.
 
 ## 1. 목적 및 범위
 

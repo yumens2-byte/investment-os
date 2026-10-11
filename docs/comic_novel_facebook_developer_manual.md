@@ -21,7 +21,7 @@
 
 Actions는 Python 3.11, `pip install -r requirements.txt`를 사용한다. 기존 secrets `SUPABASE_URL`, `SUPABASE_KEY`, `FACE_PAGE_ID`, `FACE_PAGE_TOKEN`, `TELEGRAM_BOT_TOKEN`, `TELEGRAM_FREE_CHANNEL_ID`를 사용한다. 키 값은 문서·명령·로그에 출력하지 않는다. SUPABASE_KEY는 제한 RPC를 실행할 서버 권한이어야 한다.
 
-- `FACE_NOVEL_ENABLED`: 승인된 workflow 기본 true. repository variable false로 중지한다. 로컬 모듈 기본 false.
+- `FACE_NOVEL_ENABLED`: 운영 연결 확인 보류 중 workflow 기본 false. repository variable false로 중지한다. 로컬 모듈 기본 false.
 - `FACE_NOVEL_FIRST_DATE`: 2026-10-16.
 - `FACE_NOVEL_MAX_CHARS`: 10000. Meta 최대 길이라고 주장하는 값이 아닌 운영 상한.
 - `DRY_RUN`: 모듈 기본 true. stage preview는 항상 true. 실발행은 publish와 false 모두 필요하다.
@@ -100,3 +100,7 @@ PGLITE_MODULE=/tmp/comic-novel-pglite/node_modules/@electric-sql/pglite/dist/ind
 ```
 
 기존 공용 X publisher 내부의 불명확 예외 자체 재시도·텍스트 폴백은 잔여 위험이다. 신규 Facebook consumer는 전송 쓰기를 재시도하지 않는다. 표지 자동 영속 업로드는 구현하지 않았고 storage:// 경로와 해시가 모두 확인된 표지만 재사용한다.
+
+## 운영 연결 확인 결과 — 2026-10-12
+
+코드 main 병합과 운영 DB 마이그레이션은 완료했다. 운영 GitHub 연결 점검은 database_history_read에서 APIError 42501: 기존 SUPABASE_KEY의 역할은 anon이다. 따라서 활성 기본값을 false로 보류했다. 새 이력·RPC에는 서버용 service_role 키가 필요하며 anon 발행 권한을 열지 않는다. 기존 SUPABASE_KEY 시크릿 값을 해당 프로젝트 service_role 키로 갱신한 뒤 읽기 전용 점검 및 첫 원본 preview를 다시 확인하고 활성화한다. 새 X 확인 경로도 같은 권한이 필요하다. Facebook 실제 게시와 날짜 갱신은 아직 0건이다.
