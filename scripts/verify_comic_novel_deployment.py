@@ -26,7 +26,7 @@ def main():
 
         store = ComicNovelChannelStore()
         report["check"] = "database_history_read"
-        store.client.table("comic_novel_channel_history").select("id").limit(1).execute()
+        store.verify_history_access()
         report["check"] = "page_identity"
         if not FACE_PAGE_ID or not FACE_PAGE_TOKEN:
             raise ValueError("missing_page_credentials")

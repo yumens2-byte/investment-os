@@ -251,7 +251,7 @@ def main(argv=None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--stage", choices=("preview", "publish", "reconcile"), default="preview")
     parser.add_argument("--output", default="output/comic-novel-fb-report.json")
-    parser.add_argument("--claim-id")
+    parser.add_argument("--claim-id", type=int)
     parser.add_argument("--post-id")
     parser.add_argument("--not-posted", action="store_true", help="Operator verified absence; release without any Graph request")
     parser.add_argument("--confirmed-at")

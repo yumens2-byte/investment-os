@@ -4,7 +4,7 @@
 - 저장소: yumens2-byte/investment-os
 - 요청 범위: 기존 comic_novel 운영을 바탕으로 요구사항 정의, 상세설계 및 개발 착수
 - 문서 등록 대상: 기존 Notion C-7 EDT Universe 소설형 에피소드 발행 설계 영역. 등록 완료 여부는 작업 결과에서 별도로 확인한다.
-- 운영 반영 상태: 코드 main 병합 및 DB 마이그레이션 완료. 기존 SUPABASE_KEY=anon 권한 오류 42501로 활성화 보류. 서버용 키 설정 후 연결·preview 확인 필요. 실제 Facebook 게시 미수행.
+- 운영 반영 상태: 운영 DB 마이그레이션 및 기존 23행 확인 완료. 기존 SUPABASE_KEY는 변경하지 않는다. GitHub OIDC 제한 gateway 보완 후 실제 무쓰기 smoke 결과 확인까지 활성화 보류. 실제 Facebook 게시 미수행.
 
 ## 1. 목적 및 범위
 
@@ -22,7 +22,7 @@
 | 원본 날짜 | publish_date DATE NOT NULL |
 | 기본키 | id INT |
 | 날짜 유일성 | uix_novel_date 유일 인덱스 |
-| FB 날짜 | 운영 DB에 publish_fb_data 아직 없음 |
+| FB 날짜 | 운영 DB에 publish_fb_data DATE 적용 완료, 기존 23행 모두 NULL |
 | 기존 X 결함 | X 실패 및 부분 발행을 충분히 검증하지 않고 published 상태를 기록할 수 있음 |
 
 운영 DB 읽기 확인 결과는 작업 중 조회 시점의 스냅샷이다. 사용자가 기존 23행의 X 전체 실발행 완료 및 published 상태의 신뢰성을 확인했다. 표지 자산 확보 여부는 별도 확인한다.
@@ -90,9 +90,9 @@
 
 ## 8. 상세설계·개발 착수 상태
 
-상세설계와 로컬 구현을 진행하고 있다. 현재 개발 검증 결과는 Python 3.11 테스트 196건 및 SQL 격리 검증 26건 통과이다. 운영 반영과 실제 발행 완료를 의미하지 않는다. 테스트 최종 근거와 변경 파일은 PR 및 테스트 보고서에서 관리한다.
+상세설계와 구현을 완료했고 운영 DB 마이그레이션·23행 legacy 확인을 반영했다. OIDC gateway 배포와 실제 smoke 확인 전 활성화는 보류한다. 현재 개발 검증 결과는 Python 3.11 테스트 196건 및 SQL 격리 검증 26건 통과이다. 실제 Facebook 발행 완료를 의미하지 않는다. 테스트 최종 근거와 변경 파일은 PR 및 테스트 보고서에서 관리한다.
 
-운영 전 잔여 확인: 기존 원본의 X 실제 발행 증거, 표지 자산, 실제 대상 Facebook Page와 토큰 권한, 운영 DB 마이그레이션, 최초 발행 원본 preview, 운영 활성화.
+잔여 확인: OIDC gateway 배포·실제 smoke, 대상 Page와 최초 원본 preview, 운영 활성화 및 첫 실제 금요일 게시 결과. 기존 23행 X 확인과 운영 DB 마이그레이션은 완료했다.
 
 ## 9. 근거
 
@@ -100,3 +100,7 @@
 - 저장소 기준 커밋: f038cfd67645b204b4100749a52cd14874153e12
 - 기준 모듈: .github/workflows/comic_novel.yml, weekend/comic_novel.py, db/daily_store.py, publishers/x_publisher.py, publishers/facebook_publisher.py
 - 사용자 지시: Facebook은 X 종속, 매주 금요일 한 편, 없으면 스킵, publish_fb_data 추가, 오래된 원본부터 발행 후 날짜 갱신
+
+## 10. 인증 보완 요구사항
+
+사용자 지시: 별도 로그인과 기존 SUPABASE_KEY 변경 없이 운영한다. NOVEL_USE_GITHUB_OIDC=true에서 GitHub Actions의 단기 OIDC 토큰으로 comic-novel-gateway를 호출한다. 공개 anon 역할에 DB 권한을 확대하지 않고 신규 GitHub secret도 추가하지 않는다. 서버 내부의 기본 service_role 키는 Edge 함수 안에서만 사용한다. Sunday 워크플로는 X 확인 쓰기, Friday 워크플로는 Facebook 제한 RPC 쓰기, CI main push는 읽기만 허용한다. 실제 OIDC smoke 확인 전 활성화하지 않는다.
