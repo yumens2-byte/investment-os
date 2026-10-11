@@ -154,7 +154,7 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: '3.11'
-      - run: pip install pytest requests==2.32.3 python-dotenv==1.0.1 supabase==2.10.0
+      - run: pip install pytest PyYAML==6.0.3 requests==2.32.3 python-dotenv==1.0.1 supabase==2.10.0
       - run: >-
           python -m pytest -q
           tests/test_comic_novel_fb.py tests/test_facebook_publisher.py
