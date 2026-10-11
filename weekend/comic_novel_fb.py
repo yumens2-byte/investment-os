@@ -45,9 +45,14 @@ def format_facebook_novel(source: dict) -> str:
 
 
 def verify_x_publication(source: dict, evidence: dict | None) -> bool:
-    """Status alone is insufficient: full real IDs and unchanged source required."""
+    """Legacy user-confirmed published snapshot or full real IDs; unchanged source required."""
     if not evidence or evidence.get("status") != "ok":
         return False
+    if evidence.get("verification_basis") == "legacy_published_status":
+        return (source.get("status") == "published"
+                and str(evidence.get("source_date")) == str(source.get("publish_date"))
+                and bool(evidence.get("confirmed_by")) and bool(evidence.get("confirmed_at"))
+                and evidence.get("source_content_hash") == source_content_hash(source))
     ids = evidence.get("post_ids")
     expected = evidence.get("expected_count")
     confirmed = evidence.get("confirmed_count")

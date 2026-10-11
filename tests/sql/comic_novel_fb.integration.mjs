@@ -67,5 +67,16 @@ try {
  check((await row('select publish_fb_data from comic_novels where publish_date=$1',['2026-04-12'])).publish_fb_data===null);
  // Public clients must not be allowed to execute writing RPCs.
  check((await row(`select has_function_privilege('anon','public.novel_fb_claim(date,text,date,text,text,text)','execute') as allowed`)).allowed===false);
+ // Approved legacy status snapshot supports retained originals without fabricated IDs.
+ const backfill=await fs.readFile(fileURLToPath(new URL('../../db/comic_novel_legacy_x_status_backfill.sql',import.meta.url)),'utf8');
+ await db.exec(backfill);
+ await db.exec(backfill);
+ check((await row('select count(*)::int as n from comic_novel_legacy_x_confirmations')).n===2);
+ const legacyHash=await sourceHash('2026-04-12');
+ const legacy=await rpc('novel_fb_claim',['2026-04-12','456','2026-10-12','legacy-run','legacy-fb',legacyHash]);
+ check(legacy.status==='claimed');
+ await db.exec("update comic_novels set novel_text='changed after legacy snapshot' where publish_date='2026-04-12'");
+ check((await rpc('novel_fb_mark_sending',[legacy.id,'legacy-fb'])).status!=='sending');
+ check((await row("select has_table_privilege('anon','public.comic_novel_legacy_x_confirmations','select') as allowed")).allowed===false);
  console.log(JSON.stringify({sql_checks:checks,status:'PASS',engine:(await row('select version() as v')).v}));
 } finally {await db.close();}

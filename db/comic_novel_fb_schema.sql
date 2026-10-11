@@ -35,6 +35,19 @@ REVOKE ALL ON public.comic_novel_channel_history FROM PUBLIC,anon,authenticated;
 GRANT SELECT,INSERT,UPDATE ON public.comic_novel_channel_history TO service_role;
 GRANT USAGE,SELECT ON SEQUENCE public.comic_novel_channel_history_id_seq TO service_role;
 
+-- User confirmed on 2026-10-12 that every retained published source was actually posted to X.
+-- Keep this legacy status confirmation separate from actual numeric X post IDs.
+CREATE TABLE IF NOT EXISTS public.comic_novel_legacy_x_confirmations (
+ source_date date PRIMARY KEY REFERENCES public.comic_novels(publish_date),
+ source_content_hash text NOT NULL,
+ confirmed_by text NOT NULL,
+ note text NOT NULL,
+ confirmed_at timestamptz NOT NULL DEFAULT now()
+);
+ALTER TABLE public.comic_novel_legacy_x_confirmations ENABLE ROW LEVEL SECURITY;
+REVOKE ALL ON public.comic_novel_legacy_x_confirmations FROM PUBLIC,anon,authenticated;
+GRANT SELECT ON public.comic_novel_legacy_x_confirmations TO service_role;
+
 CREATE OR REPLACE FUNCTION public.novel_fb_claim(p_source_date date,p_target text,p_slot date,p_run_id text,p_content_hash text,p_source_hash text)
 RETURNS jsonb LANGUAGE plpgsql SECURITY INVOKER SET search_path=pg_catalog,public AS $$
 DECLARE n public.comic_novels%ROWTYPE; h public.comic_novel_channel_history%ROWTYPE; v_hash text; v_oldest date;
@@ -47,7 +60,7 @@ BEGIN
  IF n.status IS DISTINCT FROM 'published' OR n.publish_date>(now() AT TIME ZONE 'Asia/Seoul')::date THEN RETURN jsonb_build_object('status','hold','reason','source_not_published_or_future'); END IF;
  IF n.publish_fb_data IS NOT NULL THEN RETURN jsonb_build_object('status','skip','reason','already_published'); END IF;
  v_hash:=encode(sha256(convert_to(coalesce(n.title,'')||E'\n'||coalesce(n.episode_range,'')||E'\n'||coalesce(n.novel_text,''),'UTF8')),'hex');
- IF v_hash<>p_source_hash OR NOT EXISTS(SELECT 1 FROM public.comic_novel_channel_history WHERE channel='x' AND source_date=p_source_date AND status='ok' AND confirmed_count=expected_count AND source_content_hash=v_hash) THEN RETURN jsonb_build_object('status','hold','reason','x_evidence_missing_or_source_changed'); END IF;
+ IF v_hash<>p_source_hash OR NOT EXISTS(SELECT 1 FROM public.comic_novel_channel_history WHERE channel='x' AND source_date=p_source_date AND status='ok' AND confirmed_count=expected_count AND source_content_hash=v_hash) AND NOT EXISTS(SELECT 1 FROM public.comic_novel_legacy_x_confirmations WHERE source_date=p_source_date AND source_content_hash=v_hash) THEN RETURN jsonb_build_object('status','hold','reason','x_evidence_missing_or_source_changed'); END IF;
  IF EXISTS(SELECT 1 FROM public.comic_novel_channel_history WHERE channel='facebook' AND target_key=p_target AND (status IN ('sending','unknown') OR (status='claimed' AND run_id<>p_run_id))) THEN RETURN jsonb_build_object('status','hold','reason','unresolved_claim'); END IF;
  IF EXISTS(SELECT 1 FROM public.comic_novel_channel_history WHERE channel='facebook' AND target_key=p_target AND status='ok' AND (slot_week_start=p_slot OR date_trunc('week',confirmed_at AT TIME ZONE 'Asia/Seoul')::date=p_slot)) THEN RETURN jsonb_build_object('status','skip','reason','week_already_published'); END IF;
  SELECT min(c.publish_date) INTO v_oldest FROM public.comic_novels c WHERE c.publish_fb_data IS NULL AND c.status='published' AND c.publish_date<=(now() AT TIME ZONE 'Asia/Seoul')::date;
@@ -74,7 +87,7 @@ BEGIN
  SELECT * INTO h FROM public.comic_novel_channel_history WHERE id=p_claim_id FOR UPDATE;
  v_hash:=encode(sha256(convert_to(coalesce(n.title,'')||E'\n'||coalesce(n.episode_range,'')||E'\n'||coalesce(n.novel_text,''),'UTF8')),'hex');
  IF h.status<>'claimed' OR h.content_hash<>p_content_hash OR n.publish_fb_data IS NOT NULL OR v_hash<>h.source_content_hash THEN RETURN jsonb_build_object('status','hold','reason','claim_or_content_changed'); END IF;
- IF NOT EXISTS(SELECT 1 FROM public.comic_novel_channel_history WHERE channel='x' AND source_date=h.source_date AND status='ok' AND confirmed_count=expected_count AND source_content_hash=v_hash) THEN RETURN jsonb_build_object('status','hold','reason','x_evidence_changed'); END IF;
+ IF NOT EXISTS(SELECT 1 FROM public.comic_novel_channel_history WHERE channel='x' AND source_date=h.source_date AND status='ok' AND confirmed_count=expected_count AND source_content_hash=v_hash) AND NOT EXISTS(SELECT 1 FROM public.comic_novel_legacy_x_confirmations WHERE source_date=h.source_date AND source_content_hash=v_hash) THEN RETURN jsonb_build_object('status','hold','reason','x_evidence_changed'); END IF;
  IF EXISTS(SELECT 1 FROM public.comic_novels c WHERE c.publish_date<h.source_date AND c.publish_fb_data IS NULL AND c.status='published' AND c.publish_date<=(now() AT TIME ZONE 'Asia/Seoul')::date) THEN RETURN jsonb_build_object('status','hold','reason','not_oldest'); END IF;
  IF EXISTS(SELECT 1 FROM public.comic_novel_channel_history o WHERE o.channel='facebook' AND o.target_key=h.target_key AND o.id<>h.id AND (o.status IN ('sending','unknown','claimed') OR (o.status='ok' AND (o.slot_week_start=h.slot_week_start OR date_trunc('week',o.confirmed_at AT TIME ZONE 'Asia/Seoul')::date=h.slot_week_start)))) THEN RETURN jsonb_build_object('status','hold','reason','target_blocked'); END IF;
  UPDATE public.comic_novel_channel_history SET status='sending',sending_at=now(),updated_at=now() WHERE id=h.id;

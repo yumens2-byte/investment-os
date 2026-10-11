@@ -317,3 +317,23 @@ def test_default_publisher_missing_or_mismatched_credentials_stop_before_claim(m
     assert result["status"] == "FAILED_CONFIG" and result["error_type"] == error
     store.claim_slot.assert_not_called()
     graph.assert_not_called()
+
+
+def legacy_evidence(source):
+    return {"status": "ok", "verification_basis": "legacy_published_status",
+            "source_date": source["publish_date"], "source_content_hash": source_content_hash(source),
+            "confirmed_by": "user-confirmed-2026-10-12", "confirmed_at": "2026-10-12T06:27:00+09:00"}
+
+
+def test_user_confirmed_legacy_published_status_allows_preview_without_fake_ids(store, publisher):
+    store.get_x_evidence.return_value = legacy_evidence(SOURCE)
+    result = run(store, publisher, dry_run=True)
+    assert result["status"] == "PREVIEW"
+    assert_no_writes(store, publisher)
+
+
+@pytest.mark.parametrize("change", [{"status": "generated"}, {"novel_text": "changed"}, {"publish_date": "2026-10-19"}])
+def test_legacy_confirmation_does_not_cover_changed_or_new_sources(change):
+    evidence = legacy_evidence(SOURCE)
+    source = dict(SOURCE, **change)
+    assert verify_x_publication(source, evidence) is False

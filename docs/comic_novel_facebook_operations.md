@@ -92,3 +92,7 @@ python -m weekend.comic_novel_fb --stage reconcile --not-posted --claim-id CLAIM
 npm install --prefix /tmp/comic-novel-pglite @electric-sql/pglite@0.5.8
 PGLITE_MODULE=/tmp/comic-novel-pglite/node_modules/@electric-sql/pglite/dist/index.js node tests/sql/comic_novel_fb.integration.mjs
 ```
+
+## 2026-10-12 운영 승인 및 기존 원본 확인
+
+사용자가 현재 적재 23행은 전부 X 정상 발행본이며 published 상태로 확인 가능하다고 확인했다. 기존 원문 해시 스냅샷 23행을 legacy 확인 테이블에 등록하고 23행 해시 일치를 검증했다. 가짜 게시 ID는 생성하지 않았다. 신규 원본은 실제 X 전체 ID 검증을 유지한다. 최종 검증은 Python 3.11 196건, 격리 SQL 26건 통과다.

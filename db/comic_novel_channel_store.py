@@ -36,7 +36,11 @@ class ComicNovelChannelStore:
         rows = (self.client.table("comic_novel_channel_history").select("*")
                 .eq("channel", "x").eq("source_date", str(source_date))
                 .eq("status", "ok").limit(1).execute().data)
-        return rows[0] if rows else {}
+        if rows:
+            return rows[0]
+        legacy = (self.client.table("comic_novel_legacy_x_confirmations").select("*")
+                  .eq("source_date", str(source_date)).limit(1).execute().data)
+        return dict(legacy[0], status="ok", verification_basis="legacy_published_status") if legacy else {}
 
     def get_week_state(self, target, slot):
         # Any unresolved send blocks all later slots; runner restarts are not leases.
