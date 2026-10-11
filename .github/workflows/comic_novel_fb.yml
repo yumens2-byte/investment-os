@@ -1,0 +1,64 @@
+# Approved production activation 2026-10-12; repository variable false pauses publishing.
+name: Comic Novel Facebook (Friday)
+
+on:
+  schedule:
+    - cron: '17 13 * * 5' # Friday 22:17 KST
+  workflow_dispatch:
+    inputs:
+      stage:
+        description: 'preview or Friday publish (reconciliation uses operator CLI)'
+        type: choice
+        options: [preview, publish]
+        default: preview
+      dry_run:
+        description: 'Preview only; no Graph or DB writes'
+        type: boolean
+        default: true
+
+permissions:
+  contents: read
+
+concurrency:
+  group: comic-novel-facebook
+  cancel-in-progress: false
+
+env:
+  FACE_NOVEL_ENABLED: ${{ vars.FACE_NOVEL_ENABLED || 'true' }}
+  FACE_NOVEL_FIRST_DATE: '2026-10-16'
+  # Operational limit, not a Meta API maximum.
+  FACE_NOVEL_MAX_CHARS: '10000'
+  DRY_RUN: ${{ github.event_name == 'schedule' && 'false' || (inputs.dry_run && 'true' || 'false') }}
+  REQUEST_STAGE: ${{ github.event_name == 'schedule' && 'publish' || inputs.stage || 'preview' }}
+  SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+  SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
+  FACE_PAGE_ID: ${{ secrets.FACE_PAGE_ID }}
+  FACE_PAGE_TOKEN: ${{ secrets.FACE_PAGE_TOKEN }}
+  TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+  TELEGRAM_FREE_CHANNEL_ID: ${{ secrets.TELEGRAM_FREE_CHANNEL_ID }}
+
+jobs:
+  comic-novel-facebook:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+      - name: Random delay (scheduled)
+        if: github.event_name == 'schedule' && env.FACE_NOVEL_ENABLED == 'true'
+        run: |
+          DELAY=$((RANDOM % 200))
+          sleep "$DELAY"
+      - name: Consume one stored novel
+        run: python -m weekend.comic_novel_fb --stage "$REQUEST_STAGE" --output output/comic-novel-fb-report.json
+      - name: Upload sanitized result
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: comic-novel-facebook-${{ github.run_id }}
+          path: output/comic-novel-fb-report.json
+          if-no-files-found: warn

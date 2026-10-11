@@ -570,7 +570,7 @@ def _generate_cover_image(novel_text: str, ep_range: str) -> str | None:
         return None
 
 
-def publish_novel_episode() -> dict:
+def publish_novel_episode(dry_run: bool | None = None) -> dict:
     """
     C-7 전체 파이프라인:
     1. Supabase 캐시 확인
@@ -581,13 +581,33 @@ def publish_novel_episode() -> dict:
     logger.info("[ComicNovel] C-7 소설형 에피소드 파이프라인 시작")
     today = datetime.now(KST).strftime("%Y-%m-%d")
 
+    if dry_run is None:
+        from config.settings import DRY_RUN
+        dry_run = DRY_RUN
+
     # ── Step 0: Supabase 캐시 확인 ──
     cached = None
     try:
         from db.daily_store import get_novel
-        cached = get_novel(today)
+        cached = get_novel(today, strict=True)
     except Exception as e:
-        logger.warning(f"[ComicNovel] 캐시 조회 실패 (무시): {e}")
+        logger.error(f"[ComicNovel] 캐시 조회 실패: {e}")
+        return {"success": False, "status": "HOLD_DB_READ", "error": "novel cache unavailable"}
+
+    if cached and cached.get("status") == "published":
+        return {"success": True, "status": "SKIPPED_ALREADY_PUBLISHED", "type": "comic_novel"}
+    if cached and cached.get("status") in {"x_publishing", "x_partial", "x_hold"}:
+        return {"success": False, "status": "HOLD_X_RECONCILE", "error": "X publication needs reconciliation; no automatic repost"}
+    # An evidence row can survive a failed final source-status write.
+    if not dry_run:
+        try:
+            from db.comic_novel_channel_store import ComicNovelChannelStore
+            channel_store = ComicNovelChannelStore()
+            if channel_store.get_x_evidence(today):
+                return {"success": False, "status": "HOLD_DB_CONFIRM", "error": "X evidence already exists; reconcile source status"}
+        except Exception:
+            logger.exception("[ComicNovel] X evidence lookup failed")
+            return {"success": False, "status": "HOLD_DB_READ", "error": "X evidence unavailable"}
 
     if cached:
         logger.info(f"[ComicNovel] 캐시 HIT — {cached.get('episode_range', '?')} (Claude 호출 0)")
@@ -600,7 +620,7 @@ def publish_novel_episode() -> dict:
 
         if not episodes:
             logger.warning("[ComicNovel] 이번 주 발행 에피소드 없음 → 스킵")
-            return {"success": False, "error": "이번 주 에피소드 없음"}
+            return {"success": True, "status": "SKIPPED_NO_DATA", "type": "comic_novel"}
 
         # ── Step 1b: episode_context에서 요약 정보 보완 ─────────────
         # Notion에서 가져온 ep_no 기준으로 DB 요약만 주입 (없어도 무관)
@@ -629,9 +649,6 @@ def publish_novel_episode() -> dict:
             logger.warning(f"[ComicNovel] episode_context 보완 실패 (무시): {_e}")
 
 
-            logger.warning("[ComicNovel] 이번 주 에피소드 없음 → 스킵")
-            return {"success": False, "error": "이번 주 에피소드 없음"}
-
         # ── Step 2: Claude 소설화 ──
         # A안: 지난주 MVP 투표 winner 조회 (실패해도 소설화는 계속)
         mvp_winner = None
@@ -651,7 +668,9 @@ def publish_novel_episode() -> dict:
         # ── Step 2.5: Supabase 캐시 저장 ──
         try:
             from db.daily_store import save_novel
-            save_novel(
+            if dry_run:
+                return {"success": True, "status": "DRY_RUN", "type": "comic_novel", "thread_count": len(novel_data.get("x_thread", []))}
+            saved = save_novel(
                 publish_date=today,
                 week_label=_get_week_label(),
                 episode_range=novel_data["episode_range"],
@@ -661,9 +680,21 @@ def publish_novel_episode() -> dict:
                 tg_html=novel_data["tg_html"],
                 source_pages=[ep["page_id"] for ep in episodes],
             )
+            if not saved:
+                raise RuntimeError("novel cache save failed")
             logger.info("[ComicNovel] Supabase 캐시 저장 완료")
         except Exception as e:
-            logger.warning(f"[ComicNovel] 캐시 저장 실패 (발행은 계속): {e}")
+            logger.error(f"[ComicNovel] 캐시 저장 실패: {e}")
+            return {"success": False, "status": "HOLD_DB_SAVE", "error": "novel cache save failed"}
+
+    if dry_run:
+        return {"success": True, "status": "DRY_RUN", "type": "comic_novel", "thread_count": len(novel_data.get("x_thread", []))}
+    x_thread = novel_data.get("x_thread", [])
+    if not isinstance(x_thread, list) or not x_thread or any(not isinstance(p, str) or not p.strip() for p in x_thread):
+        return {"success": False, "status": "HOLD_CONTENT", "error": "empty or invalid X thread"}
+    from db.daily_store import claim_novel_x, update_novel_status
+    if not claim_novel_x(today):
+        return {"success": False, "status": "HOLD_DB_SAVE", "error": "X publication guard could not be persisted"}
 
     # ── Step 2.7: 표지 이미지 생성 (Gemini) ──
     cover_path = None
@@ -674,40 +705,54 @@ def publish_novel_episode() -> dict:
     except Exception as e:
         logger.warning(f"[ComicNovel] 표지 생성 예외 (텍스트만 발행): {e}")
 
-    # ── Step 3: X 발행 (표지 있으면 이미지 트윗 → 스레드) ──
-    x_thread = novel_data.get("x_thread", [])
-    tweet_id = "SKIP"
+    # Full real-X success is required before downstream eligibility.
+    post_ids = []
+    def confirmed(result, expected, key="tweet_ids"):
+        ids = result.get(key) or []
+        if key == "tweet_id":
+            ids = [ids] if ids else []
+        return (result.get("success") is True and not result.get("dry_run", False)
+                and len(ids) == expected
+                and (key == "tweet_id" or result.get("published_count") == expected)
+                and all(str(v).isdigit() and int(str(v)) > 0 for v in ids))
     try:
-        if cover_path and len(x_thread) > 0:
-            # 표지 이미지 + 헤더 텍스트를 이미지 트윗으로 발행
-            from publishers.x_publisher import publish_tweet_with_image, publish_thread
-            header_text = x_thread[0]  # 헤더 포스트
-            img_result = publish_tweet_with_image(header_text, cover_path)
-            first_tweet_id = img_result.get("tweet_id", "FAIL")
-
-            # 나머지 스레드를 reply로 발행
-            if len(x_thread) > 1 and first_tweet_id and first_tweet_id != "FAIL":
-                remaining = x_thread[1:]
-                thread_result = publish_thread(remaining, reply_to=first_tweet_id)
-                tweet_id = first_tweet_id
-                logger.info(
-                    f"[ComicNovel] X 표지+스레드 발행: {tweet_id} "
-                    f"(표지 1장 + 스레드 {len(remaining)}개)"
-                )
-            else:
-                tweet_id = first_tweet_id
-                logger.info(f"[ComicNovel] X 표지 트윗만 발행: {tweet_id}")
+        from publishers.x_publisher import publish_tweet_with_image, publish_thread
+        if cover_path:
+            img_result = publish_tweet_with_image(x_thread[0], cover_path)
+            if not confirmed(img_result, 1, "tweet_id"):
+                raise RuntimeError("X cover publication was not confirmed")
+            post_ids.append(str(img_result["tweet_id"]))
+            if len(x_thread) > 1:
+                thread_result = publish_thread(x_thread[1:], reply_to=post_ids[0])
+                post_ids.extend(str(v) for v in (thread_result.get("tweet_ids") or []) if str(v).isdigit())
+                if not confirmed(thread_result, len(x_thread) - 1):
+                    raise RuntimeError("X reply thread was incomplete")
         else:
-            # 표지 없으면 기존 방식 (텍스트 스레드)
-            from publishers.x_publisher import publish_thread
             x_result = publish_thread(x_thread)
-            # 기존 결함 수정(2026-08-11): publish_thread 반환에 단수 "tweet_id" 키 없음
-            #   → "tweet_ids" 첫 요소가 스레드 헤더 트윗 ID (A안 투표 연결에 필요)
-            _ids = x_result.get("tweet_ids") or []
-            tweet_id = str(_ids[0]) if _ids else "FAIL"
-            logger.info(f"[ComicNovel] X 스레드 발행 (표지 없음): {tweet_id} ({len(x_thread)}개)")
-    except Exception as e:
-        logger.warning(f"[ComicNovel] X 발행 실패: {e}")
+            post_ids.extend(str(v) for v in (x_result.get("tweet_ids") or []) if str(v).isdigit())
+            if not confirmed(x_result, len(x_thread)):
+                raise RuntimeError("X thread was incomplete")
+        if len(set(post_ids)) != len(x_thread):
+            raise RuntimeError("X publication IDs were not unique")
+    except Exception:
+        logger.exception("[ComicNovel] X publication not fully confirmed")
+        update_novel_status(today, "x_partial" if post_ids else "x_hold")
+        return {"success": False, "status": "HOLD_X_RECONCILE", "tweet_ids": post_ids,
+                "error": "X publication incomplete or uncertain; no automatic repost"}
+
+    tweet_id = post_ids[0]
+    try:
+        if not channel_store.record_x_publication(
+                source_date=today, post_ids=post_ids, expected_count=len(x_thread),
+                title=novel_data.get("title", ""), episode_range=novel_data.get("episode_range", ""),
+                novel_text=novel_data.get("novel_text", ""), cover_asset_uri=None):
+            raise RuntimeError("X evidence save failed")
+        if not update_novel_status(today, "published"):
+            raise RuntimeError("X source status save failed")
+    except Exception:
+        logger.exception("[ComicNovel] X succeeded but DB confirmation failed; do not repost")
+        return {"success": False, "status": "HOLD_DB_CONFIRM", "tweet_ids": post_ids,
+                "error": "X published; reconcile DB confirmation without reposting"}
 
     # ── Step 4: TG 장문 발행 ──
     tg_html = novel_data.get("tg_html", "")
@@ -727,13 +772,6 @@ def publish_novel_episode() -> dict:
     except Exception as e:
         logger.warning(f"[ComicNovel] TG 발행 실패: {e}")
 
-    # ── Step 4.5: Supabase status 업데이트 ──
-    try:
-        from db.daily_store import update_novel_status
-        update_novel_status(today, "published")
-    except Exception:
-        pass
-
     # ── Step 4.6: A안 캐릭터 MVP 투표 발행 (독립 실행 — 실패해도 영향 없음) ──
     # 위치 사유: 소설을 실제 발행한 실행에서만 투표가 그 스레드에 연결되도록
     #   run_weekend 훅에서 이동 (2026-08-11). publish_vote 내 당일 멱등 가드로
@@ -752,5 +790,7 @@ def publish_novel_episode() -> dict:
         "novel_length": len(novel_data.get("novel_text", "")),
         "thread_count": len(x_thread),
         "tweet_id": tweet_id,
+        "tweet_ids": post_ids,
+        "status": "PUBLISHED",
         "cover": bool(cover_path),
     }

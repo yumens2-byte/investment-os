@@ -355,7 +355,7 @@ def save_novel(
     tg_html: str,
     source_pages: list = None,
 ) -> bool:
-    """C-7: 소설 콘텐츠 Supabase 캐시 저장 (UPSERT)"""
+    """Insert a new source novel; publish_date conflicts fail closed without rewriting it."""
     try:
         client = _get_client()
         row = {
@@ -369,9 +369,9 @@ def save_novel(
             "source_pages": json.dumps(source_pages or [], ensure_ascii=False),
             "status": "generated",
         }
-        client.table("comic_novels").upsert(
-            row, on_conflict="publish_date"
-        ).execute()
+        result = client.table("comic_novels").insert(row).execute()
+        if not result.data:
+            raise RuntimeError("comic_novels save returned no persisted row")
         logger.info(f"[DailyStore] comic_novels 저장: {publish_date} ({episode_range})")
         return True
     except Exception as e:
@@ -379,7 +379,7 @@ def save_novel(
         return False
 
 
-def get_novel(publish_date: str) -> dict | None:
+def get_novel(publish_date: str, *, strict: bool = False) -> dict | None:
     """C-7: 당일 캐시된 소설 조회. 없으면 None."""
     try:
         client = _get_client()
@@ -404,16 +404,32 @@ def get_novel(publish_date: str) -> dict | None:
         return None
     except Exception as e:
         logger.warning(f"[DailyStore] comic_novels 조회 실패: {e}")
+        if strict:
+            raise
         return None
+
+
+def claim_novel_x(publish_date: str) -> bool:
+    """Atomically reserve a generated novel; only the winning source runner posts X."""
+    try:
+        result = _get_client().table("comic_novels").update(
+            {"status": "x_publishing"}
+        ).eq("publish_date", publish_date).eq("status", "generated").execute()
+        return len(result.data or []) == 1
+    except Exception as e:
+        logger.error(f"[DailyStore] X publication claim failed: {e}")
+        return False
 
 
 def update_novel_status(publish_date: str, status: str) -> bool:
     """C-7: 소설 발행 상태 업데이트 (generated → published)"""
     try:
         client = _get_client()
-        client.table("comic_novels").update(
+        result = client.table("comic_novels").update(
             {"status": status}
         ).eq("publish_date", publish_date).execute()
+        if not result.data:
+            raise RuntimeError("comic_novels status update matched no row")
         logger.info(f"[DailyStore] comic_novels 상태 변경: {publish_date} → {status}")
         return True
     except Exception as e:
