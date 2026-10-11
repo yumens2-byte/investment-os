@@ -1,5 +1,5 @@
 # .github/workflows/comic_novel.yml
-# C-7: EDT Universe 소설형 에피소드 — 매주 일요일 22:00 KST
+# C-7: EDT Universe 소설형 에피소드 — 매주 일요일 22:17 KST
 name: 📝 Comic Novel (Sunday)
 
 on:
@@ -13,7 +13,7 @@ on:
         default: 'false'
 
 env:
-  DRY_RUN: ${{ github.event.inputs.dry_run }}
+  DRY_RUN: ${{ github.event_name == 'schedule' && 'false' || inputs.dry_run || 'false' }}
   ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
   NOTION_API_KEY: ${{ secrets.NOTION_API_KEY }}
   X_API_KEY: ${{ secrets.X_API_KEY }}
@@ -57,7 +57,8 @@ jobs:
           import logging
           logging.basicConfig(level=logging.INFO, format='%(asctime)s [%(levelname)s] %(name)s — %(message)s')
           from weekend.comic_novel import publish_novel_episode
-          import json
+          import json, sys
           result = publish_novel_episode()
           print(json.dumps(result, ensure_ascii=False, indent=2))
+          sys.exit(0 if result.get('success') else 1)
           "
