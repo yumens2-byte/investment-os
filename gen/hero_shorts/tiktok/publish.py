@@ -9,12 +9,13 @@ import logging
 import os
 
 from .. import publish_runtime as pr
+from . import account as tk_account
 from . import gates as tk_gates
 from . import manifest as tk_manifest
 
 log = logging.getLogger("tiktok.publish")
 
-VERSION = "1.1.0"
+VERSION = "1.2.0"
 PLATFORM = "tiktok"
 
 
@@ -48,7 +49,8 @@ def _as_bool(value, default):
 
 
 def publish_segment(segment, account_id=None, schedule_at=None, max_wait_sec=900,
-                    poll_interval_sec=30, ai_generated=True, privacy_level=None):
+                    poll_interval_sec=30, ai_generated=True, privacy_level=None,
+                    preflight=None):
     """매니페스트 세그먼트 1편 발행. 게이트 미통과 시 RuntimeError."""
     if not tk_manifest.segment_gate_ok(segment):
         raise RuntimeError(
@@ -67,6 +69,13 @@ def publish_segment(segment, account_id=None, schedule_at=None, max_wait_sec=900
     if not media_url:
         raise RuntimeError("media_url 없음 — 업로드 단계(upload_media)를 먼저 수행하세요")
     aid = resolve_account_id(account_id)
+    # 발행 전 토큰 유효성 관측 — 무효 상태면 차단(설계 v1.0).
+    # gates → preflight → media_url → 발행 순서: 규율 검증이 자격 검사보다 먼저.
+    if preflight is None:
+        preflight = tk_account.preflight_enabled()
+    if preflight:
+        health = tk_account.assert_token_ready(aid)
+        log.info("틱톡 preflight: status=%s 남은=%sh", health.status, health.hours_left)
     log.info(
         "틱톡 발행 요청: segment=%s account=%s privacy=%s draft=%s",
         segment.get("segment_no"), aid, level, draft,

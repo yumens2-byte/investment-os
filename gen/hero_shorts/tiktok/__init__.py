@@ -7,6 +7,7 @@ gen/hero_shorts/tiktok/ — 틱톡 진입 라인 (분할 발행 + 합본 발행)
     caption.py  — 편별 캡션 생성(문구 창작 없음)
     manifest.py — 7컷 → 3편 발행 매니페스트 · from_combined 합본 1편
     publish.py  — Zernio 틱톡 발행(fail-closed)
+    account.py  — 계정 토큰 preflight(만료·재연결 감지)
     runner.py   — CLI
 """
-VERSION = "1.2.0"
+VERSION = "1.3.0"

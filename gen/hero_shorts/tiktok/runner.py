@@ -15,6 +15,7 @@ import sys
 from pathlib import Path
 
 from . import VERSION
+from . import account as tk_account
 from . import manifest as tk_manifest
 from . import publish as tk_publish
 
@@ -75,6 +76,18 @@ def cmd_combined(args):
     return 0 if m["all_gates_ok"] else 2
 
 
+def cmd_preflight(args):
+    health = tk_account.check_token_health(account_id=args.account_id,
+                                           warn_hours=args.warn_hours)
+    print(json.dumps(health.to_dict(), ensure_ascii=False))
+    if health.blocking:
+        print(tk_account.format_alert(health), file=sys.stderr)
+        return 70
+    if health.status != tk_account.OK:
+        print(tk_account.format_alert(health), file=sys.stderr)
+    return 0
+
+
 def cmd_publish(args):
     m = tk_manifest.load_manifest(args.manifest)
     seg = next((s for s in m["segments"] if s["segment_no"] == args.segment), None)
@@ -85,7 +98,8 @@ def cmd_publish(args):
         seg["media_url"] = args.media_url
     result = tk_publish.publish_segment(seg, account_id=args.account_id,
                                         schedule_at=args.schedule_at,
-                                        privacy_level=args.privacy_level)
+                                        privacy_level=args.privacy_level,
+                                        preflight=not args.skip_preflight)
     print(json.dumps(result, ensure_ascii=False, default=str))
     return 0 if result.get("outcome") == "published" else 2
 
@@ -103,6 +117,11 @@ def main(argv=None):
     p.add_argument("--privacy-level", default=None, help="TikTok 공개 레벨(기본 PUBLIC_TO_EVERYONE)")
     p.add_argument("--draft", action="store_true", help="TikTok 인박스 초안으로 업로드(비공개 경로)")
     p.set_defaults(func=cmd_manifest)
+
+    pf = sub.add_parser("preflight", help="틱톡 토큰 유효성 사전 점검(0크레딧)")
+    pf.add_argument("--account-id", default=None, help="미지정 시 HERO_TIKTOK_ACCOUNT_ID")
+    pf.add_argument("--warn-hours", type=float, default=None, help="만료 임박 임계(기본 12h)")
+    pf.set_defaults(func=cmd_preflight)
 
     c = sub.add_parser("combined", help="합본 1편 매니페스트 생성(정기 발행 기본)")
     c.add_argument("--video", required=True, help="합본 영상 파일 경로")
@@ -124,6 +143,8 @@ def main(argv=None):
     pb.add_argument("--segment", type=int, required=True, choices=[1, 2, 3])
     pb.add_argument("--account-id", default=None, help="미지정 시 HERO_TIKTOK_ACCOUNT_ID")
     pb.add_argument("--privacy-level", default=None, help="TikTok 공개 레벨(미지정 시 매니페스트/환경변수)")
+    pb.add_argument("--skip-preflight", action="store_true",
+                    help="토큰 preflight 생략(비상용 — 기본은 검사)")
     pb.add_argument("--media-url", default=None, help="발행 직전 media_url 주입(합본 경로)")
     pb.add_argument("--schedule-at", default=None, help="예약 발행 ISO8601")
     pb.set_defaults(func=cmd_publish)

@@ -85,6 +85,7 @@ jobs:
           NOTION_API_KEY: ${{ secrets.NOTION_API_KEY }}   # 과거 레포 관례 호환
           HERO_TIKTOK_ACCOUNT_ID: ${{ secrets.HERO_TIKTOK_ACCOUNT_ID }}   # 틱톡 계정 _id
           HERO_TIKTOK_PRIVACY_LEVEL: "PUBLIC_TO_EVERYONE"
+          HERO_TIKTOK_PREFLIGHT_WARN_HOURS: "12"   # 토큰 만료 임박 경보 임계(차단 아님)
       - name: Upload artifacts (컷 영상·합본·QC·로그)   # v2.4.3 — 러너 소실 방지 필수
         if: always()
         uses: actions/upload-artifact@v4
