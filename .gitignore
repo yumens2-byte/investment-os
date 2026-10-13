@@ -205,3 +205,6 @@ cython_debug/
 marimo/_static/
 marimo/_lsp/
 __marimo__/
+
+# 0크레딧 테스트 산출물 — 추적 제외
+gen/data/
