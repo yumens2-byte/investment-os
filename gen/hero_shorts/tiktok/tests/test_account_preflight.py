@@ -1,11 +1,11 @@
 """tests/test_account_preflight.py — 틱톡 토큰 preflight 판정 검증."""
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 
 import pytest
 
 from gen.hero_shorts.tiktok import account as A
 
-NOW = datetime(2026, 10, 13, 14, 0, tzinfo=timezone.utc)
+NOW = datetime(2026, 10, 13, 14, 0, tzinfo=UTC)
 AID = "6ace2290d59b32a54897e526"
 
 

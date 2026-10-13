@@ -27,7 +27,7 @@ import logging
 import os
 import subprocess
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 log = logging.getLogger("tiktok.account")
 
@@ -107,7 +107,7 @@ def _parse_iso(ts):
         parsed = datetime.fromisoformat(text)
     except ValueError:
         return None
-    return parsed if parsed.tzinfo else parsed.replace(tzinfo=timezone.utc)
+    return parsed if parsed.tzinfo else parsed.replace(tzinfo=UTC)
 
 
 def fetch_accounts(platform=PLATFORM):
@@ -139,7 +139,7 @@ def check_token_health(account_id=None, warn_hours=None, now=None, accounts=None
     """토큰 상태 판정. `now`·`accounts` 주입 → 시각·네트워크 비의존(테스트 결정론)."""
     aid = account_id or os.environ.get(ACCOUNT_ENV)
     hours_threshold = resolve_warn_hours(warn_hours)
-    current = now or datetime.now(timezone.utc)
+    current = now or datetime.now(UTC)
     pool = fetch_accounts() if accounts is None else list(accounts)
 
     if not aid:
