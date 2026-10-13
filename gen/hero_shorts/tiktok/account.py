@@ -11,6 +11,7 @@
     needs_reconnect 재연결 필요(needsReconnection=True)
     inactive        계정 비활성(isActive=False)
     missing         계정 미발견 또는 계정 ID 미설정
+    unavailable     계정 조회 자체 불가(CI 러너에 gsk 부재 등) — 경고만, 차단 안 함
 
 설계 대비 의도적 수정(1건)
     설계 §5는 "ok 아니면 차단"이었다. 그러나 24시간 주기 토큰에 warn_hours=12를
@@ -31,7 +32,7 @@ from datetime import UTC, datetime
 
 log = logging.getLogger("tiktok.account")
 
-VERSION = "1.0.0"
+VERSION = "1.1.0"
 PLATFORM = "tiktok"
 
 DEFAULT_WARN_HOURS = 12.0
@@ -45,10 +46,11 @@ EXPIRED = "expired"
 NEEDS_RECONNECT = "needs_reconnect"
 INACTIVE = "inactive"
 MISSING = "missing"
+UNAVAILABLE = "unavailable"
 
 # 실제 발행을 막는 상태. expiring 은 경고만(설계 대비 수정 — 모듈 docstring 참조).
 BLOCKING = frozenset({EXPIRED, NEEDS_RECONNECT, INACTIVE, MISSING})
-WARN_ONLY = frozenset({EXPIRING})
+WARN_ONLY = frozenset({EXPIRING, UNAVAILABLE})
 
 
 @dataclass
@@ -140,7 +142,13 @@ def check_token_health(account_id=None, warn_hours=None, now=None, accounts=None
     aid = account_id or os.environ.get(ACCOUNT_ENV)
     hours_threshold = resolve_warn_hours(warn_hours)
     current = now or datetime.now(UTC)
-    pool = fetch_accounts() if accounts is None else list(accounts)
+    try:
+        pool = fetch_accounts() if accounts is None else list(accounts)
+    except Exception as exc:  # noqa: BLE001
+        # 조회 자체가 불가한 환경(예: Actions 러너에 gsk 부재)에서는 판정을 보류하고
+        # 발행을 막지 않는다. 실제 무효 상태(만료·재연결·비활성)만 차단한다.
+        return TokenHealth(True, UNAVAILABLE, aid, None, None, None,
+                           [f"계정 조회 불가 — 판정 보류(차단 안 함): {exc}"])
 
     if not aid:
         return TokenHealth(False, MISSING, None,
@@ -189,7 +197,9 @@ def format_alert(health):
         "조치: " + (
             "Zernio 대시보드(https://zernio.com/dashboard/connections)에서 재연결"
             if health.status in (EXPIRED, NEEDS_RECONNECT)
-            else "만료 전 재연결 권장(자동 갱신 작동 미검증)"
+            else ("계정 조회 불가 — gsk가 있는 환경에서 재점검"
+                  if health.status == UNAVAILABLE
+                  else "만료 전 재연결 권장(자동 갱신 작동 미검증)")
         ),
     ]
     if health.problems:

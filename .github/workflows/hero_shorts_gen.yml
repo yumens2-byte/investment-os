@@ -58,6 +58,8 @@ jobs:
             python3 -m gen.hero_shorts.pipeline "${ARGS[@]}"
           elif [ "$STEP" = "preflight" ]; then
             # 2026-10-13 추가: 시크릿 HERO_TIKTOK_ACCOUNT_ID 실값 검증 — 0크레딧·발행 없음
+            # 지문(sha256)만 출력 — 값 자체는 노출되지 않으며, 로컬 계산값과 대조한다.
+            python3 -c "import hashlib,os;s=os.environ.get('HERO_TIKTOK_ACCOUNT_ID') or '';print('HERO_TIKTOK_ACCOUNT_ID sha256:', hashlib.sha256(s.encode()).hexdigest())"
             python3 -m gen.hero_shorts.tiktok.runner preflight
           elif [ "$STEP" = "publish_combined" ]; then
             # 2026-10-13 마스터 지시: 정기 발행은 3편 분할이 아니라 전편 합본 1편으로 올린다.

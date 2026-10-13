@@ -87,3 +87,13 @@ def test_warn_hours_env_override(monkeypatch):
     monkeypatch.setenv(A.WARN_HOURS_ENV, "3")
     assert A.resolve_warn_hours() == 3.0
     assert A.check_token_health(account_id=AID, now=NOW, accounts=[_acct(6)]).status == A.OK
+
+
+def test_fetch_unavailable_is_non_blocking(monkeypatch):
+    def _boom(*a, **k):
+        raise FileNotFoundError("gsk")
+    monkeypatch.setattr(A, "fetch_accounts", _boom)
+    h = A.check_token_health(account_id="A")
+    assert h.status == A.UNAVAILABLE
+    assert h.blocking is False
+    assert h.ok is True
