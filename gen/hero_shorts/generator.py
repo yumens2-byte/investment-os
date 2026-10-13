@@ -286,7 +286,7 @@ def _fal_call(request, out_path):
             resp_url, headers={"Authorization": f"Key {key}"}), "결과조회")
     video_url = result["video"]["url"]
     urllib.request.urlretrieve(video_url, out_path)
-    measured = _validate_output(out_path, duration, backend="fal")   # 과금 후 기술검증 + 실측 영속화
+    _validate_output(out_path, duration, backend="fal")   # 과금 후 기술검증 + 실측 영속화
     budget_record(duration)
     _clear_pending(out_path)
     log.info("fal 다운로드 완료: %s (%.0fs분)", out_path, duration)
