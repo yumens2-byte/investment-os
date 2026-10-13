@@ -596,6 +596,7 @@ jobs:
       cancel-in-progress: false
     # T-7 (2026-08-27): job env는 alert 고유 변수만 유지 — 시크릿은 workflow env 단일 사용
     env:
+      FACE_SESSIONS: "${{ vars.FACE_SESSIONS || 'morning,narrative,full' }},alert"
       ALERT_TZ: America/New_York
       # C-1 (2026-08-27): 13:30 윈도우 누락 보정 — cron 커버 범위 내 (EDT/EST 검증 완료)
       # ※ 이 값은 ET(뉴욕) 기준 시각이며 cron(UTC) / KST와 별개 축이다. 혼동 주의.
@@ -665,7 +666,27 @@ jobs:
           echo "⏱️ Random delay: ${DELAY}s"
           sleep $DELAY
 
+      - name: Verify alert display and Facebook delivery
+        run: |
+          python -m pip install pytest
+          python -m pytest -q tests/test_alert_display_facebook.py tests/test_facebook_publisher.py
+
+      - name: Restore Facebook alert history
+        uses: actions/cache/restore@v4
+        with:
+          path: data/published/fb_alert_history.json
+          key: fb-alert-history-${{ github.ref }}-${{ github.run_id }}-${{ github.run_attempt }}
+          restore-keys: |
+            fb-alert-history-${{ github.ref }}-
+
       - run: python main.py alert
+
+      - name: Save Facebook alert history
+        uses: actions/cache/save@v4
+        if: always()
+        with:
+          path: data/published/fb_alert_history.json
+          key: fb-alert-history-${{ github.ref }}-${{ github.run_id }}-${{ github.run_attempt }}
 
       - name: Save alert history cache
         uses: actions/cache/save@v4
@@ -696,6 +717,7 @@ jobs:
           name: alert-${{ github.run_id }}
           path: |
             data/published/alert_history.json
+            data/published/fb_alert_history.json
             data/published/dlq.json
             x_alert_history.json
           if-no-files-found: warn

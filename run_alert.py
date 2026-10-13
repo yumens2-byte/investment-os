@@ -11,7 +11,7 @@ run_alert.py
   → Alert 엔진 (조건 판정)
   → 쿨다운 체크 (1시간)
   → Alert 포맷 생성
-  → TG 발행 (무료/유료 채널)
+  → TG 발행 (무료/유료 채널) + Facebook 무료 알림 미러
   → Step X: x_eligible=True Alert X 발행 (감정 트리거 또는 기본 포맷)
   → 이력 기록
 
@@ -20,7 +20,7 @@ run_alert.py
 Step X 설계 원칙:
   - x_eligible=True + 쿨다운 없음  → 감정 트리거 포맷 X 발행 (post_alert_tweet)
   - x_eligible=True + 쿨다운 중    → 기본 포맷 X 발행 (publish_tweet)
-  - x_eligible=False               → X 발행 완전 스킵 (TG만 발행)
+  - x_eligible=False               → X 발행 완전 스킵 (TG + Facebook 발행)
   - TG 발행은 항상 tweet_for_tg(기본 포맷) 사용 — X 포맷과 완전 분리
   - AlertSignal은 dataclass → getattr() 로 x_eligible 접근 (필수)
     _alert.get("x_eligible", False) 는 AttributeError 발생 — 사용 금지
@@ -68,6 +68,7 @@ from zoneinfo import ZoneInfo
 import os
 
 from config.settings import LOG_LEVEL, DRY_RUN
+from publishers.alert_facebook import publish_alert as publish_facebook_alert
 
 logging.basicConfig(
     level=getattr(logging, LOG_LEVEL, logging.INFO),
@@ -76,7 +77,7 @@ logging.basicConfig(
 )
 logger = logging.getLogger("run_alert")
 
-VERSION = "1.6.0"  # T-4 백엔드 연동 + T-9 FRED 중복 제거 (이력: 1.4.0 COOLDOWN-C)
+VERSION = "1.7.0"  # Alert display precision + free Telegram payload Facebook mirror
 
 
 def _check_core_data_freshness(envelope: dict) -> tuple:
@@ -212,53 +213,53 @@ def _format_x_alert_tweet(alert, snapshot: dict) -> str:
 
     bodies = {
         "VIX_L2": (
-            f"🚨 VIX {snapshot.get('vix', 0):.1f} 돌파 — 공포지수 극단 구간 진입\n\n"
-            f"현재 SPY {snapshot.get('sp500', 0):+.1f}%"
-            f" | Oil ${snapshot.get('oil', 0):.0f}\n\n"
+            f"🚨 VIX {snapshot.get('vix', 0):.2f} 돌파 — 공포지수 극단 구간 진입\n\n"
+            f"현재 SPY {snapshot.get('sp500', 0):+.2f}%"
+            f" | Oil ${snapshot.get('oil', 0):.2f}\n\n"
             f"변동성 35+ 구간은 역사적으로 저가 매수 기회이기도 하지만 "
             f"추가 하락 리스크도 공존합니다."
         ),
         "SPY_L2": (
-            f"🔴 S&P500 {snapshot.get('sp500', 0):+.1f}% — 장중 급락 감지\n\n"
-            f"현재 VIX {snapshot.get('vix', 0):.1f}"
-            f" | Oil ${snapshot.get('oil', 0):.0f}"
+            f"🔴 S&P500 {snapshot.get('sp500', 0):+.2f}% — 장중 급락 감지\n\n"
+            f"현재 VIX {snapshot.get('vix', 0):.2f}"
+            f" | Oil ${snapshot.get('oil', 0):.2f}"
             f" | 10Y {snapshot.get('us10y', 0):.2f}%\n\n"
             f"-3% 이상 하락은 알고리즘 매도 가속 구간입니다. "
             f"포지션 점검이 필요한 시점."
         ),
         "SPY_L3": (
-            f"🆘 S&P500 {snapshot.get('sp500', 0):+.1f}% — 서킷브레이커 근접 급락\n\n"
-            f"현재 VIX {snapshot.get('vix', 0):.1f}"
-            f" | Oil ${snapshot.get('oil', 0):.0f}\n\n"
+            f"🆘 S&P500 {snapshot.get('sp500', 0):+.2f}% — 서킷브레이커 근접 급락\n\n"
+            f"현재 VIX {snapshot.get('vix', 0):.2f}"
+            f" | Oil ${snapshot.get('oil', 0):.2f}\n\n"
             f"역사적 급락 구간 진입. 리스크 관리 최우선."
         ),
         "OIL": (
-            f"⛽ WTI 유가 ${snapshot.get('oil', 0):.0f} 돌파 — 인플레이션 재점화 신호\n\n"
-            f"현재 SPY {snapshot.get('sp500', 0):+.1f}%"
-            f" | DXY {snapshot.get('dollar_index', 0):.1f}\n\n"
+            f"⛽ WTI 유가 ${snapshot.get('oil', 0):.2f} 돌파 — 인플레이션 재점화 신호\n\n"
+            f"현재 SPY {snapshot.get('sp500', 0):+.2f}%"
+            f" | DXY {snapshot.get('dollar_index', 0):.2f}\n\n"
             f"유가 $100 이상은 Fed 긴축 장기화 압박으로 이어질 수 있습니다."
         ),
         "FED_SHOCK": (
-            f"🏦 Fed 충격 감지 — SPY {snapshot.get('sp500', 0):+.1f}%\n\n"
-            f"VIX {snapshot.get('vix', 0):.1f}"
+            f"🏦 Fed 충격 감지 — SPY {snapshot.get('sp500', 0):+.2f}%\n\n"
+            f"VIX {snapshot.get('vix', 0):.2f}"
             f" | Fed 관련 뉴스 급증\n\n"
             f"금리 관련 시장 충격 의심. 포지션 점검 필요."
         ),
         "CRISIS": (
             f"🆘 복합 위기 시그널 감지\n\n"
-            f"VIX {snapshot.get('vix', 0):.1f}"
-            f" | SPY {snapshot.get('sp500', 0):+.1f}%"
-            f" | Oil ${snapshot.get('oil', 0):.0f}\n\n"
+            f"VIX {snapshot.get('vix', 0):.2f}"
+            f" | SPY {snapshot.get('sp500', 0):+.2f}%"
+            f" | Oil ${snapshot.get('oil', 0):.2f}\n\n"
             f"다중 지표 동시 경보 — 리스크 관리 최우선 구간입니다."
         ),
         "STAGFLATION": (
-            f"📉 스태그플레이션 공포 — SPY {snapshot.get('sp500', 0):+.1f}%\n\n"
+            f"📉 스태그플레이션 공포 — SPY {snapshot.get('sp500', 0):+.2f}%\n\n"
             f"주식·채권 동반 약세 감지 (금리 상승 + 경기 둔화)\n\n"
             f"에너지·방산 비중 주목. 성장주 주의."
         ),
         "SMA200_BREAK": (
             f"📊 SPY 200일 이동평균선 이탈 감지\n\n"
-            f"현재 SPY {snapshot.get('sp500', 0):+.1f}%"
+            f"현재 SPY {snapshot.get('sp500', 0):+.2f}%"
             f" | 기술적 약세장 진입 신호\n\n"
             f"추세 전환 경고 — 포지션 재점검 시점."
         ),
@@ -267,8 +268,8 @@ def _format_x_alert_tweet(alert, snapshot: dict) -> str:
     body  = bodies.get(
         alert_type,
         f"⚠️ 시장 Alert [{level}] — {alert_type}\n\n"
-        f"VIX {snapshot.get('vix', 0):.1f}"
-        f" | SPY {snapshot.get('sp500', 0):+.1f}%"
+        f"VIX {snapshot.get('vix', 0):.2f}"
+        f" | SPY {snapshot.get('sp500', 0):+.2f}%"
     )
     tweet = body + suffix
 
@@ -653,7 +654,7 @@ def run() -> dict:
     for signal in alerts:
 
         # ── [패치1] VIX_COUNTDOWN: X 발행 제거 — x_eligible=False 원칙 적용 ──
-        # 설계: VIX_COUNTDOWN은 사전 경고 정보성 알람 → TG 전용 발행
+        # VIX_COUNTDOWN은 TG + Facebook 발행, 기존 X 제외 정책 유지.
         if signal.alert_type == "VIX_COUNTDOWN":
             from core.alert_history         import should_send_countdown, record_countdown
             from publishers.alert_formatter import format_countdown_tweet
@@ -671,17 +672,22 @@ def run() -> dict:
 
             logger.info(f"[run_alert] VIX 카운트다운 TG 발행: VIX {triggered} — {reason}")
             tweet_cd = format_countdown_tweet(signal)
+            tg_countdown_text = f"⚠️ <b>VIX 카운트다운</b>\n\n{tweet_cd}"
             # X 발행 없음 — x_eligible=False
             try:
                 from publishers.telegram_publisher import send_message
-                send_message(f"⚠️ <b>VIX 카운트다운</b>\n\n{tweet_cd}", channel="free")
+                send_message(tg_countdown_text, channel="free")
                 record_countdown(triggered, "TG_ONLY")
                 sent_count += 1
                 logger.info(f"[run_alert] VIX 카운트다운 TG 발행 완료: VIX {triggered}")
             except Exception as e:
                 logger.warning(f"[run_alert] TG 카운트다운 발송 실패: {e}")
 
+            fb_result = publish_facebook_alert(
+                tg_countdown_text, signal.alert_type, signal.level
+            )
             results.append({
+                "facebook": fb_result,
                 "type": "VIX_COUNTDOWN", "level": triggered,
                 "tweet_id": "TG_ONLY", "x_skipped": True,
             })
@@ -788,6 +794,8 @@ def run() -> dict:
         except Exception as e:
             logger.warning(f"[run_alert] B-21A 밈 생성 실패 (영향 없음): {e}")
 
+        tg_text = f"🚨 <b>Investment OS Alert</b>\n\n{tweet_for_tg}"
+        fb_image_path = None
         # ── [패치4] TG 무료 채널 — tweet_for_tg 사용, B-5/B-6 전용 포맷 우선 ──
         # tweet_for_tg는 항상 기본 포맷 — X 감정 포맷 유입 차단
         # 밈 이미지 있으면 TG 텍스트+이미지 통합 단일 발행 (중복 발행 제거)
@@ -837,6 +845,7 @@ def run() -> dict:
             else:
                 # 일반 Alert: tweet_for_tg(기본 포맷) 사용
                 tg_text = f"🚨 <b>Investment OS Alert</b>\n\n{tweet_for_tg}"
+                fb_image_path = meme_path
                 if meme_path:
                     # [패치5] 이미지 있으면 캡션+이미지 통합 단일 발행 (텍스트 별도 없음)
                     send_photo(meme_path, caption=tg_text, channel="free")
@@ -868,6 +877,11 @@ def run() -> dict:
                 record_alert(signal.alert_type, signal.level, "SKIP_X", tweet_for_tg)
         except Exception as e:
             logger.warning(f"[run_alert] TG 무료 발송 예외 (X 발행 영향 없음): {e}")
+
+        # Mirror the exact free-channel payload, independently of Telegram success.
+        fb_result = publish_facebook_alert(
+            tg_text, signal.alert_type, signal.level, image_path=fb_image_path
+        )
 
         # ── TG 유료 채널 ───────────────────────────────────────
         try:
@@ -966,15 +980,15 @@ def run() -> dict:
                 if signal.alert_type == "OIL":
                     _p = snapshot.get("oil")
                     if _p:
-                        _hint = f" WTI ${float(_p):.0f}"
+                        _hint = f" WTI ${float(_p):.2f}"
                 elif signal.alert_type == "VIX":
                     _p = snapshot.get("vix")
                     if _p:
-                        _hint = f" VIX {float(_p):.1f}"
+                        _hint = f" VIX {float(_p):.2f}"
                 elif "SPY" in signal.alert_type:
                     _p = snapshot.get("sp500")
                     if _p:
-                        _hint = f" SPY {float(_p):+.1f}%"
+                        _hint = f" SPY {float(_p):+.2f}%"
                 elif signal.alert_type == "CRISIS":
                     _hint = " 복합위기"
 
@@ -999,6 +1013,7 @@ def run() -> dict:
             )
 
         results.append({
+            "facebook":   fb_result,
             "type":       signal.alert_type,
             "level":      signal.level,
             "tweet_id":   tweet_id,
