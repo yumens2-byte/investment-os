@@ -23,7 +23,9 @@ name: ⚠️ EDT Market Snapshot
 on:
   schedule:
     - cron: '40 21 * * 1-5'    # 정규 — KST 06:40 화~토 (문서 기준 시각)
+    - cron: '15 22 * * 1-5'    # v1.1 백업 — 스케줄 드롭·지연 대응
     - cron: '15 23 * * 1-5'    # v1.1 백업 — 스케줄 드롭·지연 대응
+    - cron: '15 00 * * 1-5'    # v1.1 백업 — 스케줄 드롭·지연 대응
   workflow_dispatch:
     inputs:
       dry_run:
