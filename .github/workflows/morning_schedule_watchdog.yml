@@ -1,4 +1,4 @@
-name: Morning Schedule Watchdog (Shadow)
+name: 🐕‍🦺 Morning Schedule Watchdog (Shadow)
 
 on:
   pull_request:
