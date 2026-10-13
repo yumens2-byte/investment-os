@@ -22,6 +22,12 @@ SNAP = {"sp500": 0.04, "vix": 15.31, "us10y": 5.22, "oil": 80.04}
 NOW = datetime(2026, 10, 13, 19, 50, tzinfo=timezone.utc)
 
 
+@pytest.fixture(autouse=True)
+def forbid_live_http(monkeypatch):
+    import requests
+    monkeypatch.setattr(requests.sessions.Session, "request", Mock(side_effect=AssertionError("live HTTP forbidden in regression tests")))
+
+
 def signal(kind="CPI_HOT", snapshot=None):
     return engine.AlertSignal(kind, "L1", "test", SNAP.copy() if snapshot is None else snapshot)
 
@@ -176,6 +182,8 @@ def test_full_cpi_run_mirrors_payload_without_x(configured, monkeypatch, tmp_pat
     module("collectors.yahoo_finance", collect_market_snapshot=lambda: SNAP.copy(), collect_tier2_market_data=lambda: {}, collect_spy_sma=lambda: {})
     module("collectors.news_rss", collect_news_sentiment=lambda: {})
     module("collectors.fred_client", collect_macro_data=lambda: {"cpi_yoy": 3.71, "core_cpi_yoy": 2.76}, detect_macro_changes=lambda *_: [])
+    module("core.dlq", get_queue_size=lambda: 0, process_queue=Mock())
+    module("engines.alert_followup", run_followup=lambda _: {"success": True, "processed": 0})
     module("core.json_builder", load_core_data=lambda: {"data": {}})
     module("publishers.telegram_publisher", send_photo=tg_photo, send_message=tg_message)
     module("publishers.x_publisher", publish_tweet=x, post_alert_tweet=x, publish_tweet_with_image=x)
