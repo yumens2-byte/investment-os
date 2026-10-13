@@ -94,9 +94,20 @@ DEFAULT_ALERT_EMAIL = "yumens2@gmail.com"
 DEFAULT_FROM_ACCOUNT = "yumens2@gmail.com"
 
 
-def _resolve_publish_opts(account_id=None, alert_to=None, from_account=None):
+def _resolve_publish_opts(account_id=None, alert_to=None, from_account=None, platform="instagram"):
+    """v2.8.0 — 플랫폼별 계정 ID 분기.
+
+    TikTok 발행은 틱톡 전용 계정 ID가 필요하다(인스타 계정 ID로는 틱톡 발행 불가).
+    우선순위: CLI --account-id > (tiktok) HERO_TIKTOK_ACCOUNT_ID > HERO_ZERNIO_ACCOUNT_ID > 소스 기본값.
+    """
+    if account_id:
+        resolved_account = account_id
+    elif str(platform).lower() == "tiktok":
+        resolved_account = _env("HERO_TIKTOK_ACCOUNT_ID", "")
+    else:
+        resolved_account = _env("HERO_ZERNIO_ACCOUNT_ID", DEFAULT_ZERNIO_ACCOUNT_ID)
     return {
-        "account_id": account_id or _env("HERO_ZERNIO_ACCOUNT_ID", DEFAULT_ZERNIO_ACCOUNT_ID),
+        "account_id": resolved_account,
         "alert_to": alert_to or _env("HERO_ALERT_EMAIL", DEFAULT_ALERT_EMAIL),
         "from_account": from_account or _env("HERO_FROM_ACCOUNT", DEFAULT_FROM_ACCOUNT),
     }
@@ -263,9 +274,13 @@ def cmd_zernio_publish(plan_file, final_video, caption_file, media_url,
     qc = qc_result or {}
     if not (qc.get("G1") and qc.get("G2") and qc.get("G3") and qc.get("G4")):
         raise RuntimeError("QC 미통과 — Zernio 발행 거부(G1~G4 전부 통과 후만 허용)")
-    resolved = _resolve_publish_opts(account_id=account_id, alert_to=alert_to, from_account=from_account)
+    resolved = _resolve_publish_opts(account_id=account_id, alert_to=alert_to, from_account=from_account, platform=platform)
     if not resolved["account_id"]:
-        raise RuntimeError("Zernio 계정 ID 누락 — 소스 기본값 손상 또는 빈 값 주입. 환경변수 또는 --account-id로 주입 필요")
+        _hint = ("TikTok 계정 ID 미설정 — Zernio 대시보드에서 틱톡 계정 연결 후 "
+                 "HERO_TIKTOK_ACCOUNT_ID 환경변수에 해당 _id를 주입하세요"
+                 if str(platform).lower() == "tiktok" else
+                 "Zernio 계정 ID 누락 — 소스 기본값 손상 또는 빈 값 주입. 환경변수 또는 --account-id로 주입 필요")
+        raise RuntimeError(_hint)
     caption = Path(caption_file).read_text(encoding="utf-8").strip()
     effective_schedule = schedule_at or datetime_now_iso_local()
     assemble_qc.validate_publish_assets(
@@ -352,7 +367,7 @@ def main(argv=None):
     setup_logging()
     load_dotenv()
     ap = argparse.ArgumentParser(description="hero shorts pipeline v" + VERSION)
-    ap.add_argument("step", choices=["plan", "generate", "assemble", "voice_plan", "tts", "mix_audio", "caption", "upload_media", "qc", "publish", "zernio_publish", "run", "request_approval", "resolve_approvals", "test"])
+    ap.add_argument("step", choices=["plan", "generate", "assemble", "voice_plan", "tts", "mix_audio", "caption", "upload_media", "qc", "publish", "zernio_publish", "split_cuts", "run", "request_approval", "resolve_approvals", "test"])
     ap.add_argument("--ep", type=int, default=None, help="회차 번호(미지정 시 트래커에서 다음 미발행 회차 자동 선택)")
     ap.add_argument("--backend", choices=["fal", "dummy"], default="dummy",
                     help="fal=현금(승인 후), dummy=테스트 0원")
@@ -386,7 +401,7 @@ def main(argv=None):
         result = unittest.TextTestRunner(verbosity=2).run(suite)
         sys.exit(0 if result.wasSuccessful() else 1)
 
-    if args.step not in ("test", "generate", "resolve_approvals") and args.ep is None:
+    if args.step not in ("test", "generate", "resolve_approvals", "split_cuts") and args.ep is None:
         from . import ledger as _ledger
         try:
             args.ep = _ledger.find_next_episode()
@@ -409,6 +424,16 @@ def main(argv=None):
     elif args.step == "assemble":
         paths = _assemble_paths_from_input(args.plan, args.ep)
         print(cmd_assemble(paths, OUT / f"ep{args.ep}_final.mp4"))
+        # v2.8.1 — 컷 실측 타임스탬프 사이드카 기록(정밀 분할의 유일한 근거).
+        # 합본 직후 각 컷 클립을 ffprobe 하여 누적 오프셋을 남긴다.
+        from . import timestamps as _ts
+        _ts_path = OUT / f"ep{args.ep}_cut_timestamps.json"
+        _payload = _ts.record_cut_timestamps(paths, _ts_path, episode=args.ep)
+        print(json.dumps({
+            "cut_timestamps": str(_ts_path),
+            "cut_count": _payload["cut_count"],
+            "total_duration_sec": _payload["total_duration_sec"],
+        }, ensure_ascii=False))
     elif args.step == "voice_plan":
         if not args.plan:
             raise RuntimeError("voice_plan 단계는 --plan 필수")
@@ -514,6 +539,21 @@ def main(argv=None):
             require_audible_audio=args.require_audible_audio,
             allow_duplicate_post=args.allow_duplicate_post,
         ), ensure_ascii=False, indent=2))
+    elif args.step == "split_cuts":
+        from . import cut_split
+        plan_path = args.plan or str(OUT / f"ep{args.ep}_plan.json")
+        plan = json.loads(Path(plan_path).read_text(encoding="utf-8"))
+        segments = cut_split.split_plan(plan)
+        tag = args.ep or "plan"
+        out_path = OUT / f"{tag}_segments.json"
+        out_path.parent.mkdir(parents=True, exist_ok=True)
+        out_path.write_text(json.dumps(segments, ensure_ascii=False, indent=2), encoding="utf-8")
+        print(json.dumps({
+            "segments": [{"segment_no": s["segment_no"], "cut_nos": s["cut_nos"],
+                          "total_duration_sec": s["total_duration_sec"]} for s in segments],
+            "total_duration_sec": cut_split.total_duration(segments),
+            "out": str(out_path),
+        }, ensure_ascii=False))
     elif args.step == "run":
         # E2E — plan→generate→assemble→voice_plan→tts→mix_audio→qc (publish 는 승인 후 별도)
         plan_file = cmd_plan(args.ep, OUT)

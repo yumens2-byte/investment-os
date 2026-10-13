@@ -157,7 +157,19 @@ def send_email_alert(subject: str, html_body: str,
 
 def create_post_args(text: str, media_url: str, account_id: str,
                      schedule_at: Optional[str] = None,
-                     ai_generated: bool = True) -> Dict[str, Any]:
+                     ai_generated: bool = True,
+                     tiktok_privacy_level: Optional[str] = None,
+                     tiktok_draft: Optional[bool] = None,
+                     tiktok_allow_comments: Optional[bool] = None,
+                     tiktok_allow_duet: Optional[bool] = None,
+                     tiktok_allow_stitch: Optional[bool] = None) -> Dict[str, Any]:
+    """Zernio create_post 인자 JSON.
+
+    TikTok 전용 키는 값이 주어진 경우에만 포함한다(None 이면 미포함 —
+    Instagram 경로 페이로드를 바꾸지 않는다).
+    TikTok API 규격상 privacy_level 등은 필수이며, Business 앱 연결 계정에서
+    영상 직접 발행은 PUBLIC_TO_EVERYONE 만 허용된다(비공개는 tiktok_draft 경유).
+    """
     payload: Dict[str, Any] = {
         "text": text,
         "media_urls": [media_url],
@@ -166,19 +178,39 @@ def create_post_args(text: str, media_url: str, account_id: str,
     }
     if schedule_at:
         payload["schedule_at"] = schedule_at
+    if tiktok_privacy_level is not None:
+        payload["tiktok_privacy_level"] = tiktok_privacy_level
+    if tiktok_draft is not None:
+        payload["tiktok_draft"] = tiktok_draft
+    if tiktok_allow_comments is not None:
+        payload["tiktok_allow_comments"] = tiktok_allow_comments
+    if tiktok_allow_duet is not None:
+        payload["tiktok_allow_duet"] = tiktok_allow_duet
+    if tiktok_allow_stitch is not None:
+        payload["tiktok_allow_stitch"] = tiktok_allow_stitch
     return payload
 
 
 def create_post(text: str, media_url: str, account_id: str,
                 schedule_at: Optional[str] = None,
-                ai_generated: bool = True) -> Dict[str, Any]:
+                ai_generated: bool = True,
+                tiktok_privacy_level: Optional[str] = None,
+                tiktok_draft: Optional[bool] = None,
+                tiktok_allow_comments: Optional[bool] = None,
+                tiktok_allow_duet: Optional[bool] = None,
+                tiktok_allow_stitch: Optional[bool] = None) -> Dict[str, Any]:
     args_dir = Path("/tmp/opencode")
     args_dir.mkdir(parents=True, exist_ok=True)
     with tempfile.NamedTemporaryFile("w", encoding="utf-8", dir=str(args_dir), prefix="zernio_create_post_", suffix=".json", delete=False) as tmp:
         args_file = Path(tmp.name)
         json.dump(
             create_post_args(text=text, media_url=media_url, account_id=account_id,
-                             schedule_at=schedule_at, ai_generated=ai_generated),
+                             schedule_at=schedule_at, ai_generated=ai_generated,
+                             tiktok_privacy_level=tiktok_privacy_level,
+                             tiktok_draft=tiktok_draft,
+                             tiktok_allow_comments=tiktok_allow_comments,
+                             tiktok_allow_duet=tiktok_allow_duet,
+                             tiktok_allow_stitch=tiktok_allow_stitch),
             tmp,
             ensure_ascii=False,
             indent=2,
@@ -278,13 +310,23 @@ def create_and_monitor_post(text: str, media_url: str, account_id: str,
                             alert_on_timeout: bool = True,
                             alert_on_error: bool = True,
                             from_account: Optional[str] = None,
-                            alert_to: Optional[str] = None) -> Dict[str, Any]:
+                            alert_to: Optional[str] = None,
+                            tiktok_privacy_level: Optional[str] = None,
+                            tiktok_draft: Optional[bool] = None,
+                            tiktok_allow_comments: Optional[bool] = None,
+                            tiktok_allow_duet: Optional[bool] = None,
+                            tiktok_allow_stitch: Optional[bool] = None) -> Dict[str, Any]:
     created = create_post(
         text=text,
         media_url=media_url,
         account_id=account_id,
         schedule_at=schedule_at,
         ai_generated=ai_generated,
+        tiktok_privacy_level=tiktok_privacy_level,
+        tiktok_draft=tiktok_draft,
+        tiktok_allow_comments=tiktok_allow_comments,
+        tiktok_allow_duet=tiktok_allow_duet,
+        tiktok_allow_stitch=tiktok_allow_stitch,
     )
     created_post = (created.get("data") or {}).get("post") or {}
     post_id = created_post.get("_id")

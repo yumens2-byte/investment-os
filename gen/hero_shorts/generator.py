@@ -134,18 +134,53 @@ def _validate_request(request):
         raise ValueError(f"금지 문구 {bad} — G1 사전위반, 생성 거부(비용 전 차단)")
 
 
-def _validate_output(out_path, requested_duration):
-    """출력 후 기술검증 (v2.4.4) — 과금 발생 후이므로 이상 시 CRITICAL 기록 + 예외."""
+def _measures_path(out_path):
+    """컷 실측 지표 사이드카 경로 (v2.8.1)."""
+    p = Path(out_path)
+    return p.with_name(p.name + ".measures.json")
+
+
+def _record_measures(out_path, duration_sec, requested_duration, size_bytes, backend):
+    """컷 실측 길이 영속화 (v2.8.1) — 정밀 분할의 1차 근거.
+
+    기존에는 _validate_output 이 실측 길이를 검증에만 쓰고 버려서, 합본 후
+    컷 경계를 파생할 근거가 남지 않았다(균등 분할로 퇴화). 이제 클립 옆에 기록한다.
+    """
+    payload = {
+        "clip": str(out_path),
+        "duration_sec": round(float(duration_sec), 3),
+        "requested_duration_sec": int(requested_duration),
+        "delta_sec": round(float(duration_sec) - float(requested_duration), 3),
+        "size_bytes": int(size_bytes),
+        "backend": backend,
+        "source": "ffprobe",
+        "version": "1.0.0",
+    }
+    mp = _measures_path(out_path)
+    mp.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+    log.info("컷 실측 기록: %.3fs(요청 %ds, Δ%+.3fs) → %s",
+             payload["duration_sec"], payload["requested_duration_sec"],
+             payload["delta_sec"], mp)
+    return payload
+
+
+def _validate_output(out_path, requested_duration, backend="fal"):
+    """출력 후 기술검증 (v2.4.4) — 과금 발생 후이므로 이상 시 CRITICAL 기록 + 예외.
+
+    v2.8.1: 실측 길이를 반환하고 사이드카에 영속화한다(정밀 분할 근거).
+    """
     import subprocess
     r = subprocess.run(["ffprobe", "-v", "error", "-print_format", "json",
                         "-show_format", str(out_path)], capture_output=True, text=True)
     dur = float(json.loads(r.stdout)["format"]["duration"])
     size = Path(out_path).stat().st_size
+    measured = _record_measures(out_path, dur, requested_duration, size, backend)
     if abs(dur - requested_duration) > 2 or size < 10240:
         log.critical("출력 이상: %.1fs(요청 %ds) %dB — 과금분 수동 확인 필요, 재생성 금지",
                      dur, requested_duration, size)
         raise RuntimeError("출력 검증 실패 — 과금 발생, 마스터 확인 전 재생성 금지")
     log.info("출력 검증 OK: %.1fs %dB", dur, size)
+    return measured
 
 
 def _fal_json(req, phase):
@@ -251,7 +286,7 @@ def _fal_call(request, out_path):
             resp_url, headers={"Authorization": f"Key {key}"}), "결과조회")
     video_url = result["video"]["url"]
     urllib.request.urlretrieve(video_url, out_path)
-    _validate_output(out_path, duration)        # 과금 후 기술검증 — 이상 시 재생성 금지
+    measured = _validate_output(out_path, duration, backend="fal")   # 과금 후 기술검증 + 실측 영속화
     budget_record(duration)
     _clear_pending(out_path)
     log.info("fal 다운로드 완료: %s (%.0fs분)", out_path, duration)
@@ -275,6 +310,7 @@ def _dummy_call(request, out_path):
         log.error("더미 생성 실패: %s", r.stderr[:200])
         raise RuntimeError("ffmpeg 더미 생성 실패")
     log.info("더미 컷 생성: %s (%ds, 0원)", out_path, duration)
+    _validate_output(out_path, duration, backend="dummy")   # v2.8.1: 더미도 실측 영속화(0원)
     return str(out_path)
 
 
