@@ -1,5 +1,5 @@
 # Deployment approved; GitHub OIDC read-only production verification passed.
-name: Comic Novel Facebook (Friday)
+name: 🌐 Comic Novel Facebook (Friday)
 
 on:
   schedule:
