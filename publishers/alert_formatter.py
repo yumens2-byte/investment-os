@@ -49,6 +49,20 @@ _LEVEL_ACTION = {
 }
 
 
+def _market_value(value, *, signed=False, suffix="", prefix="") -> str:
+    """Display precision only; missing/invalid observations must not look like zero."""
+    import math
+    if value is None or isinstance(value, bool):
+        return "N/A"
+    try:
+        number = float(value)
+    except (TypeError, ValueError):
+        return "N/A"
+    if not math.isfinite(number):
+        return "N/A"
+    return f"{prefix}{number:+.2f}{suffix}" if signed else f"{prefix}{number:.2f}{suffix}"
+
+
 def format_alert_tweet(signal: AlertSignal) -> str:
     """
     AlertSignal → X 트윗 텍스트 (280자 이내).
@@ -67,18 +81,18 @@ def format_alert_tweet(signal: AlertSignal) -> str:
     title       = _TYPE_TITLE.get(signal.alert_type, "ALERT")
     action      = _LEVEL_ACTION.get(signal.level, "주의")
 
-    spy   = snap.get("sp500", 0)
-    vix   = snap.get("vix", 0)
-    us10y = snap.get("us10y", 0)
-    oil   = snap.get("oil", 0)
+    spy   = _market_value(snap.get("sp500"), signed=True, suffix="%")
+    vix   = _market_value(snap.get("vix"))
+    us10y = _market_value(snap.get("us10y"), suffix="%")
+    oil   = _market_value(snap.get("oil"), prefix="$")
 
     # 스냅샷 핵심 수치 (타입별로 관련 지표 강조)
     if signal.alert_type == "OIL":
-        snapshot_line = f"🛢️ WTI ${oil:.1f} | SPY {spy:+.1f}% | VIX {vix:.1f}"
+        snapshot_line = f"🛢️ WTI {oil} | SPY {spy} | VIX {vix}"
     elif signal.alert_type == "FED_SHOCK":
-        snapshot_line = f"📉 SPY {spy:+.1f}% | US10Y {us10y:.2f}% | VIX {vix:.1f}"
+        snapshot_line = f"📉 SPY {spy} | US10Y {us10y} | VIX {vix}"
     else:
-        snapshot_line = f"📉 SPY {spy:+.1f}% | VIX {vix:.1f} | US10Y {us10y:.2f}%"
+        snapshot_line = f"📉 SPY {spy} | VIX {vix} | US10Y {us10y}"
 
     hints  = " ".join(signal.etf_hints[:3]) if signal.etf_hints else "-"
     avoids = " ".join(signal.avoid_etfs[:3]) if signal.avoid_etfs else "-"

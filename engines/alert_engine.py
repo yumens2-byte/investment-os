@@ -178,12 +178,12 @@ def _vix_alert(snapshot: dict, prev_snapshot: Optional[dict]) -> Optional[AlertS
     # 기본 등급 판정
     if vix >= VIX_L2:
         level  = "L2"
-        reason = f"VIX {vix:.1f} — 극단적 공포 구간 진입"
+        reason = f"VIX {vix:.2f} — 극단적 공포 구간 진입"
         hints  = ["TLT", "SPYM"]
         avoids = ["QQQM", "XLK"]
     elif vix >= VIX_L1:
         level  = "L1"
-        reason = f"VIX {vix:.1f} — 공포 지수 경계 구간"
+        reason = f"VIX {vix:.2f} — 공포 지수 경계 구간"
         hints  = ["TLT", "ITA"]
         avoids = ["QQQM"]
     else:
@@ -196,7 +196,7 @@ def _vix_alert(snapshot: dict, prev_snapshot: Optional[dict]) -> Optional[AlertS
             surge_pct = (vix - prev_vix) / prev_vix * 100
             if surge_pct >= VIX_SURGE_PCT and level == "L1":
                 level  = "L2"
-                reason = f"VIX {vix:.1f} (+{surge_pct:.0f}%) — 공포 지수 급등"
+                reason = f"VIX {vix:.2f} (+{surge_pct:.0f}%) — 공포 지수 급등"
 
     # FIX BUG-4: x_eligible — L2 이상만 X 발행 대상
     return AlertSignal(
@@ -226,7 +226,7 @@ def _spy_alert(snapshot: dict) -> Optional[AlertSignal]:
         return AlertSignal(
             alert_type="SPY",
             level="L3",
-            reason=f"SPY {spy:.1f}% — 서킷브레이커 근접 급락",
+            reason=f"SPY {spy:.2f}% — 서킷브레이커 근접 급락",
             snapshot=snapshot,
             etf_hints=["TLT", "SPYM"],
             avoid_etfs=["QQQM", "XLK", "XLE"],
@@ -236,7 +236,7 @@ def _spy_alert(snapshot: dict) -> Optional[AlertSignal]:
         return AlertSignal(
             alert_type="SPY",
             level="L2",
-            reason=f"SPY {spy:.1f}% — 시장 급락 경보",
+            reason=f"SPY {spy:.2f}% — 시장 급락 경보",
             snapshot=snapshot,
             etf_hints=["TLT", "ITA"],
             avoid_etfs=["QQQM", "XLK"],
@@ -246,7 +246,7 @@ def _spy_alert(snapshot: dict) -> Optional[AlertSignal]:
         return AlertSignal(
             alert_type="SPY",
             level="L1",
-            reason=f"SPY {spy:.1f}% — 주의 급락",
+            reason=f"SPY {spy:.2f}% — 주의 급락",
             snapshot=snapshot,
             etf_hints=["SPYM", "TLT"],
             avoid_etfs=["QQQM"],
@@ -283,11 +283,11 @@ def _oil_alert(snapshot: dict, prev_snapshot: Optional[dict]) -> Optional[AlertS
         return None
 
     # reason 조립
-    reason = f"WTI ${oil:.1f}"
+    reason = f"WTI ${oil:.2f}"
     if price_shock:
         reason += " — $100 돌파"
     if surge_shock:
-        reason += f" (+{surge_pct:.1f}% 급등)"
+        reason += f" (+{surge_pct:.2f}% 급등)"
 
     # FIX BUG-4: x_eligible — 가격충격($100 돌파)만 X 발행
     return AlertSignal(
@@ -321,10 +321,10 @@ def _fed_shock_alert(
 
     if spy <= SPY_L2 or (spy <= SPY_L1 and vix >= VIX_L1):
         level  = "L3"
-        reason = f"SPY {spy:.1f}% + Fed 뉴스 급증 — Fed 발표 충격 의심"
+        reason = f"SPY {spy:.2f}% + Fed 뉴스 급증 — Fed 발표 충격 의심"
     else:
         level  = "L2"
-        reason = f"SPY {spy:.1f}% + Fed 관련 키워드 감지 — 금리 관련 시장 충격"
+        reason = f"SPY {spy:.2f}% + Fed 관련 키워드 감지 — 금리 관련 시장 충격"
 
     # FIX BUG-4: FED_SHOCK는 모든 레벨에서 X 발행 (Fed 이벤트는 즉시성 중요)
     return AlertSignal(
@@ -360,7 +360,7 @@ def _crisis_alert(snapshot: dict) -> Optional[AlertSignal]:
         return AlertSignal(
             alert_type="CRISIS",
             level="L3",
-            reason=f"SPY {spy:.1f}% | VIX {vix:.1f} | US10Y {us10y:.2f}% — 복합 위기 동시 발생",
+            reason=f"SPY {spy:.2f}% | VIX {vix:.2f} | US10Y {us10y:.2f}% — 복합 위기 동시 발생",
             snapshot=snapshot,
             etf_hints=["TLT", "SPYM"],
             avoid_etfs=["QQQM", "XLK", "XLE"],
@@ -370,7 +370,7 @@ def _crisis_alert(snapshot: dict) -> Optional[AlertSignal]:
         return AlertSignal(
             alert_type="CRISIS",
             level="L2",
-            reason=f"SPY {spy:.1f}% | VIX {vix:.1f} — 복합 위험 신호 감지",
+            reason=f"SPY {spy:.2f}% | VIX {vix:.2f} — 복합 위험 신호 감지",
             snapshot=snapshot,
             etf_hints=["TLT", "ITA"],
             avoid_etfs=["QQQM", "XLK"],
@@ -677,7 +677,7 @@ def _detect_move_spike(tier2_data: dict) -> Optional[AlertSignal]:
             alert_type="MOVE_SPIKE",
             level="L1",
             reason=(
-                f"MOVE Index {move:.1f} — 채권 변동성 위기 수준 "
+                f"MOVE Index {move:.2f} — 채권 변동성 위기 수준 "
                 f"(임계값 {MOVE_STRESSED}). 금리 불확실성 급등"
             ),
             snapshot={},
@@ -789,7 +789,7 @@ def _detect_yield_spread_deep(fred_data: dict) -> Optional[AlertSignal]:
             alert_type="YIELD_SPREAD_DEEP",
             level="L1",
             reason=(
-                f"금리역전 심화 — 10Y-2Y {spread_bp:.1f}bp"
+                f"금리역전 심화 — 10Y-2Y {spread_bp:.2f}bp"
                 f"{us2y_str} "
                 f"(임계값 {YIELD_SPREAD_DEEP_BP}bp)"
             ),
@@ -914,8 +914,8 @@ def _vix_countdown_alert(
 
     distance = 30 - vix  # VIX 30까지 남은 거리
     reason   = (
-        f"VIX {vix:.1f} — {triggered_level} 돌파 "
-        f"(공포구간까지 {distance:.1f}pt)"
+        f"VIX {vix:.2f} — {triggered_level} 돌파 "
+        f"(공포구간까지 {distance:.2f}pt)"
     )
 
     return AlertSignal(
@@ -1069,6 +1069,12 @@ def run_alert_engine(
         if basis_sig:
             alerts.append(basis_sig)
             logger.info(f"[AlertEngine] Crypto Basis Alert: {basis_sig.reason}")
+
+    # Macro/technical detectors produce empty snapshots. Carry the observations
+    # collected by this run into every alert, preserving detector-specific keys.
+    # Do not round here: thresholds compare the collected numeric values.
+    for alert in alerts:
+        alert.snapshot = {**snapshot, **alert.snapshot}
 
     # ── 프리미엄 메타 정보 부착 ───────────────────────────────
     # FIX BUG-3: 동적 속성 추가(a.vix_premium_level = ...) 방식 제거.
