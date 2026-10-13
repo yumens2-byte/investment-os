@@ -1,17 +1,29 @@
-name: "🎬 Hero Shorts Gen (v2.4.7 — gen 폴더)"
+name: "🎬 Hero Shorts Gen (v2.8.1 — gen 폴더)"
 on:
   schedule:
     - cron: "0 1 * * 2,4"   # KST 화·목 10:00 발행 대비 plan 단계 — 0원 (생성 미포함) — 9/23 마스터 지시: 월수→화목 변경
   workflow_dispatch:          # 수동 실행 전용 — fal 실생성(현금)은 여기서만 발생
     inputs:
       step:
-        description: "실행 단계 (plan|generate|assemble|qc|run)"
+        description: "실행 단계 (plan|generate|assemble|qc|run|publish_combined)"
         required: true
         default: "plan"
       only:
         description: "생성할 컷 번호 (기본 2 = 단건). 전체 실행은 승인 후 HERO_ALLOW_ALL=1 별도 경로"
         required: false
         default: "2"
+      ep:
+        description: "회차 태그 (publish_combined 시 필수, 예: ep86)"
+        required: false
+        default: ""
+      title:
+        description: "회차 제목 (publish_combined 시 필수 — 캡션 헤드)"
+        required: false
+        default: ""
+      media_url:
+        description: "발행할 합본 영상의 공개 URL (publish_combined 시 필수, gsk upload 결과)"
+        required: false
+        default: ""
 jobs:
   run:
     runs-on: ubuntu-latest
@@ -28,7 +40,10 @@ jobs:
         run: |
           STEP="${{ github.event.inputs.step }}"
           ONLY="${{ github.event.inputs.only }}"
-          echo "▶ STEP=$STEP ONLY=$ONLY (기본 2 — 단건 강제)"
+          EP="${{ github.event.inputs.ep }}"
+          TITLE="${{ github.event.inputs.title }}"
+          MEDIA_URL="${{ github.event.inputs.media_url }}"
+          echo "▶ STEP=$STEP ONLY=$ONLY EP=$EP"
           if [ "$STEP" = "generate" ]; then
             [ -f gen/data/out/ep86_plan.json ] || python3 -m gen.hero_shorts.pipeline plan   # plan 부재 시 노션 원장 직독 재생성(0원)
             ARGS=(generate --plan gen/data/out/ep86_plan.json --backend fal)
@@ -36,6 +51,28 @@ jobs:
               ARGS+=(--only "$ONLY")
             fi
             python3 -m gen.hero_shorts.pipeline "${ARGS[@]}"
+          elif [ "$STEP" = "publish_combined" ]; then
+            # 2026-10-13 마스터 지시: 정기 발행은 3편 분할이 아니라 전편 합본 1편으로 올린다.
+            # 60초 초과 무관 — 상한은 플랫폼 한도(TikTok/Zernio 3초~10분).
+            if [ -z "$EP" ] || [ -z "$TITLE" ] || [ -z "$MEDIA_URL" ]; then
+              echo "publish_combined: ep / title / media_url 3개 입력이 모두 필요합니다" >&2
+              exit 64
+            fi
+            if [ -z "${HERO_TIKTOK_ACCOUNT_ID:-}" ]; then
+              echo "HERO_TIKTOK_ACCOUNT_ID secret 미설정 — 틱톡 계정 ID를 등록하세요" >&2
+              exit 65
+            fi
+            FILTER="gen/data/out/${EP}_final.mp4"
+            if [ ! -f "$FILTER" ]; then
+              echo "합본 후보 $FILTER 부재 — upload_media 까지 선행 필요" >&2
+              exit 66
+            fi
+            python3 -m gen.hero_shorts.tiktok.runner combined \
+              --video "$FILTER" --title "$TITLE" \
+              --out gen/data/out/tiktok_combined.json
+            python3 -m gen.hero_shorts.tiktok.runner publish \
+              --manifest gen/data/out/tiktok_combined.json \
+              --segment 1 --media-url "$MEDIA_URL"
           else
             python3 -m gen.hero_shorts.pipeline "${STEP:-plan}"
           fi
@@ -46,6 +83,8 @@ jobs:
           NOTION_API_TOKEN: ${{ secrets.NOTION_API_TOKEN }}   # 표준 시크릿명(우선)
           NOTION_TOKEN: ${{ secrets.NOTION_TOKEN }}   # 과거 별칭 호환
           NOTION_API_KEY: ${{ secrets.NOTION_API_KEY }}   # 과거 레포 관례 호환
+          HERO_TIKTOK_ACCOUNT_ID: ${{ secrets.HERO_TIKTOK_ACCOUNT_ID }}   # 틱톡 계정 _id
+          HERO_TIKTOK_PRIVACY_LEVEL: "PUBLIC_TO_EVERYONE"
       - name: Upload artifacts (컷 영상·합본·QC·로그)   # v2.4.3 — 러너 소실 방지 필수
         if: always()
         uses: actions/upload-artifact@v4
