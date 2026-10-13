@@ -62,3 +62,12 @@ def test_combined_requires_source():
 def test_combined_caption_deterministic():
     assert tk_caption.build_combined_caption(TITLE) == tk_caption.build_combined_caption(TITLE)
     assert "1/3" not in tk_caption.build_combined_caption(TITLE)
+
+
+def test_combined_media_url_without_local_video():
+    m = tk_manifest.from_combined(None, 60.0, "미디어URL 합본",
+                                  media_url="https://example.com/v.mp4")
+    assert m["mode"] == "combined"
+    assert m["segments"][0]["media_url"] == "https://example.com/v.mp4"
+    assert m["segments"][0]["video_path"] is None
+    assert m["all_gates_ok"] is True

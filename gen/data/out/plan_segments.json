@@ -1,0 +1,84 @@
+[
+  {
+    "segment_no": 1,
+    "cut_nos": [
+      1,
+      2,
+      3
+    ],
+    "roles": [
+      "R1",
+      "R2",
+      "R3"
+    ],
+    "total_duration_sec": 30,
+    "series_marker": "1/3",
+    "cuts": [
+      {
+        "cut_no": 1,
+        "role": "R1",
+        "prompt": "p1"
+      },
+      {
+        "cut_no": 2,
+        "role": "R2",
+        "prompt": "p2"
+      },
+      {
+        "cut_no": 3,
+        "role": "R3",
+        "prompt": "p3"
+      }
+    ]
+  },
+  {
+    "segment_no": 2,
+    "cut_nos": [
+      4,
+      5
+    ],
+    "roles": [
+      "R4",
+      "R5"
+    ],
+    "total_duration_sec": 20,
+    "series_marker": "2/3",
+    "cuts": [
+      {
+        "cut_no": 4,
+        "role": "R4",
+        "prompt": "p4"
+      },
+      {
+        "cut_no": 5,
+        "role": "R5",
+        "prompt": "p5"
+      }
+    ]
+  },
+  {
+    "segment_no": 3,
+    "cut_nos": [
+      6,
+      7
+    ],
+    "roles": [
+      "R6",
+      "R7"
+    ],
+    "total_duration_sec": 20,
+    "series_marker": "3/3",
+    "cuts": [
+      {
+        "cut_no": 6,
+        "role": "R6",
+        "prompt": "p6"
+      },
+      {
+        "cut_no": 7,
+        "role": "R7",
+        "prompt": "p7"
+      }
+    ]
+  }
+]

@@ -2,8 +2,10 @@
 gen/hero_shorts/tiktok/runner.py — 틱톡 라인 CLI
 ================================================
     python3 -m gen.hero_shorts.tiktok.runner manifest --plan <7컷JSON> --title <제목> [--hook <훅>] --out <매니페스트JSON>
+    python3 -m gen.hero_shorts.tiktok.runner combined --title <제목> --duration <초> [--media-url <공개URL>] --out <매니페스트JSON>
     python3 -m gen.hero_shorts.tiktok.runner gates    --manifest <매니페스트JSON>
-    python3 -m gen.hero_shorts.tiktok.runner publish  --manifest <매니페스트JSON> --segment <1|2|3> [--schedule-at <ISO8601>]
+    python3 -m gen.hero_shorts.tiktok.runner preflight [--account-id <_id>]
+    python3 -m gen.hero_shorts.tiktok.runner publish  --manifest <매니페스트JSON> --segment <1|2|3> [--media-url <공개URL>] [--schedule-at <ISO8601>]
 
 발행은 게이트 통과 편만 수행한다(fail-closed). 실제 발행은 크레딧/과금이 아닌
 Zernio API 호출이지만, 마스터 운영 규칙상 실행 전 확인 대상이다.
@@ -56,11 +58,18 @@ def cmd_gates(args):
 def cmd_combined(args):
     from ..timestamps import probe_duration
 
-    dur = args.duration if args.duration is not None else probe_duration(args.video)
+    if args.duration is not None:
+        dur = float(args.duration)
+    elif args.video:
+        dur = probe_duration(args.video)
+    else:
+        print("합본 매니페스트 — --duration 미지정 시 --video 필수(ffprobe 실측)", file=sys.stderr)
+        return 64
     m = tk_manifest.from_combined(
         args.video, dur, args.title, hook=args.hook,
         max_duration_sec=args.max_duration,
         privacy_level=args.privacy_level, draft=args.draft,
+        media_url=args.media_url,
     )
     out = args.out or "gen/data/out/tiktok_combined.json"
     tk_manifest.save_manifest(out, m)
@@ -124,7 +133,7 @@ def main(argv=None):
     pf.set_defaults(func=cmd_preflight)
 
     c = sub.add_parser("combined", help="합본 1편 매니페스트 생성(정기 발행 기본)")
-    c.add_argument("--video", required=True, help="합본 영상 파일 경로")
+    c.add_argument("--video", default=None, help="합본 영상 파일 경로(미지정 시 --duration 필수)")
     c.add_argument("--duration", type=float, default=None, help="미지정 시 ffprobe 실측")
     c.add_argument("--title", required=True, help="회차 제목(캡션 헤드)")
     c.add_argument("--hook", default=None, help="1편 오프닝 훅(선택)")
@@ -132,6 +141,8 @@ def main(argv=None):
     c.add_argument("--max-duration", type=int, default=tk_manifest.DEFAULT_MAX_DURATION_SEC)
     c.add_argument("--privacy-level", default=None)
     c.add_argument("--draft", action="store_true")
+    c.add_argument("--media-url", default=None,
+                   help="발행할 공개 영상 URL — 로컬 파일 없이 매니페스트 생성(Actions 경로)")
     c.set_defaults(func=cmd_combined)
 
     g = sub.add_parser("gates", help="매니페스트 게이트 재검증")

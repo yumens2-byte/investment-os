@@ -10,4 +10,4 @@ gen/hero_shorts/tiktok/ — 틱톡 진입 라인 (분할 발행 + 합본 발행)
     account.py  — 계정 토큰 preflight(만료·재연결 감지)
     runner.py   — CLI
 """
-VERSION = "1.3.0"
+VERSION = "1.4.0"
