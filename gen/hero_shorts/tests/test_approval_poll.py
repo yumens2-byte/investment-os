@@ -6,7 +6,7 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[3]))
 
-from gen.hero_shorts import approval  # noqa: E402
+from gen.hero_shorts import approval
 
 
 def _cb(uid, data, chat="-1003587684034"):

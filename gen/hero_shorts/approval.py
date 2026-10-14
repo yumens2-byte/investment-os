@@ -199,7 +199,7 @@ def resolve_pending(state, lookback_hours=36, wait_sec=0):
                and isinstance(v.get("approval"), dict)
                and v["approval"].get("status") in ("READY_FOR_APPROVAL", "HOLD")
                and not v["approval"].get("decided_at")}
-    if not pending:
+    if not pending and wait_sec <= 0:
         return {"pending": 0, "decisions": []}
     applied = []
     for d in poll_callbacks(wait_sec=wait_sec):
