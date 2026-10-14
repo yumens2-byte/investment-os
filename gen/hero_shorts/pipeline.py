@@ -428,6 +428,7 @@ def main(argv=None):
     ap.add_argument("--allow-duplicate-post", action="store_true", help="기존 post_id가 있어도 새 발행을 허용")
     ap.add_argument("--request-approval", action="store_true", help="run 종료 후 텔레그램 승인 요청까지 수행(러너1)")
     ap.add_argument("--lookback-hours", type=int, default=36, help="resolve_approvals 결정 반영 대기 시간(시)")
+    ap.add_argument("--wait-sec", type=int, default=0, help="resolve_approvals 롱폴링 대기 초(0=즉시 1회 조회)")
     args = ap.parse_args(argv)
     log = logging.getLogger("hero_shorts")
 
@@ -535,7 +536,7 @@ def main(argv=None):
         # v2.7.0 러너2 선두 — 결정 반영 후 zernio_publish가 승인건만 발행
         from . import approval as _ap
         st = load_state()
-        summary = _ap.resolve_pending(st, lookback_hours=args.lookback_hours)
+        summary = _ap.resolve_pending(st, lookback_hours=args.lookback_hours, wait_sec=args.wait_sec)
         if summary["decisions"]:
             save_state(st)
         print(json.dumps(summary, ensure_ascii=False, indent=2))

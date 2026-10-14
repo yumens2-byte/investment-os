@@ -15,6 +15,7 @@ import datetime
 import json
 import logging
 import os
+import time
 import uuid
 import urllib.request
 from pathlib import Path
@@ -116,12 +117,33 @@ def _ack(token, update_id):
         log.warning("콜백 ack 실패(무시): %s", exc)
 
 
-def poll_callbacks():
-    """getUpdates 폴링 — 유효 콜백(승인 채팅·형식 일치)만 해석. 반환: 결정 리스트."""
+def poll_callbacks(wait_sec=0, ack_valid=True):
+    """getUpdates 폴링 — 유효 콜백(승인 채팅·형식 일치)만 해석. 반환: 결정 리스트.
+
+    v2.7.4 (G-1/G-2, 2026-10-15):
+      • wait_sec>0 이면 최대 wait_sec 초 동안 롱폴링으로 콜백을 기다린다.
+        (08:06 승인 요청 → 10:30 러너3 사이 폴러 부재로 버튼이 무반응이던 결함 대응)
+      • 처리한 콜백도 update_id 기준으로 확정(ack)해 재조회를 막는다.
+        종전에는 무효 콜백만 확정하고 유효 콜백은 큐에 남겨 재처리 대상이었다.
+    """
     token, chat = _config()
     allowed = {c.strip() for c in chat.split(",") if c.strip()}
-    updates = _call_api(token, "getUpdates",
-                        params={"timeout": 0, "allowed_updates": ["callback_query"]}) or []
+    deadline = time.time() + max(0, wait_sec)
+    while True:
+        if wait_sec > 0:
+            remain = deadline - time.time()
+            if remain <= 0:
+                return []
+            lp = int(min(50, max(1, remain)))
+        else:
+            lp = 0
+        updates = _call_api(token, "getUpdates",
+                            params={"timeout": lp, "allowed_updates": ["callback_query"]},
+                            timeout=max(60, lp + 30)) or []
+        if updates:
+            break
+        if wait_sec <= 0:
+            return []
     out = []
     for u in updates:
         uid = u.get("update_id")
@@ -152,6 +174,8 @@ def poll_callbacks():
             "decided_at": _now_iso(),
             "update_id": uid,
         })
+        if ack_valid:
+            _ack(token, uid)
     return out
 
 
@@ -167,7 +191,7 @@ def edit_message(message_id, text):
               params={"chat_id": chat, "message_id": message_id, "text": text})
 
 
-def resolve_pending(state, lookback_hours=36):
+def resolve_pending(state, lookback_hours=36, wait_sec=0):
     """페이즈2 — 승인 대기 회차(approval.status == READY_FOR_APPROVAL|HOLD, 미결정)를
     폴링 결과와 대조해 원장에 반영. 결정 콜백은 1회 소비(응답+메시지 편집). 요약 dict 반환."""
     pending = {k: v for k, v in state.items()
@@ -178,7 +202,7 @@ def resolve_pending(state, lookback_hours=36):
     if not pending:
         return {"pending": 0, "decisions": []}
     applied = []
-    for d in poll_callbacks():
+    for d in poll_callbacks(wait_sec=wait_sec):
         key = f"ep{d['ep']}"
         entry = pending.get(key)
         if not entry:                       # 대기 회차가 아닌 콜백 — ack 완료, 무시
