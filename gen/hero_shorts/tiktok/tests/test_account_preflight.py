@@ -72,7 +72,8 @@ def test_assert_raises_only_on_blocking():
     with pytest.raises(RuntimeError):
         A.assert_token_ready(account_id=AID, now=NOW, accounts=[_acct(-1)])
     # 만료 임박은 차단하지 않는다
-    health = A.assert_token_ready(account_id=AID, now=NOW, accounts=[_acct(6)])
+    health = A.assert_token_ready(account_id=AID, warn_hours=12.0, now=NOW,
+                                  accounts=[_acct(6)])
     assert health.status == A.EXPIRING
 
 
@@ -97,3 +98,46 @@ def test_fetch_unavailable_is_non_blocking(monkeypatch):
     assert h.status == A.UNAVAILABLE
     assert h.blocking is False
     assert h.ok is True
+
+
+def test_to_dict_reports_threshold_not_hours_left():
+    """warn_hours 키는 임계값이어야 한다(남은시간을 오표기하던 회귀 방지)."""
+    from datetime import UTC, datetime
+
+    from gen.hero_shorts.tiktok.account import check_token_health
+
+    account = {
+        "_id": "A", "platform": "tiktok", "username": "u",
+        "isActive": True, "needsReconnection": False,
+        "tokenExpiresAt": "2026-01-02T00:00:00.000Z",
+    }
+    health = check_token_health(
+        account_id="A", warn_hours=5.0,
+        now=datetime(2026, 1, 1, 0, 0, 0, tzinfo=UTC), accounts=[account],
+    )
+    payload = health.to_dict()
+    assert payload["warn_hours"] == 5.0
+    assert payload["hours_left"] == 24.0
+    assert payload["status"] == "ok"
+
+
+def test_expiring_is_warn_only_and_alert_needs_no_credentials(monkeypatch):
+    """만료 임박은 차단하지 않고, 자격증명 부재 시 경보는 조용히 스킵된다."""
+    from datetime import UTC, datetime
+
+    from gen.hero_shorts.tiktok import account as acc
+
+    monkeypatch.delenv("TELEGRAM_BOT_TOKEN", raising=False)
+    monkeypatch.delenv("TELEGRAM_PAID_CHANNEL_ID", raising=False)
+    account = {
+        "_id": "A", "platform": "tiktok", "username": "u",
+        "isActive": True, "needsReconnection": False,
+        "tokenExpiresAt": "2026-01-01T01:00:00.000Z",
+    }
+    health = acc.assert_token_ready(
+        account_id="A", warn_hours=12.0,
+        now=datetime(2026, 1, 1, 0, 0, 0, tzinfo=UTC), accounts=[account],
+    )
+    assert health.status == acc.EXPIRING
+    assert health.blocking is False
+    assert acc.send_telegram("ping") is False

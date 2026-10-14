@@ -32,10 +32,12 @@ from datetime import UTC, datetime
 
 log = logging.getLogger("tiktok.account")
 
-VERSION = "1.1.0"
+VERSION = "1.2.0"
 PLATFORM = "tiktok"
 
-DEFAULT_WARN_HOURS = 12.0
+# 24h 주기 토큰은 만료 직후 첫 호출에서 자동 갱신된다(2026-10-15 실측).
+# 12h 로 두면 하루의 절반이 상시 경보 → 경보 피로. 실제 실패는 expired(차단)가 잡는다.
+DEFAULT_WARN_HOURS = 2.0
 ACCOUNT_ENV = "HERO_TIKTOK_ACCOUNT_ID"
 WARN_HOURS_ENV = "HERO_TIKTOK_PREFLIGHT_WARN_HOURS"
 PREFLIGHT_ENV = "HERO_TIKTOK_PREFLIGHT"
@@ -63,6 +65,7 @@ class TokenHealth:
     expires_at: str | None = None
     hours_left: float | None = None
     problems: list = field(default_factory=list)
+    warn_hours: float | None = None
 
     @property
     def blocking(self) -> bool:
@@ -77,7 +80,7 @@ class TokenHealth:
             "username": self.username,
             "expires_at": self.expires_at,
             "hours_left": self.hours_left,
-            "warn_hours": self.hours_left,
+            "warn_hours": self.warn_hours,
             "problems": list(self.problems),
             "version": VERSION,
         }
@@ -142,22 +145,26 @@ def check_token_health(account_id=None, warn_hours=None, now=None, accounts=None
     aid = account_id or os.environ.get(ACCOUNT_ENV)
     hours_threshold = resolve_warn_hours(warn_hours)
     current = now or datetime.now(UTC)
+
+    def verdict(ok, status, account_id=None, username=None, expires_at=None,
+                hours_left=None, problems=None):
+        return TokenHealth(ok, status, account_id, username, expires_at, hours_left,
+                           problems or [], hours_threshold)
+
     try:
         pool = fetch_accounts() if accounts is None else list(accounts)
     except Exception as exc:  # noqa: BLE001
         # 조회 자체가 불가한 환경(예: Actions 러너에 gsk 부재)에서는 판정을 보류하고
         # 발행을 막지 않는다. 실제 무효 상태(만료·재연결·비활성)만 차단한다.
-        return TokenHealth(True, UNAVAILABLE, aid, None, None, None,
-                           [f"계정 조회 불가 — 판정 보류(차단 안 함): {exc}"])
+        return verdict(True, UNAVAILABLE, aid,
+                       problems=[f"계정 조회 불가 — 판정 보류(차단 안 함): {exc}"])
 
     if not aid:
-        return TokenHealth(False, MISSING, None,
-                           problems=[f"{ACCOUNT_ENV} 미설정 — 계정 특정 불가"])
+        return verdict(False, MISSING, problems=[f"{ACCOUNT_ENV} 미설정 — 계정 특정 불가"])
 
     account = find_account(pool, aid)
     if account is None:
-        return TokenHealth(False, MISSING, aid,
-                           problems=[f"계정 {aid} 미발견 — 연결 해제 의심"])
+        return verdict(False, MISSING, aid, problems=[f"계정 {aid} 미발견 — 연결 해제 의심"])
 
     username = account.get("username")
     expires_raw = account.get("tokenExpiresAt")
@@ -168,25 +175,25 @@ def check_token_health(account_id=None, warn_hours=None, now=None, accounts=None
 
     # 우선순위 1 — 재연결 필요(만료시각과 무관하게 최우선)
     if account.get("needsReconnection") is True:
-        return TokenHealth(False, NEEDS_RECONNECT, aid, username, expires_raw, hours_left,
-                           ["needsReconnection=True — Zernio 대시보드에서 재연결 필요"])
+        return verdict(False, NEEDS_RECONNECT, aid, username, expires_raw, hours_left,
+                       ["needsReconnection=True — Zernio 대시보드에서 재연결 필요"])
     # 우선순위 2 — 비활성
     if account.get("isActive") is False:
-        return TokenHealth(False, INACTIVE, aid, username, expires_raw, hours_left,
-                           ["isActive=False — 계정 비활성"])
+        return verdict(False, INACTIVE, aid, username, expires_raw, hours_left,
+                       ["isActive=False — 계정 비활성"])
     # 우선순위 3 — 만료시각 부재는 유효성 미확인 → fail-closed
     if expires is None:
-        return TokenHealth(False, EXPIRED, aid, username, None, None,
-                           ["tokenExpiresAt 부재 — 유효성 확인 불가(fail-closed)"])
+        return verdict(False, EXPIRED, aid, username, None, None,
+                       ["tokenExpiresAt 부재 — 유효성 확인 불가(fail-closed)"])
     # 우선순위 4 — 만료
     if hours_left <= 0:
-        return TokenHealth(False, EXPIRED, aid, username, expires_raw, hours_left,
-                           [f"토큰 만료(남은 {hours_left}h)"])
+        return verdict(False, EXPIRED, aid, username, expires_raw, hours_left,
+                       [f"토큰 만료(남은 {hours_left}h)"])
     # 우선순위 5 — 만료 임박(경고 전용, 차단 아님)
     if hours_left <= hours_threshold:
-        return TokenHealth(False, EXPIRING, aid, username, expires_raw, hours_left,
-                           [f"토큰 만료 임박(남은 {hours_left}h ≤ 임계 {hours_threshold}h)"])
-    return TokenHealth(True, OK, aid, username, expires_raw, hours_left, [])
+        return verdict(False, EXPIRING, aid, username, expires_raw, hours_left,
+                       [f"토큰 만료 임박(남은 {hours_left}h ≤ 임계 {hours_threshold}h)"])
+    return verdict(True, OK, aid, username, expires_raw, hours_left, [])
 
 
 def format_alert(health):
@@ -208,14 +215,43 @@ def format_alert(health):
 
 
 def send_alert(health):
-    """경보 발송 — 실패해도 preflight 판정은 유지(경보 실패로 발행이 죽지 않게)."""
+    """경보 발송 — 실패해도 preflight 판정은 유지(경보 실패로 발행이 죽지 않게).
+
+    채널 우선순위: 텔레그램(저장소 시크릿 TELEGRAM_BOT_TOKEN·TELEGRAM_PAID_CHANNEL_ID
+    실재) → Gmail(publish_runtime.send_email_alert) 폴백.
+    """
     body = format_alert(health)
-    try:
-        from .. import publish_runtime as pr
-        pr.send_email_alert(f"[hero-shorts] 틱톡 토큰 {health.status}", f"<pre>{body}</pre>")
-    except Exception as exc:  # noqa: BLE001
-        log.warning("preflight 경보 발송 실패(판정은 유지): %s", exc)
+    subject = f"[hero-shorts] 틱톡 토큰 {health.status}"
+    if send_telegram(f"{subject}\n{body}"):
+        log.info("preflight 경보 발송 완료(텔레그램)")
+    else:
+        try:
+            from .. import publish_runtime as pr
+            pr.send_email_alert(subject, f"<pre>{body}</pre>")
+        except Exception as exc:  # noqa: BLE001
+            log.warning("preflight 경보 발송 실패(판정은 유지): %s", exc)
     return body
+
+
+def send_telegram(text):
+    """텔레그램 발송. 자격증명 부재/실패 시 False(예외 전파 안 함)."""
+    token = (os.environ.get("TELEGRAM_BOT_TOKEN") or "").strip()
+    chat = (os.environ.get("TELEGRAM_PAID_CHANNEL_ID") or "").strip()
+    if not token or not chat:
+        return False
+    try:
+        import urllib.request
+        payload = json.dumps({
+            "chat_id": chat, "text": text, "disable_web_page_preview": True,
+        }).encode("utf-8")
+        req = urllib.request.Request(
+            f"https://api.telegram.org/bot{token}/sendMessage",
+            data=payload, headers={"Content-Type": "application/json"})
+        with urllib.request.urlopen(req, timeout=15) as resp:
+            return resp.status == 200
+    except Exception as exc:  # noqa: BLE001
+        log.warning("텔레그램 경보 발송 실패: %s", exc)
+        return False
 
 
 def assert_token_ready(account_id=None, warn_hours=None, now=None, accounts=None):
