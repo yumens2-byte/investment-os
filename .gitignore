@@ -208,3 +208,7 @@ __marimo__/
 
 # 0크레딧 테스트 산출물 — 추적 제외
 gen/data/
+
+# 파이프라인 산출물 — 추적 제외 (2026-10-15, data/ 미추적 4건 확인)
+data/outputs/
+data/published/
