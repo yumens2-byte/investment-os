@@ -439,21 +439,20 @@ def main(argv=None):
         result = unittest.TextTestRunner(verbosity=2).run(suite)
         sys.exit(0 if result.wasSuccessful() else 1)
 
-    if args.step not in ("test", "generate", "resolve_approvals", "split_cuts") and args.ep is None:
-        from . import ledger as _ledger
-        try:
-            args.ep = _ledger.find_next_episode()
-        except (KeyError, RuntimeError) as exc:
-            base = max((int(k[2:]) for k in load_state()
-                        if str(k).startswith("ep") and k[2:].isdigit()), default=None)
-            if base is None:
-                raise RuntimeError(f"미발행 회차 자동 판별 불가 — --ep 지정 필요 ({exc})")
-            log.info("전체 조회 불가 — 원장 기준 Ep%d 이후 순차 탐색", base)
-            args.ep = _ledger.find_next_episode(base=base)
-        log.info("ep 미지정 — 트래커에서 다음 미발행 회차 자동 선택: Ep%d", args.ep)
     if args.step in ("publish", "zernio_publish", "run", "request_approval", "resolve_approvals"):
         from . import statestore as _ss
+        # v2.9.1 (P-1) — ep 자동 선택이 원장을 읽으므로 복원을 **먼저** 수행한다.
+        # 신규 클론에는 gen/data/ 가 없다(.gitignore) → 복원 없이는 원장이 비어
+        # 트래커 경로로 오염되어 과거 회차가 선택된다(2026-10-15 실측).
         _ss.restore_if_missing([_state_file(), DATA / "costs.json"])
+
+    if args.step not in ("test", "generate", "resolve_approvals", "split_cuts") and args.ep is None:
+        from . import ledger as _ledger
+        # v2.9.1 (P-1) — 발행 사실의 권위는 원장이다. 원장 최대 ep + 1 을 정본으로 쓴다.
+        base = max((int(k[2:]) for k in load_state()
+                    if str(k).startswith("ep") and k[2:].isdigit()), default=None)
+        args.ep = _ledger.find_next_episode(base=base)
+        log.info("ep 미지정 — 원장 기준 다음 회차 선택: Ep%d", args.ep)
 
     if args.step == "plan":
         print(cmd_plan(args.ep, OUT))

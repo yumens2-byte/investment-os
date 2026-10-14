@@ -331,16 +331,23 @@ def choose_next_episode(rows):
 def find_next_episode(base=None):
     """--ep 미지정 시 사용 — 다음 미발행 회차 번호 반환.
 
-    1차: 트래커 전체 행 조회(gsk SQL 무필터는 0행 실측 — REST 토큰 환경에서만 동작)
-    2차 fallback(v2.6.1): 원장 최종 회차(base) 이후를 1회차 단위 조회로 순차 탐색
+    v2.9.1 (P-1, 2026-10-15) — 판정 순서 역전:
+    1차(정본): **원장 최대 회차(base) + 1**. 발행 사실의 권위는 트래커가 아니라 원장이다.
+        종전 트래커 우선 방식은 미래 회차 행 선등록 + 과거 행 발행상태 미갱신 때문에
+        이미 지난 Ep42 를 '다음 회차'로 반환하는 결함이 실측됨
+        (2026-10-15 트래커 미완료 번호=[42,47,52,54,71,86] → choose_next_episode=42).
+        무인 실행에서 이 오선택은 fal 현금 중복 지출로 직결된다.
+    2차 fallback: base 미제공 시에만 트래커 조회(구 동작).
     """
+    if base is not None:
+        log.info("원장 기준 다음 회차 확정: Ep%d (원장 최대=Ep%d)", int(base) + 1, int(base))
+        return int(base) + 1
     rows = query_tracker_rows(None)
     if rows:
         return choose_next_episode(rows)
-    if base is None:
-        raise RuntimeError(
-            "트래커 전체 조회 0행(gsk SQL 무필터 미지원 실측) + 원장 기준 없음 — --ep 지정 필요"
-        )
+    raise RuntimeError(
+        "원장 기준 회차 없음 + 트래커 전체 조회 0행 — --ep 지정 필요"
+    )
     for n in range(int(base) + 1, int(base) + 11):
         try:
             rows = query_tracker_rows(n)
