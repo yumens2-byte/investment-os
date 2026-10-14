@@ -1,0 +1,18 @@
+{
+  "data_validation": {
+    "status": "PASS",
+    "errors": [],
+    "warnings": [],
+    "confidence": "HIGH"
+  },
+  "output_validation": {
+    "status": "PASS",
+    "errors": [],
+    "checked_fields": [
+      "market_risk_level_consistency",
+      "stance_allocation_consistency",
+      "tlt_allocation_guard",
+      "total_weight_final_check"
+    ]
+  }
+}

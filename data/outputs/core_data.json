@@ -1,0 +1,149 @@
+{
+  "system": "Investment OS",
+  "command": "pilot_test_r2",
+  "version": "v1.20.0",
+  "timestamp": "2026-10-14T21:03:59.772752+00:00",
+  "status": "ok",
+  "data": {
+    "fx_rates": {},
+    "fear_greed": {},
+    "crypto": {},
+    "news_summary": {},
+    "news_analysis": {},
+    "macro_data": {},
+    "market_snapshot": {
+      "sp500": 0.95,
+      "nasdaq": 1.42,
+      "vix": 14.2,
+      "us10y": 3.8,
+      "oil": 68.5,
+      "dollar_index": 100.2
+    },
+    "market_regime": {
+      "market_regime": "Risk-On",
+      "market_risk_level": "LOW",
+      "regime_reason": "성장 + 유동성 + 저위험"
+    },
+    "market_score": {
+      "growth_score": 2,
+      "inflation_score": 2,
+      "liquidity_score": 1,
+      "risk_score": 1,
+      "financial_stability_score": 1,
+      "commodity_pressure_score": 1
+    },
+    "signals": {
+      "crypto_basis_spread": null,
+      "crypto_basis_state": "Unknown",
+      "crypto_basis_score": 2,
+      "crypto_basis_mark": null,
+      "crypto_basis_index": null,
+      "btc_social_sentiment": null,
+      "btc_sentiment_state": "Unknown",
+      "btc_sentiment_score": 2,
+      "btc_sentiment_themes_supportive": "",
+      "btc_sentiment_themes_critical": ""
+    },
+    "etf_analysis": {
+      "etf_score": {
+        "QQQM": 5,
+        "XLK": 4,
+        "SPYM": 3,
+        "XLE": 2,
+        "ITA": 2,
+        "TLT": 1
+      },
+      "etf_rank": {
+        "QQQM": 1,
+        "XLK": 2,
+        "SPYM": 3,
+        "XLE": 4,
+        "ITA": 5,
+        "TLT": 6
+      },
+      "timing_signal": {
+        "QQQM": "BUY",
+        "XLK": "BUY",
+        "SPYM": "HOLD",
+        "XLE": "HOLD",
+        "ITA": "REDUCE",
+        "TLT": "REDUCE"
+      }
+    },
+    "etf_strategy": {
+      "stance": {
+        "QQQM": "Overweight",
+        "XLK": "Overweight",
+        "SPYM": "Neutral",
+        "XLE": "Neutral",
+        "ITA": "Underweight",
+        "TLT": "Underweight"
+      },
+      "strategy_reason": {
+        "QQQM": "상위 랭크 + 긍정적 타이밍 시그널",
+        "XLK": "상위 랭크 + 긍정적 타이밍 시그널",
+        "SPYM": "뚜렷한 시그널 없음 — 중립 유지",
+        "XLE": "뚜렷한 시그널 없음 — 중립 유지",
+        "ITA": "상대적으로 약한 포지셔닝",
+        "TLT": "상대적으로 약한 포지셔닝"
+      }
+    },
+    "etf_allocation": {
+      "allocation": {
+        "QQQM": 35,
+        "XLK": 25,
+        "SPYM": 20,
+        "XLE": 10,
+        "ITA": 5,
+        "TLT": 5
+      },
+      "allocation_reason": {
+        "QQQM": "Overweight — regime=Risk-On",
+        "XLK": "Overweight — regime=Risk-On",
+        "SPYM": "Neutral — regime=Risk-On",
+        "XLE": "Neutral — regime=Risk-On",
+        "ITA": "Underweight — regime=Risk-On",
+        "TLT": "Underweight — regime=Risk-On"
+      },
+      "total_weight": 100
+    },
+    "portfolio_risk": {
+      "portfolio_return_impact": "Growth",
+      "portfolio_risk_impact": "Moderate",
+      "diversification_score": 95,
+      "drawdown_risk": "Contained",
+      "market_risk_level": "LOW",
+      "crash_alert_level": "LOW",
+      "position_exposure": "Full beta",
+      "position_sizing_multiplier": 1.0,
+      "hedge_intensity": "Low"
+    },
+    "trading_signal": {
+      "trading_signal": "HOLD",
+      "signal_confidence": 63,
+      "signal_reason": "저위험 — 광범위 모멘텀 제한적",
+      "signal_matrix": {
+        "buy_watch": [
+          "QQQM",
+          "XLK"
+        ],
+        "hold": [
+          "SPYM",
+          "XLE"
+        ],
+        "reduce": [
+          "ITA",
+          "TLT"
+        ]
+      }
+    },
+    "output_helpers": {
+      "one_line_summary": "Risk-On — 성장 국면. QQQM, XLK 유리.",
+      "session_type": "close",
+      "language_policy": "ko"
+    },
+    "spy_sma": {},
+    "cnn_fg": {},
+    "btc_funding": {}
+  }
+}

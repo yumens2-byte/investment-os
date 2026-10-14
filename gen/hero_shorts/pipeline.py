@@ -18,7 +18,6 @@ import logging
 import os
 import sys
 from pathlib import Path
-from typing import Optional
 
 from . import VERSION
 
@@ -138,7 +137,7 @@ def _canon_selfcheck(prompts):
 
 def cmd_plan(ep_number, out_dir):
     """원장 → 컷계획 JSON 저장 (0원)."""
-    from . import ledger, cutplanner
+    from . import cutplanner, ledger
     ep = ledger.load_episode(ep_number)
     plan = cutplanner.plan_episode(ep)
     _canon_selfcheck([c["prompt"] for c in plan])
@@ -256,15 +255,53 @@ def cmd_publish(plan_file, final_video, qc_result, channel="instagram", require_
     return state[key]
 
 
+def record_combined(ep, title, video_path, media_url=None, aidrive_path=None):
+    """v2.9.0 — 러너3(틱톡 자동 발행) 입력원 기록 (설계 C-1, 2026-10-15 마스터 승인).
+
+    러너1 이 합본 완성 직후 호출한다. duration_sec 을 ffprobe 로 실측해 남기므로
+    러너3 는 --duration 을 사람이 입력하지 않아도 된다
+    (2026-10-15 실측: ep87 합본 발행 시 60.859 를 수동 입력해야 했다).
+    기존 ep<N> 블록의 다른 키(status/approval/qc 등)는 손대지 않는다.
+    실측 불가 시 duration 은 None 으로 남긴다 — 추측값을 쓰지 않는다.
+    """
+    from .timestamps import probe_duration
+
+    st = load_state()
+    key = f"ep{ep}"
+    prev = (st.get(key) or {}).get("combined") or {}
+    duration = prev.get("duration_sec")
+    if video_path and Path(video_path).exists():
+        try:
+            duration = round(float(probe_duration(str(video_path))), 3)
+        except Exception as exc:
+            logging.getLogger("hero_shorts").warning("duration 실측 실패 — 이전 값 유지: %s", exc)
+    combined = {
+        "title": title or prev.get("title"),
+        "duration_sec": duration,
+        "media_url": media_url or prev.get("media_url"),
+        "aidrive_path": aidrive_path or prev.get("aidrive_path"),
+        "video_path": str(video_path) if video_path else prev.get("video_path"),
+        "recorded_at": datetime_now_iso_local(),
+    }
+    st.setdefault(key, {})["combined"] = combined
+    save_state(st)
+    logging.getLogger("hero_shorts").info(
+        "combined 기록: %s title=%s duration=%s media_url=%s aidrive=%s",
+        key, combined["title"], combined["duration_sec"],
+        bool(combined["media_url"]), combined["aidrive_path"],
+    )
+    return combined
+
+
 def cmd_zernio_publish(plan_file, final_video, caption_file, media_url,
-                       qc_result=None, schedule_at: Optional[str] = None,
-                       account_id: Optional[str] = None,
+                       qc_result=None, schedule_at: str | None = None,
+                       account_id: str | None = None,
                        platform: str = "instagram",
                        channel: str = "instagram",
                        max_wait_sec: int = 900,
                        poll_interval_sec: int = 30,
-                       alert_to: Optional[str] = None,
-                       from_account: Optional[str] = None,
+                       alert_to: str | None = None,
+                       from_account: str | None = None,
                        ai_generated: bool = True,
                        require_audible_audio: bool = False,
                        allow_duplicate_post: bool = False,
@@ -396,6 +433,7 @@ def main(argv=None):
 
     if args.step == "test":
         import unittest
+
         from . import tests
         suite = unittest.defaultTestLoader.discover(tests.__path__[0])
         result = unittest.TextTestRunner(verbosity=2).run(suite)
@@ -569,18 +607,30 @@ def main(argv=None):
         caption_path = save_caption(plan_file, OUT / f"ep{args.ep}_caption.txt")
         log.info("캡션 생성 완료: %s", caption_path)
         cmd_publish(plan_file, voiced_final, qc, require_audible_audio=True)
+        # v2.9.0 (C-1) — 러너3 발행 입력원 기록: 제목 + duration ffprobe 실측 + 영상 경로.
+        _ep_meta = _load_plan(plan_file)
+        record_combined(args.ep, _ep_meta.get("title"), voiced_final)
         log.info("E2E 완료 (backend=%s tts=%s): %s", args.backend, args.tts_backend, voiced_final)
         if args.request_approval:                    # v2.7.0 러너1 — 업로드+텔레그램 승인 요청
             from . import approval as _ap
             from .mediashare import upload_media as _up
             media = _up(voiced_final)
             cap_text = Path(caption_path).read_text(encoding="utf-8").strip()
-            ap_block = _ap.request_approval(args.ep, _load_plan(plan_file).get("title"),
+            ap_block = _ap.request_approval(args.ep, _ep_meta.get("title"),
                                             cap_text, media["public_url"], video_path=voiced_final)
             st = load_state()
             st.setdefault(f"ep{args.ep}", {})["approval"] = ap_block
             save_state(st)
-            log.info("승인 요청 완료 — approval.status=%s (러너2: resolve_approvals → zernio_publish)", ap_block["status"])
+            # v2.9.0 (C-2) — 공개 URL 은 24h 유효: AI Drive 원본 보관 후 경로를 원장에 남긴다.
+            aidrive_path = None
+            try:
+                from . import mediastore as _ms
+                aidrive_path = _ms.archive_media(voiced_final, args.ep).get("aidrive_path")
+            except Exception as exc:
+                log.warning("미디어 보관 실패(발행 경로는 계속): %s", exc)
+            record_combined(args.ep, _ep_meta.get("title"), voiced_final,
+                            media_url=media["public_url"], aidrive_path=aidrive_path)
+            log.info("승인 요청 완료 — approval.status=%s (러너3: runner ready → runner publish)", ap_block["status"])
 
     if args.step in ("publish", "zernio_publish", "run", "request_approval", "resolve_approvals"):
         from . import statestore as _ss
