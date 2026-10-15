@@ -142,6 +142,40 @@ def cmd_token_history(args):
     return 0
 
 
+def cmd_verify(args):
+    """발행 후 플랫폼 대조 검증(읽기 전용 · 0크레딧).
+
+    exit 0 = 검증 통과 / 4 = 불일치·미발견(발행 실패와 구분) / 5 = 조회 불가.
+    """
+    from . import verify as tk_verify
+    entry = None
+    if args.ep is not None:
+        state = load_publish_state(_state_path(getattr(args, "state", None)))
+        entry = state.get(f"ep{args.ep}")
+        if entry is None:
+            print(f"ep{args.ep} 원장 없음", file=sys.stderr)
+            return 66
+    tk = (entry or {}).get("tiktok") or {}
+    v = tk_verify.verify_published(
+        post_id=args.post_id or tk.get("post_id"),
+        post_url=args.post_url or tk.get("post_url") or tk.get("platform_post_url"),
+        account_id=args.account_id,
+        limit=args.verify_limit,
+        allow_latest=args.recover_latest,
+    )
+    led = tk_verify.check_ledger(entry, v) if entry else {"problems": [], "drift_min": None}
+    payload = {"verdict": v, "ledger": led}
+    if args.json:
+        print(json.dumps(payload, ensure_ascii=False, indent=1))
+    else:
+        print(tk_verify.format_verdict(v, ledger_problems=led.get("problems"), ep=args.ep))
+    if args.notify and (not v.get("ok") or led.get("problems")):
+        tk_verify.alert(v, ledger_problems=led.get("problems"), ep=args.ep)
+    if v.get("verdict") == tk_verify.UNKNOWN:
+        return 5
+    return 0 if (v.get("ok") and not led.get("problems")) else 4
+
+
 def cmd_publish(args):
     m = tk_manifest.load_manifest(args.manifest)
     seg = next((s for s in m["segments"] if s["segment_no"] == args.segment), None)
@@ -155,6 +189,19 @@ def cmd_publish(args):
                                         schedule_at=args.schedule_at,
                                         privacy_level=args.privacy_level,
                                         preflight=not args.skip_preflight)
+    # 발행 후 플랫폼 대조 검증(읽기 전용) — "발행했다"를 자기 보고로 끝내지 않는다.
+    if result.get("outcome") == "published" and not getattr(args, "no_verify", False):
+        from . import verify as tk_verify
+        v = tk_verify.verify_published(
+            post_id=result.get("post_id"),
+            post_url=result.get("post_url") or result.get("platform_post_url"),
+            account_id=args.account_id,
+            limit=getattr(args, "verify_limit", 20) or 20,
+        )
+        result["verification"] = v
+        if not v.get("ok"):
+            result["verification_alerted"] = tk_verify.alert(v, ep=getattr(args, "ep", None))
+            print(tk_verify.format_verdict(v, ep=getattr(args, "ep", None)), file=sys.stderr)
     print(json.dumps(result, ensure_ascii=False, default=str))
     return 0 if result.get("outcome") == "published" else 2
 
@@ -440,6 +487,11 @@ def main(argv=None):
     pb.add_argument("--schedule-at", default=None, help="예약 발행 ISO8601")
     pb.add_argument("--fallback-media-url", dest="fallback_media_url",
                     help="1차 발행 실패가 미디어 URL 문제일 때 쓸 대체 URL(1회 재시도)")
+    pb.add_argument("--no-verify", dest="no_verify", action="store_true",
+                    help="발행 후 플랫폼 대조 검증 생략")
+    pb.add_argument("--verify-limit", type=int, default=20,
+                    help="검증 list_posts 조회 창(기본 20)")
+    pb.add_argument("--ep", type=int, default=None, help="회차(검증 경보 표기용)")
     pb.set_defaults(func=cmd_publish)
     rc = sub.add_parser("record", help="발행 결과를 원장에 기록(멱등)")
     rc.add_argument("--ep", type=int, required=True)
@@ -484,6 +536,19 @@ def main(argv=None):
     th.add_argument("--path", default=None)
     th.add_argument("--json", action="store_true")
     th.set_defaults(func=cmd_token_history)
+
+    vf = sub.add_parser("verify", help="발행 후 플랫폼 대조 검증(읽기 전용, 0크레딧)")
+    vf.add_argument("--ep", type=int, default=None, help="원장 회차(지정 시 원장 대조 포함)")
+    vf.add_argument("--post-id", default=None, help="Zernio 게시물 id(미지정 시 원장 값)")
+    vf.add_argument("--post-url", default=None, help="플랫폼 URL(미지정 시 원장 값)")
+    vf.add_argument("--account-id", default=None)
+    vf.add_argument("--verify-limit", type=int, default=20, help="list_posts 조회 창")
+    vf.add_argument("--recover-latest", action="store_true",
+                    help="식별자 없이 최근 발행건으로 대조(감사 전용)")
+    vf.add_argument("--notify", action="store_true", help="불일치 시 텔레그램 경보")
+    vf.add_argument("--state", default=None)
+    vf.add_argument("--json", action="store_true")
+    vf.set_defaults(func=cmd_verify)
 
     nr = sub.add_parser("next-run", help="다음 실행 시각 해석·주입(B안 후속, 0크레딧)")
     nr.add_argument("--json", action="store_true")
