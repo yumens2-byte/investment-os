@@ -524,7 +524,7 @@ def main(argv=None):
         if not args.caption_file:
             from .caption import save_caption
             args.caption_file = save_caption(plan_file, OUT / f"ep{args.ep}_caption.txt")
-        media_url = args.media_url or _up(final)["public_url"]
+        media_url = args.media_url or _up(final)["publish_url"]
         cap_text = Path(args.caption_file).read_text(encoding="utf-8").strip()
         ap_block = _ap.request_approval(args.ep, _load_plan(plan_file).get("title"),
                                         cap_text, media_url, video_path=final)
@@ -555,7 +555,7 @@ def main(argv=None):
                 log.info("media_url 미지정 — 로컬 공개 호스팅 URL(v2.7.2): %s", media_url)
             except Exception:
                 from .mediashare import upload_media
-                media_url = upload_media(final_video)["public_url"]
+                media_url = upload_media(final_video)["publish_url"]
                 log.info("media_url 미지정 — mediashare 폴백: %s", media_url)
         qc_path = OUT / f"ep{args.ep}_qc.json"
         qc_result = json.loads(qc_path.read_text()) if qc_path.exists() else cmd_qc(plan_file, final_video)
@@ -617,7 +617,7 @@ def main(argv=None):
             media = _up(voiced_final)
             cap_text = Path(caption_path).read_text(encoding="utf-8").strip()
             ap_block = _ap.request_approval(args.ep, _ep_meta.get("title"),
-                                            cap_text, media["public_url"], video_path=voiced_final)
+                                            cap_text, media["publish_url"], video_path=voiced_final)
             st = load_state()
             st.setdefault(f"ep{args.ep}", {})["approval"] = ap_block
             save_state(st)
@@ -629,7 +629,8 @@ def main(argv=None):
             except Exception as exc:
                 log.warning("미디어 보관 실패(발행 경로는 계속): %s", exc)
             record_combined(args.ep, _ep_meta.get("title"), voiced_final,
-                            media_url=media["public_url"], aidrive_path=aidrive_path)
+                            media_url=media.get("media_url") or media["wrapper_url"],
+                            aidrive_path=aidrive_path)
             log.info("승인 요청 완료 — approval.status=%s (러너3: runner ready → runner publish)", ap_block["status"])
 
     if args.step in ("publish", "zernio_publish", "run", "request_approval", "resolve_approvals"):

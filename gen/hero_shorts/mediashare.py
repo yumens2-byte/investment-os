@@ -62,4 +62,7 @@ def upload_media(path):
     dl = _gsk_call(["download", wrapper])
     public = _first_url(dl) or wrapper
     log.info("미디어 업로드 완료: %s → %s", p.name, public)
-    return {"wrapper_url": wrapper, "public_url": public}
+    # D-10(2026-10-15 실측): Zernio 는 토큰 URL(?token=…)을
+    # "no file extension and no stored content type" 으로 거부한다. 래퍼 URL 로 발행에 성공했다.
+    # → 발행·원장 기록용은 publish_url(래퍼) 을 쓴다. public_url(토큰) 은 만료되므로 기록하지 않는다.
+    return {"wrapper_url": wrapper, "publish_url": wrapper, "public_url": public}
