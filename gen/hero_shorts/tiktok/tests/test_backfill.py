@@ -355,3 +355,10 @@ def test_mirror_runs_even_when_nothing_to_correct(tmp_path, monkeypatch):
     rc = bf.main(["--ledger", str(path), "--apply", "--mirror"])
     assert rc == bf.EXIT_OK
     assert calls == [str(path)]
+
+
+def test_module_imports_subprocess_for_mirror():
+    """회귀: _gsk_run 이 subprocess 를 쓰는데 import 가 없어 미러가 NameError 로 죽었다.
+    기존 미러 테스트는 _gsk_run 을 몽키패치해 이 결함을 못 잡았다(실측 2026-10-16)."""
+    import subprocess as sp
+    assert bf.subprocess is sp
