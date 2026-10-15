@@ -223,3 +223,135 @@ def test_main_apply_writes_backup_and_ledger(tmp_path, monkeypatch):
 
 def test_canon_source_is_list_posts():
     assert bf.CANONICAL_SOURCE == "zernio.list_posts"
+
+
+# ── 회귀: 대상 밖 회차 소실 금지(2026-10-15 실측 결함) ──────────────────────
+def test_apply_preserves_episodes_outside_target():
+    led = ledger_one(segs=[seg(None, "w", "111", "2026-01-01T00:00:00Z")])
+    led["ep88"] = {"title": "Ep88", "tiktok": {"status": "published", "post_id": "keep88"}}
+    led["_ledger"] = {"rebuilt_at": "x"}
+    plan = bf.build_plan(led, [live("r", "111", "2026-10-15T01:38:23.101Z")], eps=["ep86"])
+    new, _ = bf.apply_plan(led, plan)
+    assert "ep88" in new and new["ep88"]["tiktok"]["post_id"] == "keep88"
+    assert "_ledger" in new
+
+
+def test_out_writes_full_ledger_not_subset(tmp_path, monkeypatch):
+    led = ledger_one(segs=[seg(None, "w", "111", "2026-01-01T00:00:00Z")])
+    led["ep88"] = {"title": "Ep88", "tiktok": {"status": "published"}}
+    path = tmp_path / "publish_state.json"
+    path.write_text(json.dumps(led), encoding="utf-8")
+    out = tmp_path / "recovered.json"
+    monkeypatch.setattr(bf.recover, "list_tiktok_posts",
+                        lambda **k: [live("r", "111", "2026-10-15T01:38:23.101Z")])
+    bf.main(["--ledger", str(path), "--ep", "ep86", "--out", str(out)])
+    written = json.loads(out.read_text(encoding="utf-8"))
+    assert set(written) == {"ep86", "ep88"}
+    assert written["ep86"]["tiktok"]["segments"][0]["post_id"] == "r"
+    assert written["ep88"]["tiktok"]["status"] == "published"
+
+
+# ── 미러 ──────────────────────────────────────────────────────────────────
+class _FakeProc:
+    def __init__(self, rc=0, stdout="", stderr=""):
+        self.returncode, self.stdout, self.stderr = rc, stdout, stderr
+
+
+def test_mirror_uses_overwrite_true(tmp_path):
+    f = tmp_path / "publish_state.json"
+    f.write_text("{}", encoding="utf-8")
+    seen = {}
+
+    def fake(args, timeout=180):
+        seen["args"] = args
+        return _FakeProc(0, json.dumps({"data": {"download_url": "https://d/x"}}))
+
+    import unittest.mock as mock
+    with mock.patch.object(bf, "_gsk_run", fake):
+        res = bf.mirror_to_drive(f)
+    assert res["ok"] is True and res["link"] == "https://d/x"
+    assert seen["args"][:2] == ["aidrive", "upload"]
+    assert "--overwrite" in seen["args"] and "true" in seen["args"]
+    assert bf.DRIVE_PATH in seen["args"]
+
+
+def test_mirror_failure_is_reported_not_swallowed(tmp_path):
+    f = tmp_path / "publish_state.json"
+    f.write_text("{}", encoding="utf-8")
+    import unittest.mock as mock
+    with mock.patch.object(bf, "_gsk_run", lambda a, timeout=180: _FakeProc(1, "", "boom")):
+        res = bf.mirror_to_drive(f)
+    assert res["ok"] is False and "rc=1" in res["error"]
+
+
+def test_mirror_without_apply_or_out_is_refused(tmp_path, monkeypatch):
+    led = ledger_one(segs=[seg(None, "w", "111", "2026-01-01T00:00:00Z")])
+    path = tmp_path / "publish_state.json"
+    path.write_text(json.dumps(led), encoding="utf-8")
+    monkeypatch.setattr(bf.recover, "list_tiktok_posts",
+                        lambda **k: [live("r", "111", "2026-10-15T01:38:23.101Z")])
+    called = {"n": 0}
+    monkeypatch.setattr(bf, "mirror_to_drive",
+                        lambda *a, **k: called.__setitem__("n", called["n"] + 1))
+    assert bf.main(["--ledger", str(path), "--mirror"]) == bf.EXIT_MIRROR
+    assert called["n"] == 0
+    assert json.loads(path.read_text(encoding="utf-8")) == led  # 원장 무변경
+
+
+def test_apply_then_mirror_happy_path(tmp_path, monkeypatch):
+    led = ledger_one(segs=[seg(None, "w", "111", "2026-01-01T00:00:00Z")])
+    path = tmp_path / "publish_state.json"
+    path.write_text(json.dumps(led), encoding="utf-8")
+    monkeypatch.setattr(bf.recover, "list_tiktok_posts",
+                        lambda **k: [live("r", "111", "2026-10-15T01:38:23.101Z")])
+    mirrored = []
+    monkeypatch.setattr(bf, "mirror_to_drive",
+                        lambda t, *a, **k: mirrored.append(str(t)) or {"ok": True, "link": "u"})
+    assert bf.main(["--ledger", str(path), "--apply", "--mirror"]) == bf.EXIT_OK
+    assert mirrored == [str(path)]
+    assert json.loads(path.read_text(encoding="utf-8"))["ep86"]["tiktok"]["segments"][0]["post_id"] == "r"
+
+
+def test_mirror_exit_code_is_five_on_failure(tmp_path, monkeypatch):
+    led = ledger_one(segs=[seg(None, "w", "111", "2026-01-01T00:00:00Z")])
+    path = tmp_path / "publish_state.json"
+    path.write_text(json.dumps(led), encoding="utf-8")
+    monkeypatch.setattr(bf.recover, "list_tiktok_posts",
+                        lambda **k: [live("r", "111", "2026-10-15T01:38:23.101Z")])
+    monkeypatch.setattr(bf, "mirror_to_drive", lambda *a, **k: {"ok": False, "error": "x"})
+    assert bf.main(["--ledger", str(path), "--apply", "--mirror"]) == bf.EXIT_MIRROR
+
+
+def test_runner_forwards_mirror_flag(monkeypatch):
+    """CLI 배선 회귀 — 러너가 --mirror 를 backfill 로 넘기는지."""
+    import argparse
+    from gen.hero_shorts.tiktok import runner
+    captured = {}
+    import gen.hero_shorts.tiktok.backfill as bfm
+    monkeypatch.setattr(bfm, "main", lambda argv: (captured.__setitem__("argv", argv), 0)[1])
+    ns = argparse.Namespace(ledger="L", backfill_limit=30, ep=["ep86"], account_id=None,
+                            apply=True, out=None, mirror=True, as_json=False)
+    assert runner.cmd_backfill(ns) == 0
+    assert "--mirror" in captured["argv"] and "--apply" in captured["argv"]
+
+
+def test_mirror_runs_even_when_nothing_to_correct(tmp_path, monkeypatch):
+    """교정 0건이어도 --mirror 는 실행돼야 한다(조기 return 결함 회귀 방지)."""
+    led = ledger_one(segs=[seg(None, "6acfa1cb9310ba390d4a1e8a", "7696548206833929480",
+                              "2026-10-14T15:38:04.402Z")])
+    tk = led["ep86"]["tiktok"]
+    tk.update({"post_id": "6acfa1cb9310ba390d4a1e8a", "platform_post_id": "7696548206833929480",
+               "platform_post_url": "https://www.tiktok.com/@tiger182725/video/7696548206833929480",
+               "post_url": "https://www.tiktok.com/@tiger182725/video/7696548206833929480",
+               "published_at": "2026-10-14T15:38:04.402Z"})
+    path = tmp_path / "publish_state.json"
+    path.write_text(json.dumps(led), encoding="utf-8")
+    monkeypatch.setattr(bf.recover, "list_tiktok_posts",
+                        lambda **k: [live("6acfa1cb9310ba390d4a1e8a", "7696548206833929480",
+                                          "2026-10-14T15:38:04.402Z")])
+    calls = []
+    monkeypatch.setattr(bf, "mirror_to_drive",
+                        lambda t, *a, **k: calls.append(str(t)) or {"ok": True})
+    rc = bf.main(["--ledger", str(path), "--apply", "--mirror"])
+    assert rc == bf.EXIT_OK
+    assert calls == [str(path)]

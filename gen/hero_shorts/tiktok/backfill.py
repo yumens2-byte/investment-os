@@ -41,6 +41,9 @@ BACKFILL_ACTOR = "Genspark Super Agent — 원장 소급 복구(4번 작업)"
 EXIT_OK = 0
 EXIT_DRIFT = 3      # dry-run 에서 불일치/결손 발견
 EXIT_QUERY = 4      # 플랫폼 조회 불가
+EXIT_MIRROR = 5     # 원장 반영 후 AI Drive 미러 실패
+
+DRIVE_PATH = "/hero-shorts/publish_state.json"
 
 
 def _now_iso():
@@ -249,6 +252,42 @@ def apply_plan(ledger, plan, actor=BACKFILL_ACTOR):
     return new, applied
 
 
+def _gsk_run(args, timeout=180):
+    """gsk 호출 — 테스트에서 monkeypatch 하도록 분리."""
+    return subprocess.run(["gsk", *args], capture_output=True, text=True,
+                          timeout=timeout, check=False)
+
+
+def mirror_to_drive(local_path, drive_path=DRIVE_PATH, timeout=180):
+    """로컬 원장 ▸ AI Drive 미러(`--overwrite true` = 같은 링크 유지).
+
+    실패는 조용히 넘기지 않는다 — 반영된 원장이 미러되지 않으면
+    샌드박스 폐기 시 복원 정본이 낡은 채로 남는다.
+    """
+    proc = _gsk_run(["aidrive", "upload", "--local_file", str(local_path),
+                     "--upload_path", drive_path, "--overwrite", "true"], timeout=timeout)
+    out = (proc.stdout or "").strip()
+    if proc.returncode != 0:
+        return {"ok": False, "drive_path": drive_path,
+                "error": f"gsk aidrive upload rc={proc.returncode} — {(proc.stderr or out)[:200]}"}
+    link = None
+    idx = out.find("{")
+    if idx >= 0:
+        try:
+            payload = json.loads(out[idx:])
+            for key in ("download_url", "url", "link", "file_url"):
+                if isinstance(payload.get("data"), dict) and payload["data"].get(key):
+                    link = payload["data"][key]
+                    break
+                if payload.get(key):
+                    link = payload[key]
+                    break
+        except json.JSONDecodeError:
+            pass
+    return {"ok": True, "drive_path": drive_path, "link": link,
+            "bytes": pathlib.Path(local_path).stat().st_size}
+
+
 def format_report(plan, applied=None):
     """사람이 읽는 보고문."""
     lines = [f"[hero-shorts] 원장 소급 복구 v{VERSION} — {plan['source']}",
@@ -290,6 +329,8 @@ def main(argv=None):
     ap.add_argument("--apply", action="store_true", help="원장에 실제 반영(미지정 시 dry-run)")
     ap.add_argument("--out", default=None, help="복구본 저장 경로(--apply 없이도 기록)")
     ap.add_argument("--json", dest="as_json", action="store_true")
+    ap.add_argument("--mirror", action="store_true",
+                    help="반영/저장 후 AI Drive 미러 갱신(--apply 또는 --out 필요)")
     args = ap.parse_args(argv)
 
     path = pathlib.Path(args.ledger)
@@ -313,11 +354,10 @@ def main(argv=None):
     else:
         print(format_report(plan))
 
-    if args.ep:
-        subset = {k: v for k, v in ledger.items() if k in set(args.ep) or k == "_ledger"}
-    else:
-        subset = ledger
-    new_ledger, applied = apply_plan(subset, plan)
+    # ⚠️ 소급 대상 축소는 '계획'에만 적용한다 — 기록은 반드시 원장 '전체'로.
+    #    부분집합을 쓰면 대상 밖 회차가 통째로 사라진다(2026-10-15 실측:
+    #    --ep ep86 --ep ep87 경로에서 ep88 — 유일한 실제 발행 이력 — 이 소실).
+    new_ledger, applied = apply_plan(ledger, plan)
     if args.out:
         out_path = pathlib.Path(args.out)
         out_path.parent.mkdir(parents=True, exist_ok=True)
@@ -328,15 +368,33 @@ def main(argv=None):
         if not args.as_json:
             print(format_report(plan, applied=applied))
     if args.apply:
-        if not (applied["corrected_segments"] or applied["flat_filled"]):
+        if applied["corrected_segments"] or applied["flat_filled"]:
+            backup = path.with_suffix(path.suffix + ".bak")
+            backup.write_text(json.dumps(ledger, ensure_ascii=False, indent=2) + "\n",
+                              encoding="utf-8")
+            path.write_text(json.dumps(new_ledger, ensure_ascii=False, indent=2) + "\n",
+                            encoding="utf-8")
+            print(f"적용 완료 · 백업 {backup}")
+        else:
+            # 교정 0건이어도 미러까지는 진행한다 — 조기 return 은 미러를 건너뛴다.
             print("적용할 교정 없음 — 원장 무변경")
-            return EXIT_OK
-        backup = path.with_suffix(path.suffix + ".bak")
-        backup.write_text(json.dumps(ledger, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
-        path.write_text(json.dumps(new_ledger, ensure_ascii=False, indent=2) + "\n",
-                        encoding="utf-8")
-        print(f"적용 완료 · 백업 {backup}")
-        return EXIT_OK
+    if args.mirror:
+        if args.apply:
+            target = path
+        elif args.out:
+            target = pathlib.Path(args.out)
+        else:
+            print(json.dumps({"ok": False,
+                              "error": "--mirror 는 --apply 또는 --out 과 함께 써야 한다"},
+                             ensure_ascii=False))
+            return EXIT_MIRROR
+        res = mirror_to_drive(target)
+        print(json.dumps({"mirror": res}, ensure_ascii=False))
+        if not res.get("ok"):
+            return EXIT_MIRROR
+
+    if args.apply:
+        return EXIT_OK  # 반영 완료 — exit 3(불일치 발견)은 dry-run 전용 의미
     drift = plan["total_corrections"] + plan["total_flat_add"]
     return EXIT_DRIFT if drift else EXIT_OK
 

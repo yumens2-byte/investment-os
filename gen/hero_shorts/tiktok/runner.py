@@ -445,6 +445,8 @@ def cmd_backfill(args):
         argv.append("--apply")
     if args.out:
         argv += ["--out", args.out]
+    if args.mirror:
+        argv.append("--mirror")
     if args.as_json:
         argv.append("--json")
     return tk_backfill.main(argv)
@@ -574,6 +576,8 @@ def main(argv=None):
     bf.add_argument("--backfill-limit", type=int, default=30, help="list_posts 조회 창")
     bf.add_argument("--apply", action="store_true", help="원장에 실제 반영(미지정 시 dry-run)")
     bf.add_argument("--out", default=None, help="복구본 저장 경로")
+    bf.add_argument("--mirror", action="store_true",
+                    help="반영 후 AI Drive 미러 갱신(--apply 또는 --out 필요)")
     bf.add_argument("--json", dest="as_json", action="store_true", help="계획 JSON 출력")
     bf.set_defaults(func=cmd_backfill)
 
