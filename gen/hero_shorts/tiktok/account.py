@@ -22,6 +22,16 @@
 금지
     `lastSuccessfulPublishAt` 은 판정에 쓰지 않는다. 오늘 6편 발행 성공 후에도
     None 으로 관측됐다(반영 지연) — 신선도 지표로 부적합하다.
+
+A안(2026-10-15) — 경보는 "관측"이 아니라 "전달"까지가 임무다
+    기존 구현은 WARN_ONLY(expiring·unavailable)만 경보하고, **BLOCKING(expired·
+    needs_reconnect·inactive·missing)은 경보 없이 예외로 죽었다**. 즉 발행이 막힌
+    바로 그 상황에서 사람이 알림을 못 받는 역전이 있었다(2026-10-15 실측: 21:44
+    preflight expired → exit 70, 경보 0건). 이제 차단 상태에서도 경보를 먼저 보내고
+    예외를 올린다. 또한 모든 preflight 관측을 token_history 에 적재한다(B안).
+
+    갱신 강제는 불가하다: Zernio 는 토큰 갱신 API 를 제공하지 않는다(4계층 전수 조사).
+    유일한 수동 복구는 Zernio 대시보드 재연결이며, 따라서 경보 문구는 그 경로를 명시한다.
 """
 import json
 import logging
@@ -32,7 +42,7 @@ from datetime import UTC, datetime
 
 log = logging.getLogger("tiktok.account")
 
-VERSION = "1.2.0"
+VERSION = "1.3.0"
 PLATFORM = "tiktok"
 
 # 24h 주기 토큰은 만료 직후 첫 호출에서 자동 갱신된다(2026-10-15 실측).
@@ -54,6 +64,43 @@ UNAVAILABLE = "unavailable"
 BLOCKING = frozenset({EXPIRED, NEEDS_RECONNECT, INACTIVE, MISSING})
 WARN_ONLY = frozenset({EXPIRING, UNAVAILABLE})
 
+RECONNECT_URL = "https://zernio.com/dashboard/connections"
+HISTORY_SOURCE_DEFAULT = "runner3.preflight"
+
+
+def _profile_id_of(account):
+    """list_accounts 항목의 profileId(문자열 또는 dict) → 문자열. 실패 시 None."""
+    if not isinstance(account, dict):
+        return None
+    raw = account.get("profileId")
+    if isinstance(raw, str):
+        return raw
+    if isinstance(raw, dict):
+        for k in ("_id", "id", "profileId"):
+            if raw.get(k):
+                return str(raw[k])
+    return None
+
+
+def _history():
+    """token_history 지연 임포트 — 이력 모듈 부재/실패가 preflight 를 죽이지 않게."""
+    try:
+        from . import token_history
+        return token_history
+    except Exception as exc:  # noqa: BLE001
+        log.warning("토큰 이력 모듈 로드 실패(이력 없이 계속): %s", exc)
+        return None
+
+
+def _next_run():
+    """next_run 지연 임포트 — 모듈 부재/실패가 preflight 를 죽이지 않게."""
+    try:
+        from . import next_run
+        return next_run
+    except Exception as exc:  # noqa: BLE001
+        log.warning("다음 실행 해석 모듈 로드 실패(주입 생략): %s", exc)
+        return None
+
 
 @dataclass
 class TokenHealth:
@@ -66,6 +113,7 @@ class TokenHealth:
     hours_left: float | None = None
     problems: list = field(default_factory=list)
     warn_hours: float | None = None
+    profile_id: str | None = None
 
     @property
     def blocking(self) -> bool:
@@ -81,6 +129,7 @@ class TokenHealth:
             "expires_at": self.expires_at,
             "hours_left": self.hours_left,
             "warn_hours": self.warn_hours,
+            "profile_id": self.profile_id,
             "problems": list(self.problems),
             "version": VERSION,
         }
@@ -146,10 +195,12 @@ def check_token_health(account_id=None, warn_hours=None, now=None, accounts=None
     hours_threshold = resolve_warn_hours(warn_hours)
     current = now or datetime.now(UTC)
 
+    pid_holder = {"pid": None}
+
     def verdict(ok, status, account_id=None, username=None, expires_at=None,
                 hours_left=None, problems=None):
         return TokenHealth(ok, status, account_id, username, expires_at, hours_left,
-                           problems or [], hours_threshold)
+                           problems or [], hours_threshold, profile_id=pid_holder["pid"])
 
     try:
         pool = fetch_accounts() if accounts is None else list(accounts)
@@ -165,6 +216,8 @@ def check_token_health(account_id=None, warn_hours=None, now=None, accounts=None
     account = find_account(pool, aid)
     if account is None:
         return verdict(False, MISSING, aid, problems=[f"계정 {aid} 미발견 — 연결 해제 의심"])
+
+    pid_holder["pid"] = _profile_id_of(account)
 
     username = account.get("username")
     expires_raw = account.get("tokenExpiresAt")
@@ -197,39 +250,95 @@ def check_token_health(account_id=None, warn_hours=None, now=None, accounts=None
 
 
 def format_alert(health):
+    if health.status == OK:
+        action = "조치 불필요"
+    elif health.status in (EXPIRED, NEEDS_RECONNECT, MISSING, INACTIVE):
+        action = (f"즉시 재연결 — {RECONNECT_URL} "
+                  f"(프로필 {health.profile_id or '-'} / 계정 {health.account_id or '-'}"
+                  f" / @{health.username or '-'})")
+    elif health.status == EXPIRING:
+        action = "만료 임박 — 자동 갱신이 만료 30~45분 후 발화한 실측이 있으나, "
+        action += "실행 시각과 겹치면 차단된다. 재연결 링크를 대기시켜 둘 것"
+    else:
+        action = "계정 조회 불가 — gsk 가 있는 환경에서 재점검"
     lines = [
         f"[hero-shorts] 틱톡 토큰 preflight — {health.status.upper()}",
-        f"계정: {health.username or '-'} ({health.account_id or '-'})",
+        f"계정: {health.username or '-'} ({health.account_id or '-'})"
+        + (f" · 프로필 {health.profile_id}" if health.profile_id else ""),
         f"만료: {health.expires_at or '-'} (남은 {health.hours_left}h)",
-        "조치: " + (
-            "Zernio 대시보드(https://zernio.com/dashboard/connections)에서 재연결"
-            if health.status in (EXPIRED, NEEDS_RECONNECT)
-            else ("계정 조회 불가 — gsk가 있는 환경에서 재점검"
-                  if health.status == UNAVAILABLE
-                  else "만료 전 재연결 권장(자동 갱신 작동 미검증)")
-        ),
+        f"조치: {action}",
     ]
+    lines.extend(_history_lines())
     if health.problems:
         lines.append("문제: " + " / ".join(health.problems))
     return "\n".join(lines)
 
 
-def send_alert(health):
+def _history_lines():
+    """이력 요약 2줄(가능할 때만) — 이력 부재/실패는 조용히 생략."""
+    th = _history()
+    if th is None:
+        return []
+    try:
+        obs = th.load()["observations"]
+        if not obs:
+            return ["이력: 관측 없음(이번 실행부터 축적)"]
+        s = th.summarize(obs)
+        out = [f"이력: 관측 {s['observations']}건 · 갱신 {s['renewals']}회"
+               f" · 연속 성공 {s['consecutive_renewals']}회"
+               + (f" · 끊김({s['streak_broken_at']})" if s.get("streak_broken_at") else "")]
+        nx = _next_run()
+        if nx is not None:
+            nx.apply()  # 값이 비었을 때만 채운다(스케줄러 조회는 러너가 force 로 수행)
+        nxt = os.getenv("HERO_TIKTOK_NEXT_RUN_AT")
+        if nxt:
+            v = th.verify_until(obs, nxt)
+            out.append(f"다음 실행({nxt}) 판정: {str(v['verdict']).upper()}"
+                       f" — 필요 {v['renewals_needed']}회 / 연속 {v['consecutive_renewals']}회")
+            out.append(f"주입 출처: {os.getenv('HERO_TIKTOK_NEXT_RUN_SOURCE') or 'env'}")
+        return out
+    except Exception as exc:  # noqa: BLE001
+        log.warning("이력 요약 생성 실패(생략): %s", exc)
+        return []
+
+
+def record_observation(health, source=HISTORY_SOURCE_DEFAULT, do_mirror=False):
+    """preflight 관측을 이력에 적재(B안). 실패해도 판정은 유지된다."""
+    th = _history()
+    if th is None:
+        return None
+    return th.record(health, source=source, do_mirror=do_mirror)
+
+
+def send_alert(health, force=False, now=None):
     """경보 발송 — 실패해도 preflight 판정은 유지(경보 실패로 발행이 죽지 않게).
 
     채널 우선순위: 텔레그램(저장소 시크릿 TELEGRAM_BOT_TOKEN·TELEGRAM_PAID_CHANNEL_ID
     실재) → Gmail(publish_runtime.send_email_alert) 폴백.
+    중복 억제: 동일 상태 경보가 창(차단 1h / 경고 6h) 안이면 기본 생략. force=True 면 무시.
     """
+    th = _history()
+    if not force and th is not None:
+        ok, reason = th.should_alert(health.status, blocking=health.blocking, now=now)
+        if not ok:
+            log.info("preflight 경보 생략(%s): %s", health.status, reason)
+            return f"(경보 생략 — {reason})"
     body = format_alert(health)
     subject = f"[hero-shorts] 틱톡 토큰 {health.status}"
+    sent, channel = False, "none"
     if send_telegram(f"{subject}\n{body}"):
+        sent, channel = True, "telegram"
         log.info("preflight 경보 발송 완료(텔레그램)")
     else:
         try:
             from .. import publish_runtime as pr
             pr.send_email_alert(subject, f"<pre>{body}</pre>")
+            sent, channel = True, "email"
         except Exception as exc:  # noqa: BLE001
             log.warning("preflight 경보 발송 실패(판정은 유지): %s", exc)
+    if th is not None:
+        th.record_alert(health.status, channel, sent, now=now,
+                        detail="; ".join(health.problems) or None)
     return body
 
 
@@ -254,15 +363,32 @@ def send_telegram(text):
         return False
 
 
-def assert_token_ready(account_id=None, warn_hours=None, now=None, accounts=None):
-    """차단 상태면 RuntimeError. 만료 임박은 경고+경보만."""
+def assert_token_ready(account_id=None, warn_hours=None, now=None, accounts=None,
+                       source=HISTORY_SOURCE_DEFAULT, notify=True):
+    """차단 상태면 RuntimeError. 만료 임박은 경고+경보만.
+
+    A안(2026-10-15): 차단 상태에서도 **경보를 먼저** 보낸 뒤 예외를 올린다 —
+    발행이 막힌 상황이 조용히 지나가면 사람이 재연결 시점을 알 수 없다.
+    B안: 모든 관측을 token_history 에 적재한다(이력 실패는 판정에 영향 없음).
+    """
+    nx = _next_run()
+    if nx is not None:
+        try:
+            nx.apply(force=True)  # 매 실행 재계산 — 경보에 "다음 실행 판정"을 싣기 위해
+        except Exception as exc:  # noqa: BLE001
+            log.warning("다음 실행 시각 주입 실패(계속): %s", exc)
     health = check_token_health(account_id=account_id, warn_hours=warn_hours,
                                 now=now, accounts=accounts)
+    record_observation(health, source=source)
     if health.blocking:
+        log.error("틱톡 preflight 차단(%s): %s", health.status, "; ".join(health.problems))
+        if notify:
+            send_alert(health, now=now)
         raise RuntimeError(
             f"틱톡 preflight 차단({health.status}) — {'; '.join(health.problems)}"
         )
     if health.status in WARN_ONLY:
         log.warning("틱톡 preflight 경고(%s): %s", health.status, "; ".join(health.problems))
-        send_alert(health)
+        if notify:
+            send_alert(health, now=now)
     return health

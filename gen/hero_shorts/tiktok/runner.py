@@ -88,14 +88,57 @@ def cmd_combined(args):
 
 
 def cmd_preflight(args):
+    """0크레딧 토큰 사전 점검 + 이력 적재(B안) + 경보(A안)."""
+    from . import next_run as tk_next_run
+    nx = tk_next_run.apply(force=True)
     health = tk_account.check_token_health(account_id=args.account_id,
                                            warn_hours=args.warn_hours)
-    print(json.dumps(health.to_dict(), ensure_ascii=False))
+    hist = None
+    if not args.no_history:
+        hist = tk_account.record_observation(health, source=args.source,
+                                             do_mirror=args.mirror_history)
+    payload = health.to_dict()
+    payload["next_run"] = nx
+    if hist:
+        payload["history"] = hist
+    print(json.dumps(payload, ensure_ascii=False))
+    if not args.no_notify and health.status != tk_account.OK:
+        tk_account.send_alert(health)
     if health.blocking:
         print(tk_account.format_alert(health), file=sys.stderr)
         return 70
     if health.status != tk_account.OK:
         print(tk_account.format_alert(health), file=sys.stderr)
+    return 0
+
+
+def cmd_token_history(args):
+    """B안 CLI — 이력 리포트/판정/소급/정리(0크레딧)."""
+    from . import token_history as th
+    if args.action == "backfill":
+        entries = []
+        for f in args.files:
+            try:
+                entries.append({"name": Path(f).name,
+                                "text": Path(f).read_text(encoding="utf-8", errors="replace")})
+            except Exception as exc:  # noqa: BLE001
+                print(f"경고: {f} 읽기 실패 — {exc}", file=sys.stderr)
+        print(json.dumps(th.backfill(entries, path=args.path), ensure_ascii=False, indent=1))
+        return 0
+    if args.action == "prune":
+        print(json.dumps(th.prune(args.path, args.keep), ensure_ascii=False, indent=1))
+        return 0
+    until = args.until
+    if until in (None, "", "auto") and not getattr(args, "no_query", False):
+        from . import next_run as tk_next_run
+        until = tk_next_run.apply(force=True).get("next_run_at")
+    obs = th.load(args.path)["observations"]
+    summary = th.summarize(obs)
+    verify = th.verify_until(obs, until) if until else None
+    if args.json:
+        print(json.dumps({"summary": summary, "verify": verify}, ensure_ascii=False, indent=1))
+    else:
+        print(th.format_report(summary, verify))
     return 0
 
 
@@ -182,8 +225,10 @@ def collect_ready(state):
 def cmd_record(args):
     """러너3 S7 — 발행 결과를 원장에 기록 + AI Drive 즉시 미러링. 멱등(재기록 방지).
 
-    2026-10-15 결함: 발행은 성공했으나 원장에 post_url/post_id 가 None 으로 남았다.
-    발행 결과 회수를 코드 경로로 고정한다.
+    2026-10-15 실측 결함 2건을 코드 경로로 봉합한다.
+      D-2: post_id/platform_post_id/segments/mode 누락 → Zernio 실조회로 회수.
+      D-3: published_at 에 로컬 now 가 박힘(플랫폼 값과 46분 불일치) → 플랫폼 값 우선.
+    회수 실패 시 추측하지 않고 `published_at_source` 로 출처를 명시한다(감사 정직성).
     """
     p = _state_path(getattr(args, "state", None))
     state = load_publish_state(p)
@@ -195,18 +240,81 @@ def cmd_record(args):
                           "post_url": tk.get("post_url")}, ensure_ascii=False))
         return 0
     now = datetime.now(UTC).isoformat()
+    post_url = args.post_url or tk.get("post_url") or tk.get("platform_post_url")
+    post_id = args.post_id or tk.get("post_id")
+    platform_post_id = args.platform_post_id or tk.get("platform_post_id")
+    published_at = args.published_at or tk.get("published_at")
+    source = "arg" if args.published_at else ("ledger" if published_at else None)
+
+    recovered = None
+    needs_recovery = not (post_id and platform_post_id and published_at)
+    if args.status == "published" and needs_recovery \
+            and not getattr(args, "no_recover", False):
+        try:
+            from .recover import resolve_published_post
+            recovered = resolve_published_post(
+                post_url=post_url, post_id=post_id,
+                account_id=getattr(args, "account_id", None),
+                limit=getattr(args, "recover_limit", 20),
+                allow_latest=bool(getattr(args, "recover_latest", False)),
+            )
+        except Exception as exc:  # noqa: BLE001
+            print(f"발행 결과 회수 실패(원장은 기록): {exc}", file=sys.stderr)
+        if recovered:
+            post_url = post_url or recovered.get("platform_post_url")
+            post_id = post_id or recovered.get("post_id")
+            platform_post_id = platform_post_id or recovered.get("platform_post_id")
+            if recovered.get("published_at") and not args.published_at:
+                published_at = recovered["published_at"]
+                source = "zernio_platform"
+
+    if not published_at:
+        published_at = now
+        source = "local_now"
+
     tk.update({
         "status": args.status,
-        "post_id": args.post_id or tk.get("post_id"),
-        "platform_post_id": args.platform_post_id or args.post_id or tk.get("platform_post_id"),
-        "post_url": args.post_url or tk.get("post_url"),
-        "platform_post_url": args.post_url or tk.get("platform_post_url"),
-        "published_at": tk.get("published_at") or args.published_at or now,
+        "post_id": post_id,
+        "platform_post_id": platform_post_id,
+        "post_url": post_url,
+        "platform_post_url": post_url,
+        "published_at": published_at,
+        "published_at_source": source,
         "recorded_at": now,
     })
+    if recovered:
+        tk["recovered_by"] = recovered.get("matched_by")
     if args.status == "published" and not tk.get("post_url"):
         print(json.dumps({"ok": False, "reason": "post_url_required"}, ensure_ascii=False))
         return 2
+
+    privacy_level = (getattr(args, "privacy_level", None) or tk.get("privacy_level")
+                     or os.environ.get("HERO_TIKTOK_PRIVACY_LEVEL"))
+    if privacy_level:
+        tk["privacy_level"] = privacy_level
+    if args.status == "published":
+        # D-2 — ep86/ep87 과 형식 정합(mode·segment_count·segments[])을 코드로 보장한다.
+        tk.setdefault("mode", getattr(args, "mode", None) or tk.get("mode") or "combined")
+        tk.setdefault("segment_count", tk.get("segment_count") or 1)
+        seg_no = getattr(args, "segment", None)
+        if seg_no is None and tk.get("mode") == "combined":
+            seg_no = 1
+        segs = tk.setdefault("segments", [])
+        entry = {
+            "segment_no": seg_no,
+            "post_id": post_id,
+            "platform_post_id": platform_post_id,
+            "platform_post_url": post_url,
+            "published_at": published_at,
+            "outcome": args.status,
+        }
+        dup = any((s.get("post_id") and post_id and s.get("post_id") == post_id)
+                  or (s.get("platform_post_url") and post_url
+                      and s.get("platform_post_url") == post_url)
+                  for s in segs if isinstance(s, dict))
+        if not dup:
+            segs.append(entry)
+
     if getattr(args, "media_url", None):
         comb = rec.setdefault("combined", {})
         comb["media_url"] = args.media_url
@@ -216,18 +324,31 @@ def cmd_record(args):
     try:
         from ..statestore import sync_states
         mirrored = bool(sync_states([p]))
-    except Exception as exc:
+    except Exception as exc:  # noqa: BLE001
         print(f"미러링 실패(무시): {exc}", file=sys.stderr)
     print(json.dumps({"ok": True, "ep": args.ep, "status": args.status,
-                      "post_url": tk.get("post_url"), "mirrored": mirrored},
+                      "post_id": post_id, "platform_post_id": platform_post_id,
+                      "post_url": tk.get("post_url"),
+                      "published_at": published_at, "published_at_source": source,
+                      "recovered": bool(recovered), "mirrored": mirrored},
                      ensure_ascii=False))
     return 0
 
 
 def cmd_ready(args):
     """러너3 S3 — 발행 대상 회차를 JSON 으로 출력한다. 발행 없음 · 0크레딧."""
+    p = _state_path(getattr(args, "state", None))
+    if not p.exists():
+        # D-1: 원장 부재는 '발행 0건'이 아니라 '조용한 미실행'이다. 먼저 복원을 시도한다.
+        try:
+            from ..statestore import restore_if_missing
+            if restore_if_missing([p]):
+                print(json.dumps({"ok": True, "recovered": str(p)}, ensure_ascii=False),
+                      file=sys.stderr)
+        except Exception as exc:  # noqa: BLE001
+            print(f"원장 복원 시도 실패(계속): {exc}", file=sys.stderr)
     try:
-        state = load_publish_state(getattr(args, "state", None))
+        state = load_publish_state(p)
     except FileNotFoundError as exc:
         print(json.dumps({"ok": False, "reason": "state_missing", "detail": str(exc)},
                          ensure_ascii=False))
@@ -249,6 +370,22 @@ def cmd_ready(args):
     return READY_EXIT_NONE
 
 
+def cmd_next_run(args):
+    """B안 후속 — 다음 실행 시각 해석(및 --apply 시 env 주입). 0크레딧."""
+    from . import next_run as tk_next_run
+    if args.apply:
+        res = tk_next_run.apply(force=True, query=not args.no_query)
+    else:
+        res = tk_next_run.resolve(query=not args.no_query)
+    if args.json:
+        print(json.dumps(res, ensure_ascii=False, indent=1))
+    else:
+        print(tk_next_run.report_line(res))
+        if res.get("reason"):
+            print(f"사유: {res['reason']}")
+    return 0 if res.get("next_run_at") else 3
+
+
 def main(argv=None):
     ap = argparse.ArgumentParser(description=f"tiktok line v{VERSION}")
     sub = ap.add_subparsers(dest="step", required=True)
@@ -265,7 +402,14 @@ def main(argv=None):
 
     pf = sub.add_parser("preflight", help="틱톡 토큰 유효성 사전 점검(0크레딧)")
     pf.add_argument("--account-id", default=None, help="미지정 시 HERO_TIKTOK_ACCOUNT_ID")
-    pf.add_argument("--warn-hours", type=float, default=None, help="만료 임박 임계(기본 12h)")
+    pf.add_argument("--warn-hours", type=float, default=None, help="만료 임박 임계(기본 2h)")
+    pf.add_argument("--source", default="runner.preflight", help="이력 출처 라벨")
+    pf.add_argument("--no-history", dest="no_history", action="store_true",
+                    help="토큰 이력 적재 생략(B안)")
+    pf.add_argument("--mirror-history", dest="mirror_history", action="store_true",
+                    help="이력 적재 후 AI Drive 미러링")
+    pf.add_argument("--no-notify", dest="no_notify", action="store_true",
+                    help="경보 발송 생략(판정만)")
     pf.set_defaults(func=cmd_preflight)
 
     c = sub.add_parser("combined", help="합본 1편 매니페스트 생성(정기 발행 기본)")
@@ -304,8 +448,21 @@ def main(argv=None):
     rc.add_argument("--platform-post-id", dest="platform_post_id")
     rc.add_argument("--post-url", dest="post_url")
     rc.add_argument("--published-at", dest="published_at")
+    rc.add_argument("--platform-post-url", dest="platform_post_url")
     rc.add_argument("--media-url", dest="media_url",
                     help="Zernio 에 실제 인게스트된 media_url (발행 감사 기록)")
+    rc.add_argument("--mode", choices=["combined", "split"], default=None,
+                    help="발행 모드(미지정 시 combined) — 원장 형식 정합(D-2)")
+    rc.add_argument("--segment", type=int, choices=[1, 2, 3], default=None)
+    rc.add_argument("--privacy-level", default=None)
+    rc.add_argument("--account-id", default=None,
+                    help="회수 대상 Zernio 계정(미지정 시 HERO_TIKTOK_ACCOUNT_ID)")
+    rc.add_argument("--recover-limit", type=int, default=20,
+                    help="list_posts 조회 개수(회수 범위)")
+    rc.add_argument("--recover-latest", action="store_true",
+                    help="post_url 매칭 실패 시 최근 발행건 사용(감사 전용·기본 fail-closed)")
+    rc.add_argument("--no-recover", dest="no_recover", action="store_true",
+                    help="Zernio 회수 생략(오프라인 기록)")
     rc.add_argument("--force", action="store_true")
     rc.add_argument("--state")
     rc.set_defaults(func=cmd_record)
@@ -314,6 +471,26 @@ def main(argv=None):
     rd.add_argument("--state", default=None,
                     help="발행 원장 경로(미지정 시 HERO_STATE_FILE 또는 gen/data/publish_state.json)")
     rd.set_defaults(func=cmd_ready)
+
+    th = sub.add_parser("token-history",
+                        help="틱톡 토큰 만료시각 이력 리포트·판정·소급(B안, 0크레딧)")
+    th.add_argument("--action", choices=["report", "backfill", "prune"], default="report")
+    th.add_argument("--until", default="auto",
+                    help="report: 목표 실행시각 ISO8601. auto=다음 실행 시각 자동 해석")
+    th.add_argument("--no-query", dest="no_query", action="store_true",
+                    help="다음 실행 해석 시 스케줄러 조회 생략(크론 계산만)")
+    th.add_argument("--files", nargs="*", default=[], help="backfill: 로그 파일 경로")
+    th.add_argument("--keep", type=int, default=500, help="prune: 보존 관측 수")
+    th.add_argument("--path", default=None)
+    th.add_argument("--json", action="store_true")
+    th.set_defaults(func=cmd_token_history)
+
+    nr = sub.add_parser("next-run", help="다음 실행 시각 해석·주입(B안 후속, 0크레딧)")
+    nr.add_argument("--json", action="store_true")
+    nr.add_argument("--no-query", dest="no_query", action="store_true",
+                    help="스케줄러 조회 생략(크론 계산만)")
+    nr.add_argument("--apply", action="store_true", help="현재 프로세스 env 에 주입")
+    nr.set_defaults(func=cmd_next_run)
 
     args = ap.parse_args(argv)
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s | %(message)s")

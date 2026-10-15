@@ -110,6 +110,13 @@ def restore_if_missing(paths):
         if p.exists() and not _remote_is_newer(p):
             continue
         try:
+            # D-1(2026-10-15 실측): 러너 파일시스템은 실행마다 초기화될 수 있고
+            # gen/data 가 미추적이라 부모 디렉터리가 없다. 그 상태로 download 하면
+            # gsk 가 ENOENT 로 죽고(=조용한 발행 0건, ready exit 66) 복원이 영영 안 된다.
+            # 다운로드 이전에 부모를 보장한다.
+            if p.parent and not p.parent.exists():
+                p.parent.mkdir(parents=True, exist_ok=True)
+                log.info("원장 경로 생성: %s", p.parent)
             _gsk(["aidrive", "download", f"{DRIVE_DIR}/{p.name}", str(p)])
             out.append(str(p))
             log.info("원장 복원: aidrive:%s/%s → %s", DRIVE_DIR, p.name, p)
