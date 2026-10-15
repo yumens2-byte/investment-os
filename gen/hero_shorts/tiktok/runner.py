@@ -15,6 +15,7 @@ import json
 import logging
 import os
 import sys
+from datetime import UTC, datetime
 from pathlib import Path
 
 from . import VERSION
@@ -176,6 +177,48 @@ def collect_ready(state):
     return items, stats
 
 
+
+def cmd_record(args):
+    """러너3 S7 — 발행 결과를 원장에 기록 + AI Drive 즉시 미러링. 멱등(재기록 방지).
+
+    2026-10-15 결함: 발행은 성공했으나 원장에 post_url/post_id 가 None 으로 남았다.
+    발행 결과 회수를 코드 경로로 고정한다.
+    """
+    p = _state_path(getattr(args, "state", None))
+    state = load_publish_state(p)
+    key = f"ep{args.ep}"
+    rec = state.setdefault(key, {})
+    tk = rec.setdefault("tiktok", {})
+    if tk.get("status") == "published" and not getattr(args, "force", False):
+        print(json.dumps({"ok": False, "reason": "already_published",
+                          "post_url": tk.get("post_url")}, ensure_ascii=False))
+        return 0
+    now = datetime.now(UTC).isoformat()
+    tk.update({
+        "status": args.status,
+        "post_id": args.post_id or tk.get("post_id"),
+        "platform_post_id": args.platform_post_id or args.post_id or tk.get("platform_post_id"),
+        "post_url": args.post_url or tk.get("post_url"),
+        "platform_post_url": args.post_url or tk.get("platform_post_url"),
+        "published_at": tk.get("published_at") or args.published_at or now,
+        "recorded_at": now,
+    })
+    if args.status == "published" and not tk.get("post_url"):
+        print(json.dumps({"ok": False, "reason": "post_url_required"}, ensure_ascii=False))
+        return 2
+    p.write_text(json.dumps(state, ensure_ascii=False, indent=2), encoding="utf-8")
+    mirrored = False
+    try:
+        from ..statestore import sync_states
+        mirrored = bool(sync_states([p]))
+    except Exception as exc:
+        print(f"미러링 실패(무시): {exc}", file=sys.stderr)
+    print(json.dumps({"ok": True, "ep": args.ep, "status": args.status,
+                      "post_url": tk.get("post_url"), "mirrored": mirrored},
+                     ensure_ascii=False))
+    return 0
+
+
 def cmd_ready(args):
     """러너3 S3 — 발행 대상 회차를 JSON 으로 출력한다. 발행 없음 · 0크레딧."""
     try:
@@ -247,6 +290,16 @@ def main(argv=None):
     pb.add_argument("--media-url", default=None, help="발행 직전 media_url 주입(합본 경로)")
     pb.add_argument("--schedule-at", default=None, help="예약 발행 ISO8601")
     pb.set_defaults(func=cmd_publish)
+    rc = sub.add_parser("record", help="발행 결과를 원장에 기록(멱등)")
+    rc.add_argument("--ep", type=int, required=True)
+    rc.add_argument("--status", default="published")
+    rc.add_argument("--post-id", dest="post_id")
+    rc.add_argument("--platform-post-id", dest="platform_post_id")
+    rc.add_argument("--post-url", dest="post_url")
+    rc.add_argument("--published-at", dest="published_at")
+    rc.add_argument("--force", action="store_true")
+    rc.add_argument("--state")
+    rc.set_defaults(func=cmd_record)
 
     rd = sub.add_parser("ready", help="러너3 — 발행 대상 회차 판별(승인 완료·틱톡 미발행)")
     rd.add_argument("--state", default=None,

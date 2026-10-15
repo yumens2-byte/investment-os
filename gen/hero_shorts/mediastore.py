@@ -97,5 +97,26 @@ def refresh_public_url(ep, aidrive_path=None, local_dir=None, name=None):
     local = restore_media(src, tmp_dir / fname)
     media = upload_media(local)
     log.info("공개 URL 재발급 완료: %s → %s", src, media["public_url"])
-    return {"public_url": media["public_url"], "wrapper_url": media["wrapper_url"],
+    # D-6(2026-10-15 실측): Zernio 는 토큰 URL(?token=…)을 판별 실패("no file extension and no
+    # stored content type")로 거부한다. 토큰 없는 래퍼 URL 은 발행에 성공했다.
+    # → 발행용 media_url 은 래퍼 URL 을 정본으로 삼고, 토큰 URL 은 보조로 남긴다.
+    return {"media_url": media["wrapper_url"],
+            "wrapper_url": media["wrapper_url"], "public_url": media["public_url"],
             "local": str(local), "aidrive_path": src}
+
+
+def resolve_publish_url(ep, aidrive_path=None, local_dir=None, name=None):
+    """발행 직전 media_url 확정 — Zernio 가 실제로 인게스트할 수 있는 URL 을 돌려준다.
+
+    1순위: AI Drive 원본 → `gsk upload` 래퍼 URL(토큰 없음, 실측 발행 성공)
+    2순위: 로컬 http.server + `.mp4` 확장자 공개 URL(publish_runtime.resolve_public_media_url)
+    둘 다 실패하면 RuntimeError — 호출측은 발행을 중단한다(F-3 fail-closed).
+    """
+    try:
+        info = refresh_public_url(ep, aidrive_path=aidrive_path, local_dir=local_dir, name=name)
+        return info["media_url"], info
+    except Exception as exc:
+        log.warning("래퍼 URL 재발급 실패(%s) — 확장자 URL 로 폴백", exc)
+    from .publish_runtime import resolve_public_media_url
+    local = str(Path(local_dir or "/tmp/hero_media") / (name or f"ep{ep}_final_voiced.mp4"))
+    return resolve_public_media_url(local), {"media_url": None, "local": local}
