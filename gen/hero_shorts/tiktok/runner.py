@@ -452,6 +452,23 @@ def cmd_backfill(args):
     return tk_backfill.main(argv)
 
 
+def cmd_catchup(args):
+    """러너3 회수 계획 — 읽기 전용. 발행하지 않는다."""
+    from . import catchup as tk_catchup
+    argv = ["--state", str(_state_path(getattr(args, "state", None))),
+            "--max-publish", str(args.max_publish),
+            "--retention-hours", str(args.retention_hours)]
+    if args.cron:
+        argv += ["--cron", args.cron]
+    if args.tz:
+        argv += ["--tz", args.tz]
+    if args.now:
+        argv += ["--now", args.now]
+    if args.as_json:
+        argv.append("--json")
+    return tk_catchup.main(argv)
+
+
 def main(argv=None):
     ap = argparse.ArgumentParser(description=f"tiktok line v{VERSION}")
     sub = ap.add_subparsers(dest="step", required=True)
@@ -580,6 +597,18 @@ def main(argv=None):
                     help="반영 후 AI Drive 미러 갱신(--apply 또는 --out 필요)")
     bf.add_argument("--json", dest="as_json", action="store_true", help="계획 JSON 출력")
     bf.set_defaults(func=cmd_backfill)
+    cu = sub.add_parser("catchup",
+                        help="러너3 실행 누락 회수 계획 — 읽기 전용(발행 없음, 0크레딧)")
+    cu.add_argument("--state", default=None)
+    cu.add_argument("--cron", default=None, help="미지정 시 30 10 * * 2,4(KST)")
+    cu.add_argument("--tz", default=None, help="미지정 시 Asia/Seoul(스킬 크론 기준)")
+    cu.add_argument("--now", default=None, help="기준 시각 ISO8601(검증용)")
+    cu.add_argument("--max-publish", type=int, default=1, help="실행 1회 발행 한도")
+    cu.add_argument("--retention-hours", type=float, default=24.0,
+                    help="Telegram 콜백 보존 한도(기본 24h)")
+    cu.add_argument("--json", dest="as_json", action="store_true")
+    cu.set_defaults(func=cmd_catchup)
+
 
 
     nr = sub.add_parser("next-run", help="다음 실행 시각 해석·주입(B안 후속, 0크레딧)")
