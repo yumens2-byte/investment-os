@@ -1,0 +1,64 @@
+# =============================================================================
+# Hero Shorts Watchdog — 무발동 감지  VERSION 1.0.0  (신설 2026-10-15)
+#
+# 왜 필요한가
+#   기존 notify_watchdog.yml 은 workflow_run(완료 이벤트)에만 반응한다.
+#   이벤트가 아예 안 오거나 수 시간 지연되면 경보가 없다 — 그 주석이 스스로
+#   한계로 적어 둔 지점이다. 실측 근거: hero gen 크론 `0 1 * * 2,4`(KST 화·목
+#   10:00)인데 2026-10-15 실제 발화는 05:42:36Z — 4시간 42분 지연이었다.
+#
+# 무엇을 하는가
+#   실행 이벤트를 기다리지 않고, 기대 발화 시각이 지난 뒤 **증거를 능동 조회**한다.
+#   기대 시각 + 유예(기본 6h, Actions 지연 실측 반영) 안이면 ok,
+#   기대 이후 증거가 있으면 fresh, 유예를 넘겼는데 증거가 없으면 missed.
+#
+# 범위(정직한 한계)
+#   이 워크플로우는 **GitHub Actions 워크플로우만** 감시한다(--expect actions).
+#   러너3 는 gsk 스케줄 스킬이라 Actions API 로 보이지 않는다 —
+#   스킬 감시는 gsk 가 있는 환경에서 `python -m gen.hero_shorts.tiktok.watchdog
+#   --expect skill` 로 수행한다.
+#
+# 경보 경로
+#   missed/unknown → exit 3/4 → 워크플로우 결론 != success
+#   → notify_watchdog.yml 이 텔레그램 발송(중복 구현 없음).
+#   ※ 아래 표시 이름을 notify_watchdog.yml 의 workflows 목록에 등록해야 동작한다.
+# =============================================================================
+name: "🐕‍🦺 Hero Shorts Watchdog"
+
+"on":
+  schedule:
+    - cron: "45 2 * * 2,4"   # KST 화·목 11:45 — 러너1(08:00)·러너3(10:30) 이후 1차 점검
+    - cron: "45 8 * * 2,4"   # KST 화·목 17:45 — 지연 발화까지 포착하는 2차 점검
+  workflow_dispatch:
+
+permissions:
+  actions: read    # 실행 이력 조회
+  contents: read
+
+concurrency:
+  group: hero-shorts-watchdog
+  cancel-in-progress: false
+
+jobs:
+  inspect:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Watchdog (read-only)
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          set -o pipefail
+          python -m gen.hero_shorts.tiktok.watchdog --expect actions --json \
+            | tee /tmp/hero-watchdog.json
+          {
+            echo '## Hero Shorts Watchdog'
+            echo ''
+            echo '```json'
+            cat /tmp/hero-watchdog.json
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
