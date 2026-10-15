@@ -48,10 +48,25 @@ def _as_bool(value, default):
     return str(value).strip().lower() in ("1", "true", "yes", "y", "on")
 
 
+_MEDIA_ERR_HINTS = (
+    "extension", "content type", "media", "url", "unsupported", "download",
+    "fetch", "400", "415", "422",
+)
+
+
+def _looks_like_media_error(exc):
+    """D-14 — 미디어 URL 문제로 보이는 실패만 재시도 대상으로 판별."""
+    return any(h in str(exc).lower() for h in _MEDIA_ERR_HINTS)
+
+
 def publish_segment(segment, account_id=None, schedule_at=None, max_wait_sec=900,
                     poll_interval_sec=30, ai_generated=True, privacy_level=None,
-                    preflight=None):
-    """매니페스트 세그먼트 1편 발행. 게이트 미통과 시 RuntimeError."""
+                    preflight=None, fallback_media_url=None):
+    """매니페스트 세그먼트 1편 발행. 게이트 미통과 시 RuntimeError.
+
+    D-14: `fallback_media_url` 이 주어지면 1차 실패가 미디어 URL 문제로 보일 때
+    그 URL 로 **딱 1회** 재시도한다. 무한 재시도는 하지 않는다(멱등성 원칙 유지).
+    """
     if not tk_manifest.segment_gate_ok(segment):
         raise RuntimeError(
             f"게이트 미통과 — segment {segment.get('segment_no')} 발행 차단"
@@ -76,22 +91,35 @@ def publish_segment(segment, account_id=None, schedule_at=None, max_wait_sec=900
     if preflight:
         health = tk_account.assert_token_ready(aid)
         log.info("틱톡 preflight: status=%s 남은=%sh", health.status, health.hours_left)
-    log.info(
-        "틱톡 발행 요청: segment=%s account=%s privacy=%s draft=%s",
-        segment.get("segment_no"), aid, level, draft,
-    )
-    return pr.create_and_monitor_post(
-        text=segment["caption"],
-        media_url=media_url,
-        account_id=aid,
-        schedule_at=schedule_at,
-        platform=PLATFORM,
-        ai_generated=ai_generated,
-        max_wait_sec=max_wait_sec,
-        poll_interval_sec=poll_interval_sec,
-        tiktok_privacy_level=level,
-        tiktok_draft=draft,
-        tiktok_allow_comments=segment.get("allow_comments", True),
-        tiktok_allow_duet=segment.get("allow_duet", True),
-        tiktok_allow_stitch=segment.get("allow_stitch", True),
-    )
+    def _attempt(url):
+        log.info(
+            "틱톡 발행 요청: segment=%s account=%s privacy=%s draft=%s url=%s",
+            segment.get("segment_no"), aid, level, draft, url,
+        )
+        return pr.create_and_monitor_post(
+            text=segment["caption"],
+            media_url=url,
+            account_id=aid,
+            schedule_at=schedule_at,
+            platform=PLATFORM,
+            ai_generated=ai_generated,
+            max_wait_sec=max_wait_sec,
+            poll_interval_sec=poll_interval_sec,
+            tiktok_privacy_level=level,
+            tiktok_draft=draft,
+            tiktok_allow_comments=segment.get("allow_comments", True),
+            tiktok_allow_duet=segment.get("allow_duet", True),
+            tiktok_allow_stitch=segment.get("allow_stitch", True),
+        )
+
+    try:
+        return _attempt(media_url)
+    except Exception as exc:
+        if not fallback_media_url or fallback_media_url == media_url \
+                or not _looks_like_media_error(exc):
+            raise
+        log.warning("발행 1차 실패(미디어 URL 추정) — 대체 URL 로 1회 재시도: %s", exc)
+        result = _attempt(fallback_media_url)
+        result["media_url_used"] = fallback_media_url
+        result["media_url_fallback_used"] = True
+        return result

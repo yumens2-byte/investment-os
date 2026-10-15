@@ -108,6 +108,7 @@ def cmd_publish(args):
     if args.media_url:
         seg["media_url"] = args.media_url
     result = tk_publish.publish_segment(seg, account_id=args.account_id,
+                                        fallback_media_url=getattr(args, "fallback_media_url", None),
                                         schedule_at=args.schedule_at,
                                         privacy_level=args.privacy_level,
                                         preflight=not args.skip_preflight)
@@ -293,6 +294,8 @@ def main(argv=None):
                     help="토큰 preflight 생략(비상용 — 기본은 검사)")
     pb.add_argument("--media-url", default=None, help="발행 직전 media_url 주입(합본 경로)")
     pb.add_argument("--schedule-at", default=None, help="예약 발행 ISO8601")
+    pb.add_argument("--fallback-media-url", dest="fallback_media_url",
+                    help="1차 발행 실패가 미디어 URL 문제일 때 쓸 대체 URL(1회 재시도)")
     pb.set_defaults(func=cmd_publish)
     rc = sub.add_parser("record", help="발행 결과를 원장에 기록(멱등)")
     rc.add_argument("--ep", type=int, required=True)
