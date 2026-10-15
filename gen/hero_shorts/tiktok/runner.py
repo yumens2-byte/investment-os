@@ -206,6 +206,10 @@ def cmd_record(args):
     if args.status == "published" and not tk.get("post_url"):
         print(json.dumps({"ok": False, "reason": "post_url_required"}, ensure_ascii=False))
         return 2
+    if getattr(args, "media_url", None):
+        comb = rec.setdefault("combined", {})
+        comb["media_url"] = args.media_url
+        comb["media_url_source"] = "zernio_ingested"
     p.write_text(json.dumps(state, ensure_ascii=False, indent=2), encoding="utf-8")
     mirrored = False
     try:
@@ -297,6 +301,8 @@ def main(argv=None):
     rc.add_argument("--platform-post-id", dest="platform_post_id")
     rc.add_argument("--post-url", dest="post_url")
     rc.add_argument("--published-at", dest="published_at")
+    rc.add_argument("--media-url", dest="media_url",
+                    help="Zernio 에 실제 인게스트된 media_url (발행 감사 기록)")
     rc.add_argument("--force", action="store_true")
     rc.add_argument("--state")
     rc.set_defaults(func=cmd_record)
