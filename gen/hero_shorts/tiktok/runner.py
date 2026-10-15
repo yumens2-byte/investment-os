@@ -469,6 +469,24 @@ def cmd_catchup(args):
     return tk_catchup.main(argv)
 
 
+def cmd_reapprove(args):
+    """승인 요청 재발행 위임 — 기본 dry-run, --send 로만 전송."""
+    from .. import reapproval as ra
+    argv = ["--state", str(_state_path(getattr(args, "state", None))),
+            "--max-requests", str(args.max_requests),
+            "--cooldown-hours", str(args.cooldown_hours),
+            "--retention-hours", str(args.retention_hours)]
+    for ep in (args.ep or []):
+        argv += ["--ep", str(ep)]
+    if args.now:
+        argv += ["--now", args.now]
+    if args.send:
+        argv.append("--send")
+    if args.as_json:
+        argv.append("--json")
+    return ra.main(argv)
+
+
 def main(argv=None):
     ap = argparse.ArgumentParser(description=f"tiktok line v{VERSION}")
     sub = ap.add_subparsers(dest="step", required=True)
@@ -608,6 +626,18 @@ def main(argv=None):
                     help="Telegram 콜백 보존 한도(기본 24h)")
     cu.add_argument("--json", dest="as_json", action="store_true")
     cu.set_defaults(func=cmd_catchup)
+    ra = sub.add_parser("reapprove",
+                        help="승인 요청 자동 재발행 — 24h 콜백 소실 대응(기본 dry-run)")
+    ra.add_argument("--state", default=None)
+    ra.add_argument("--ep", action="append", default=None, type=int)
+    ra.add_argument("--now", default=None, help="기준 시각 ISO8601(검증용)")
+    ra.add_argument("--retention-hours", type=float, default=24.0)
+    ra.add_argument("--max-requests", type=int, default=3)
+    ra.add_argument("--cooldown-hours", type=float, default=24.0)
+    ra.add_argument("--send", action="store_true", help="실제 전송(미지정 시 dry-run)")
+    ra.add_argument("--json", dest="as_json", action="store_true")
+    ra.set_defaults(func=cmd_reapprove)
+
 
 
 

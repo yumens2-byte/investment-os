@@ -209,7 +209,9 @@ def build_plan(state, now=None, cron=None, tz_name=None, max_publish=1,
         remedies.append(
             "승인 콜백 소실 위험 " + ", ".join(
                 f"ep{r['ep']}(요청 후 {r['age_hours']}h, {r['status']})" for r in stale)
-            + " — Telegram 보존 24h 초과, 재요청 필요")
+            + " — Telegram 보존 24h 초과, 재요청 필요\n"
+            + "      → python3 -m gen.hero_shorts.reapproval --send --ep "
+            + ",".join(str(r["ep"]) for r in stale))
     if missed and not publishable and not incomplete:
         remedies.append(f"미발행 슬롯 {missed}개 · 발행할 회차 없음 — 생성/승인 대기")
 
