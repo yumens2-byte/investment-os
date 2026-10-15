@@ -186,9 +186,20 @@ def answer_callback(callback_id, text):
 
 
 def edit_message(message_id, text):
+    """승인 메시지 본문 갱신.
+
+    v2.7.5 (2026-10-15 파일럿 실측): 승인 요청은 sendVideo 로 보내므로 메시지가
+    '동영상+캡션' 형태다. 이 경우 editMessageText 는 HTTP 400(Bad Request)으로 실패한다
+    (파일럿에서 실측: 09:14:22 메시지 갱신 실패). 미디어 메시지는 editMessageCaption 을 쓴다.
+    """
     token, chat = _config()
-    _call_api(token, "editMessageText",
-              params={"chat_id": chat, "message_id": message_id, "text": text})
+    for method, key in (("editMessageCaption", "caption"), ("editMessageText", "text")):
+        try:
+            _call_api(token, method, params={"chat_id": chat, "message_id": message_id, key: text})
+            return
+        except Exception as exc:
+            log.warning("%s 실패 — 다음 방식 시도: %s", method, exc)
+    raise RuntimeError(f"승인 메시지 갱신 실패(message_id={message_id})")
 
 
 def resolve_pending(state, lookback_hours=36, wait_sec=0):
