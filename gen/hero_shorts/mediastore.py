@@ -4,7 +4,10 @@ gen/hero_shorts/mediastore.py — 완성 미디어 AI Drive 보관 (v2.9.0)
 설계 정본: reports/runner3_tiktok_design_2026-10-15.md (C-2, 마스터 승인 2026-10-15)
 
 배경(실측 2026-10-15):
-    러너1 이 발행용 공개 URL 을 만들 때 쓰는 `gsk download` 토큰 URL 은 24시간만 유효하다.
+    러너1 이 발행용 공개 URL 을 만들 때 쓰는 `gsk download` 토큰 URL 은 **1시간**만 유효하다
+    (D-12, 2026-10-15 — Zernio 문서: "1-hour AI Drive readable URLs are publish-now only").
+    종전 "24시간" 가정은 오류였고, 실측은 08:06 발급 → 10:22 HTTP 403 이었다.
+    래퍼 URL 은 최대 6일 예약 발행에 쓸 수 있다.
     러너1(08:00 KST) → 러너3(10:30 KST) 은 2.5시간이라 정상 경로는 문제없지만,
     발행 실패·지연·재시도 시점에 URL 이 만료되면 발행할 원본이 사라진다(설계 F-3).
 

@@ -1,7 +1,10 @@
 """
 gen/hero_shorts/mediashare.py — 발행 미디어 업로드·공개링크 회수
 ================================================================
-gsk upload(래퍼 URL) → gsk download(토큰화 공개 URL, 24시간 유효) 2단계.
+gsk upload(래퍼 URL) → gsk download(토큰화 공개 URL) 2단계.
+D-12(2026-10-15 확정): 토큰 URL 은 **1시간** 유효다(Zernio 문서 명시 — "1-hour AI Drive
+readable URLs are publish-now only"). 종전 "24시간 유효" 가정은 오류였다.
+발행용 URL 은 반드시 래퍼 URL(publish_url) 을 쓴다.
 비용 0원. gsk CLI 환경(Genspark 세션/스케줄)에서만 동작한다.
 """
 import json

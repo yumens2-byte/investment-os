@@ -621,7 +621,8 @@ def main(argv=None):
             st = load_state()
             st.setdefault(f"ep{args.ep}", {})["approval"] = ap_block
             save_state(st)
-            # v2.9.0 (C-2) — 공개 URL 은 24h 유효: AI Drive 원본 보관 후 경로를 원장에 남긴다.
+            # v2.9.0 (C-2) — 공개 URL 은 1h 유효(D-12, 2026-10-15 정정 — 종전 24h 가정은 오류):
+            # AI Drive 원본 보관 후 경로를 원장에 남긴다. 발행용은 래퍼 URL 을 쓴다.
             aidrive_path = None
             try:
                 from . import mediastore as _ms
