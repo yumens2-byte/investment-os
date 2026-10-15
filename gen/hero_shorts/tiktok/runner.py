@@ -433,6 +433,23 @@ def cmd_next_run(args):
     return 0 if res.get("next_run_at") else 3
 
 
+def cmd_backfill(args):
+    """원장 소급 복구 — 기본 dry-run, --apply 로만 반영."""
+    from . import backfill as tk_backfill
+    argv = ["--ledger", args.ledger, "--limit", str(args.backfill_limit)]
+    for ep in (args.ep or []):
+        argv += ["--ep", ep]
+    if args.account_id:
+        argv += ["--account-id", args.account_id]
+    if args.apply:
+        argv.append("--apply")
+    if args.out:
+        argv += ["--out", args.out]
+    if args.as_json:
+        argv.append("--json")
+    return tk_backfill.main(argv)
+
+
 def main(argv=None):
     ap = argparse.ArgumentParser(description=f"tiktok line v{VERSION}")
     sub = ap.add_subparsers(dest="step", required=True)
@@ -549,6 +566,17 @@ def main(argv=None):
     vf.add_argument("--state", default=None)
     vf.add_argument("--json", action="store_true")
     vf.set_defaults(func=cmd_verify)
+    bf = sub.add_parser("ledger-backfill",
+                        help="과거 회차 메타 소급 복구 — list_posts 실조회로 원장 교정(기본 dry-run)")
+    bf.add_argument("--ledger", default="gen/data/publish_state.json", help="원장 경로")
+    bf.add_argument("--ep", action="append", default=None, help="대상 회차(반복). 미지정=전체")
+    bf.add_argument("--account-id", default=None, help="미지정 시 HERO_TIKTOK_ACCOUNT_ID")
+    bf.add_argument("--backfill-limit", type=int, default=30, help="list_posts 조회 창")
+    bf.add_argument("--apply", action="store_true", help="원장에 실제 반영(미지정 시 dry-run)")
+    bf.add_argument("--out", default=None, help="복구본 저장 경로")
+    bf.add_argument("--json", dest="as_json", action="store_true", help="계획 JSON 출력")
+    bf.set_defaults(func=cmd_backfill)
+
 
     nr = sub.add_parser("next-run", help="다음 실행 시각 해석·주입(B안 후속, 0크레딧)")
     nr.add_argument("--json", action="store_true")
