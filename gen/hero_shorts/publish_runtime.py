@@ -23,6 +23,21 @@ from typing import Any, Dict, List, Optional, Tuple
 
 log = logging.getLogger("hero_shorts.publish_runtime")
 
+# 2026-10-18: TikTok publishing suspended by owner instruction.
+TIKTOK_PUBLISH_SUSPENDED = True
+
+
+def assert_publish_allowed(platform=None, account_id=None, **tiktok_options):
+    """Block TikTok before external calls; no environment override."""
+    is_tiktok = str(platform or "").strip().lower() == "tiktok"
+    configured_account = os.getenv("HERO_TIKTOK_ACCOUNT_ID")
+    if (is_tiktok
+            or (configured_account and account_id == configured_account)
+            or any(value is not None for value in tiktok_options.values())):
+        if TIKTOK_PUBLISH_SUSPENDED:
+            raise RuntimeError("TIKTOK_PUBLISH_SUSPENDED: 마스터 지시로 TikTok 발행 중단")
+
+
 TERMINAL_FAIL = {"failed", "error", "rejected", "cancelled"}
 TERMINAL_OK = {"published", "completed", "success"}
 
@@ -199,6 +214,14 @@ def create_post(text: str, media_url: str, account_id: str,
                 tiktok_allow_comments: Optional[bool] = None,
                 tiktok_allow_duet: Optional[bool] = None,
                 tiktok_allow_stitch: Optional[bool] = None) -> Dict[str, Any]:
+    assert_publish_allowed(
+        account_id=account_id,
+        tiktok_privacy_level=tiktok_privacy_level,
+        tiktok_draft=tiktok_draft,
+        tiktok_allow_comments=tiktok_allow_comments,
+        tiktok_allow_duet=tiktok_allow_duet,
+        tiktok_allow_stitch=tiktok_allow_stitch,
+    )
     args_dir = Path("/tmp/opencode")
     args_dir.mkdir(parents=True, exist_ok=True)
     with tempfile.NamedTemporaryFile("w", encoding="utf-8", dir=str(args_dir), prefix="zernio_create_post_", suffix=".json", delete=False) as tmp:
@@ -316,6 +339,7 @@ def create_and_monitor_post(text: str, media_url: str, account_id: str,
                             tiktok_allow_comments: Optional[bool] = None,
                             tiktok_allow_duet: Optional[bool] = None,
                             tiktok_allow_stitch: Optional[bool] = None) -> Dict[str, Any]:
+    assert_publish_allowed(platform=platform, account_id=account_id)
     created = create_post(
         text=text,
         media_url=media_url,

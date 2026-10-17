@@ -67,6 +67,7 @@ def publish_segment(segment, account_id=None, schedule_at=None, max_wait_sec=900
     D-14: `fallback_media_url` 이 주어지면 1차 실패가 미디어 URL 문제로 보일 때
     그 URL 로 **딱 1회** 재시도한다. 무한 재시도는 하지 않는다(멱등성 원칙 유지).
     """
+    pr.assert_publish_allowed(platform=PLATFORM)
     if not tk_manifest.segment_gate_ok(segment):
         raise RuntimeError(
             f"게이트 미통과 — segment {segment.get('segment_no')} 발행 차단"

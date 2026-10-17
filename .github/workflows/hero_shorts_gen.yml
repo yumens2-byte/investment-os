@@ -62,6 +62,8 @@ jobs:
             python3 -c "import hashlib,os;s=os.environ.get('HERO_TIKTOK_ACCOUNT_ID') or '';print('HERO_TIKTOK_ACCOUNT_ID sha256:', hashlib.sha256(s.encode()).hexdigest())"
             python3 -m gen.hero_shorts.tiktok.runner preflight
           elif [ "$STEP" = "publish_combined" ]; then
+            echo "TIKTOK_PUBLISH_SUSPENDED: 마스터 지시로 TikTok 발행 중단"
+            exit 0
             # 2026-10-13 마스터 지시: 정기 발행은 3편 분할이 아니라 전편 합본 1편으로 올린다.
             # 60초 초과 무관 — 상한은 플랫폼 한도(TikTok/Zernio 3초~10분).
             if [ -z "$EP" ] || [ -z "$TITLE" ] || [ -z "$MEDIA_URL" ]; then

@@ -384,6 +384,13 @@ def cmd_record(args):
 
 def cmd_ready(args):
     """러너3 S3 — 발행 대상 회차를 JSON 으로 출력한다. 발행 없음 · 0크레딧."""
+    from ..publish_runtime import TIKTOK_PUBLISH_SUSPENDED
+    if TIKTOK_PUBLISH_SUSPENDED:
+        print(json.dumps({
+            "ok": True, "status": "suspended", "reason": "TIKTOK_PUBLISH_SUSPENDED",
+            "count": 0, "ready_count": 0, "incomplete": [], "items": [], "skipped": {},
+        }))
+        return READY_EXIT_NONE
     p = _state_path(getattr(args, "state", None))
     if not p.exists():
         # D-1: 원장 부재는 '발행 0건'이 아니라 '조용한 미실행'이다. 먼저 복원을 시도한다.

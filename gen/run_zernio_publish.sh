@@ -8,6 +8,12 @@ set -euo pipefail
 PLATFORM="${HERO_ZERNIO_PLATFORM:-instagram}"
 COMBINED="${HERO_COMBINED:-0}"
 
+# The combined branch always invokes the TikTok publisher.
+if [ "${PLATFORM,,}" = "tiktok" ] || [ "$COMBINED" = "1" ]; then
+  echo "TIKTOK_PUBLISH_SUSPENDED: 마스터 지시로 TikTok 발행 중단"
+  exit 0
+fi
+
 if [ "$COMBINED" = "1" ]; then
   # usage: HERO_COMBINED=1 HERO_ZERNIO_PLATFORM=tiktok $0 <ep> <final_video> <title> <media_url>
   if [ "$#" -lt 4 ]; then
