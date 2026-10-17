@@ -1,0 +1,10 @@
+{
+  "clip": "TestCostGates/g5.mp4",
+  "duration_sec": 30.0,
+  "requested_duration_sec": 30,
+  "delta_sec": 0.0,
+  "size_bytes": 12086817,
+  "backend": "dummy",
+  "source": "ffprobe",
+  "version": "1.0.0"
+}

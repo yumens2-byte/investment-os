@@ -1333,4 +1333,5 @@ class TestV280TtsUpgrade(unittest.TestCase):
             self.assertTrue(Path(manifest["merged_audio"]).exists())
             self.assertIsNone(manifest["bgm_file"])  # dummy 백엔드는 BGM 미생성(비용 0 경로)
 
-unittest.main(verbosity=2)
+if __name__ == "__main__":
+    unittest.main(verbosity=2)

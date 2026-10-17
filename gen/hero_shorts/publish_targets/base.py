@@ -100,3 +100,66 @@ def resolve_account_id(env_key: str, explicit: Optional[str] = None) -> Optional
     import os
 
     return explicit or os.environ.get(env_key) or None
+
+
+# --------------------------------------------------------------------------- #
+# 회차 라벨 · 미디어 실측 (추정 금지 — 없으면 None 을 그대로 돌려준다)
+# --------------------------------------------------------------------------- #
+def ep_label(ep_key: str) -> str:
+    """원장 키 → 회차 라벨. `ep88` → `Ep88`."""
+    k = str(ep_key or "").strip()
+    if k.lower().startswith("ep") and k[2:].isdigit():
+        return "Ep" + k[2:]
+    return k
+
+
+def ratio_of(width, height) -> Optional[str]:
+    """픽셀 크기 → 기약 비율 문자열. 720x1280 → '9:16'."""
+    from math import gcd
+
+    try:
+        w, h = int(width), int(height)
+    except (TypeError, ValueError):
+        return None
+    if w <= 0 or h <= 0:
+        return None
+    g = gcd(w, h)
+    return f"{w // g}:{h // g}"
+
+
+def media_facts(record: Dict[str, Any]) -> Dict[str, Any]:
+    """회차 레코드 → 미디어 실측값.
+
+    출처: `combined{}`(합본) · `qc.G3{}`(해상도·길이) · 레코드 루트(구버전 회차).
+    값이 없으면 **None** — 게이트가 차단하도록 두고 여기서 추정하지 않는다.
+    """
+    comb = record.get("combined") if isinstance(record.get("combined"), dict) else {}
+    qc = record.get("qc") if isinstance(record.get("qc"), dict) else {}
+    g3 = qc.get("G3") if isinstance(qc.get("G3"), dict) else {}
+    duration = comb.get("duration_sec")
+    if duration is None:
+        duration = g3.get("duration")
+    size = comb.get("file_size_bytes")
+    if size is None:
+        size = comb.get("size_bytes")
+    if size is None:
+        size = comb.get("file_size")
+    w, h = g3.get("w"), g3.get("h")
+    return {
+        "media_url": comb.get("media_url") or record.get("media_url"),
+        "video_path": comb.get("video_path") or record.get("final"),
+        "duration_sec": duration,
+        "size_bytes": size,
+        "width": w,
+        "height": h,
+        "ratio": ratio_of(w, h),
+        "media_kind": "video",
+        "audio_streams": g3.get("audio"),
+        "combined_title": comb.get("title"),
+        "ep_title": record.get("title"),
+    }
+
+
+def approval_status(record: Dict[str, Any]) -> Optional[str]:
+    ap = record.get("approval") if isinstance(record.get("approval"), dict) else {}
+    return ap.get("status")
