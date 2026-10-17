@@ -179,11 +179,13 @@ def _format_alert_html(post_id: str, state: str, message: str, post_url: Optiona
 def send_email_alert(subject: str, html_body: str,
                      from_account: Optional[str] = None,
                      to: Optional[str] = None) -> None:
-    # 소스 기본값(v2.5.2 마스터 승인) — pipeline.py의 DEFAULT_*와 동일 값
-    from_account = from_account or os.getenv("HERO_FROM_ACCOUNT", "yumens2@gmail.com")
-    to = to or os.getenv("HERO_ALERT_EMAIL", "yumens2@gmail.com")
+    # 소스 기본값 삭제(2026-10-18) — 개인 메일은 공개 저장소에 두지 않는다. 시크릿/env 전용.
+    from . import secret_env as _secrets
+    from_account = _secrets.resolve_email("HERO_FROM_ACCOUNT", cli_value=from_account)
+    to = _secrets.resolve_email("HERO_ALERT_EMAIL", cli_value=to)
     if not from_account or not to:
-        raise RuntimeError("이메일 알림 설정 누락: HERO_FROM_ACCOUNT 및 HERO_ALERT_EMAIL 필요")
+        raise RuntimeError(
+            "이메일 알림 설정 누락: HERO_FROM_ACCOUNT 및 HERO_ALERT_EMAIL 시크릿/환경변수 필요")
     _run_ok([
         "gsk", "gmail", "send",
         "--from_account", from_account,

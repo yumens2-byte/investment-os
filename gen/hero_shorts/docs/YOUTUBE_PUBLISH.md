@@ -1,8 +1,8 @@
 # Hero Shorts YouTube 발행 전환 — 2026-10-18
 
 - 채널: YouTube, 발행 수단: 기존 gsk Zernio create_post 경로.
-- 계정 ID: 6ad38f1d80b2fa2e1133f591 (마스터 제공).
-- 우선순위: CLI --account-id > HERO_YOUTUBE_ACCOUNT_ID > 위 기본값.
+- 계정 ID: **소스에 저장하지 않는다**(2026-10-18 하드코딩 전량 삭제). `HERO_YOUTUBE_ACCOUNT_ID` 시크릿/환경변수로만 주입한다.
+- 우선순위: CLI `--account-id` > `HERO_YOUTUBE_ACCOUNT_ID`. 소스 기본값 없음 — 미설정 시 발행은 fail-closed로 차단된다(셸 exit 78, Python RuntimeError).
 - 기본 플랫폼은 youtube. Instagram은 --platform instagram으로 선택 가능.
 - TikTok 전용 publisher/ready/runtime 차단은 유지한다.
 

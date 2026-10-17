@@ -58,7 +58,8 @@ jobs:
             python3 -m gen.hero_shorts.pipeline "${ARGS[@]}"
           elif [ "$STEP" = "preflight" ]; then
             # Configuration check only: no account-health or publishing API call.
-            python3 -c "from gen.hero_shorts.pipeline import _resolve_publish_opts; print('YouTube routing configured:', _resolve_publish_opts(platform='youtube')['account_id']); print('Connectivity is not checked')"
+            # S4 누출 방지 — 값은 출력하지 않는다. 설정 여부·길이·형식만 보고한다.
+            python3 -c "from gen.hero_shorts.secret_env import preflight_report; import json; print('YouTube routing:', json.dumps(preflight_report('youtube'), ensure_ascii=False)); print('Connectivity is not checked')"
           elif [ "$STEP" = "publish_combined" ] || [ "$STEP" = "publish_youtube" ]; then
             # Existing combined action now targets YouTube; never use TikTok runner.
             EP="${EP#ep}"
@@ -85,7 +86,11 @@ jobs:
           NOTION_TOKEN: ${{ secrets.NOTION_TOKEN }}   # 과거 별칭 호환
           NOTION_API_KEY: ${{ secrets.NOTION_API_KEY }}   # 과거 레포 관례 호환
           HERO_ZERNIO_PLATFORM: "youtube"
-          HERO_YOUTUBE_ACCOUNT_ID: "6ad38f1d80b2fa2e1133f591"
+          # 2026-10-18: 계정 ID/PII 소스 하드코딩 제거 — 저장소 시크릿으로만 주입한다.
+          HERO_YOUTUBE_ACCOUNT_ID: ${{ secrets.HERO_YOUTUBE_ACCOUNT_ID }}
+          HERO_ZERNIO_ACCOUNT_ID: ${{ secrets.HERO_ZERNIO_ACCOUNT_ID }}
+          HERO_ALERT_EMAIL: ${{ secrets.HERO_ALERT_EMAIL }}
+          HERO_FROM_ACCOUNT: ${{ secrets.HERO_FROM_ACCOUNT }}
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_PAID_CHANNEL_ID: ${{ secrets.TELEGRAM_PAID_CHANNEL_ID }}
       - name: Upload artifacts (컷 영상·합본·QC·로그)   # v2.4.3 — 러너 소실 방지 필수

@@ -38,7 +38,12 @@ else
   if [ -n "${5:-}" ]; then CMD+=(--schedule-at "$5"); fi
 fi
 if [ "$PLATFORM" = "youtube" ]; then
-  CMD+=(--account-id "${HERO_YOUTUBE_ACCOUNT_ID:-6ad38f1d80b2fa2e1133f591}")
+  # 2026-10-18: 소스 기본값 제거 — 계정 ID 는 시크릿/환경변수로만 주입한다.
+  if [ -z "${HERO_YOUTUBE_ACCOUNT_ID:-}" ]; then
+    echo "HERO_YOUTUBE_ACCOUNT_ID 미설정 — 소스 기본값은 2026-10-18 제거되었습니다. GitHub Secrets/환경변수로 주입하세요" >&2
+    exit 78
+  fi
+  CMD+=(--account-id "$HERO_YOUTUBE_ACCOUNT_ID")
 fi
 CMD+=(--max-wait-sec "${HERO_ZERNIO_MAX_WAIT_SEC:-900}"
       --poll-interval-sec "${HERO_ZERNIO_POLL_INTERVAL_SEC:-30}")

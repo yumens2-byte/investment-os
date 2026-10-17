@@ -10,10 +10,13 @@ from gen.hero_shorts import pipeline, publish_runtime as runtime, assemble_qc
 
 
 class YouTubePublishTests(unittest.TestCase):
-    def test_default_account_is_youtube_even_with_instagram_env(self):
+    def test_youtube_never_falls_back_to_instagram_account(self):
+        # 2026-10-18: 소스 기본값 삭제 — YouTube 계정은 HERO_YOUTUBE_ACCOUNT_ID 로만 주입된다.
         with patch.dict(os.environ, {"HERO_ZERNIO_ACCOUNT_ID": "instagram"}, clear=True):
-            self.assertEqual(pipeline._resolve_publish_opts()["account_id"], "6ad38f1d80b2fa2e1133f591")
+            self.assertIsNone(pipeline._resolve_publish_opts()["account_id"])
             self.assertEqual(pipeline._resolve_publish_opts(platform="instagram")["account_id"], "instagram")
+        with patch.dict(os.environ, {"HERO_YOUTUBE_ACCOUNT_ID": "youtube-account"}, clear=True):
+            self.assertEqual(pipeline._resolve_publish_opts()["account_id"], "youtube-account")
 
     def test_youtube_account_override_and_cli_priority(self):
         with patch.dict(os.environ, {"HERO_YOUTUBE_ACCOUNT_ID": "youtube-override"}):
@@ -55,7 +58,8 @@ class YouTubePublishTests(unittest.TestCase):
             result = {"outcome": "published", "post_id": "yt-post", "post_url": "https://youtu.be/a",
                       "snapshot": {"platforms": [{"platform": "instagram", "publishedAt": "wrong"},
                                                  {"platform": "youtube", "publishedAt": "correct"}]}}
-            with patch.dict(os.environ, {"HERO_STATE_FILE": str(statefile)}, clear=True), \
+            with patch.dict(os.environ, {"HERO_STATE_FILE": str(statefile),
+                                         "HERO_YOUTUBE_ACCOUNT_ID": "yt-account-fixture"}, clear=True), \
                     patch.object(assemble_qc, "validate_publish_assets"), \
                     patch.object(assemble_qc, "check_media_url_reachable"), \
                     patch.object(runtime, "create_and_monitor_post", return_value=result) as create:
@@ -63,7 +67,7 @@ class YouTubePublishTests(unittest.TestCase):
                               media_url="https://example.com/video.mp4", qc_result=qc)
                 pipeline.cmd_zernio_publish(**kwargs)
                 self.assertEqual(create.call_args.kwargs["platform"], "youtube")
-                self.assertEqual(create.call_args.kwargs["account_id"], "6ad38f1d80b2fa2e1133f591")
+                self.assertEqual(create.call_args.kwargs["account_id"], "yt-account-fixture")
                 self.assertEqual(create.call_args.kwargs["text"], "제목\n\n설명")
                 stored = json.loads(statefile.read_text())["ep101"]
                 self.assertEqual(stored["channel"], "youtube")
@@ -92,13 +96,25 @@ class YouTubePublishTests(unittest.TestCase):
                                    ("1", ["ep101", "video.mp4", "제목", "https://example.com/v.mp4"])]:
                 with self.subTest(combined=combined):
                     result = subprocess.run(["bash", str(root / "gen/run_zernio_publish.sh"), *args],
-                                            env={**env, "HERO_COMBINED": combined}, capture_output=True, text=True)
+                                            env={**env, "HERO_COMBINED": combined,
+                                                 "HERO_YOUTUBE_ACCOUNT_ID": "yt-shell-fixture"},
+                                            capture_output=True, text=True)
                     self.assertEqual(result.returncode, 0, result.stderr)
                     tokens = result.stdout.splitlines()
                     self.assertEqual(tokens[tokens.index("--platform") + 1], "youtube")
-                    self.assertEqual(tokens[tokens.index("--account-id") + 1], "6ad38f1d80b2fa2e1133f591")
+                    self.assertEqual(tokens[tokens.index("--account-id") + 1], "yt-shell-fixture")
                     self.assertIn("zernio_publish", tokens)
                     self.assertIn("--require-audible-audio", tokens)
+
+    def test_shell_fails_closed_when_youtube_account_missing(self):
+        # 2026-10-18: 소스 기본값 제거 — 미설정 시 exit 78(EX_CONFIG) 차단.
+        root = Path(__file__).resolve().parents[3]
+        with tempfile.TemporaryDirectory() as tmp:
+            result = subprocess.run(["bash", str(root / "gen/run_zernio_publish.sh"),
+                                     "101", "plan.json", "caption.txt", "https://example.com/v.mp4"],
+                                    env={"PATH": os.defpath}, capture_output=True, text=True)
+        self.assertEqual(result.returncode, 78, result.stdout + result.stderr)
+        self.assertIn("HERO_YOUTUBE_ACCOUNT_ID", result.stderr)
 
 
 if __name__ == "__main__":

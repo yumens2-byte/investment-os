@@ -87,28 +87,25 @@ def _env(name: str, default=None):
     return os.getenv(name, default)
 
 
-# 발행 운영 식별값 — 소스 기본값 허용(마스터 승인 v2.5.2). 환경변수/CLI 인자가 우선한다.
-DEFAULT_YOUTUBE_ACCOUNT_ID = "6ad38f1d80b2fa2e1133f591"
+# 발행 운영 식별값 — 소스 하드코딩 전량 삭제(2026-10-18 마스터 지시).
+# 해석은 secret_env 단일 지점에서만 수행한다: CLI 인자 > 시크릿/환경변수. 소스 기본값 없음(fail-closed).
 DEFAULT_PUBLISH_PLATFORM = "youtube"
-DEFAULT_ZERNIO_ACCOUNT_ID = "6aafea9b8d284ffb2120fa6f"
-DEFAULT_ALERT_EMAIL = "yumens2@gmail.com"
-DEFAULT_FROM_ACCOUNT = "yumens2@gmail.com"
+DEFAULT_YOUTUBE_ACCOUNT_ID = None   # 하위 호환 심볼 — 값 없음(주입 전용)
+DEFAULT_ZERNIO_ACCOUNT_ID = None    # 하위 호환 심볼 — 값 없음(주입 전용)
+DEFAULT_ALERT_EMAIL = None          # PII 제거 — HERO_ALERT_EMAIL 시크릿으로만 주입
+DEFAULT_FROM_ACCOUNT = None         # PII 제거 — HERO_FROM_ACCOUNT 시크릿으로만 주입
 
 
 def _resolve_publish_opts(account_id=None, alert_to=None, from_account=None, platform=DEFAULT_PUBLISH_PLATFORM):
-    """CLI 계정 > 플랫폼별 환경변수 > 플랫폼별 기본 계정. YouTube는 Instagram 계정으로 폴백하지 않는다."""
-    if account_id:
-        resolved_account = account_id
-    elif str(platform).strip().lower() == "youtube":
-        resolved_account = _env("HERO_YOUTUBE_ACCOUNT_ID", DEFAULT_YOUTUBE_ACCOUNT_ID)
-    elif str(platform).strip().lower() == "tiktok":
-        resolved_account = _env("HERO_TIKTOK_ACCOUNT_ID", "")
-    else:
-        resolved_account = _env("HERO_ZERNIO_ACCOUNT_ID", DEFAULT_ZERNIO_ACCOUNT_ID)
+    """CLI 인자 > 플랫폼별 시크릿/환경변수. 소스 기본값 없음 — 미설정 시 None(호출부가 fail-closed 처리).
+
+    YouTube는 Instagram 계정으로 폴백하지 않는다. 반환값은 로그에 남기지 않는다(S4).
+    """
+    from . import secret_env as _secrets
     return {
-        "account_id": resolved_account,
-        "alert_to": alert_to or _env("HERO_ALERT_EMAIL", DEFAULT_ALERT_EMAIL),
-        "from_account": from_account or _env("HERO_FROM_ACCOUNT", DEFAULT_FROM_ACCOUNT),
+        "account_id": _secrets.resolve_account_id(platform=platform, cli_value=account_id),
+        "alert_to": _secrets.resolve_email("HERO_ALERT_EMAIL", cli_value=alert_to),
+        "from_account": _secrets.resolve_email("HERO_FROM_ACCOUNT", cli_value=from_account),
     }
 
 
@@ -316,10 +313,15 @@ def cmd_zernio_publish(plan_file, final_video, caption_file, media_url,
         raise RuntimeError("QC 미통과 — Zernio 발행 거부(G1~G4 전부 통과 후만 허용)")
     resolved = _resolve_publish_opts(account_id=account_id, alert_to=alert_to, from_account=from_account, platform=platform)
     if not resolved["account_id"]:
-        _hint = ("TikTok 계정 ID 미설정 — Zernio 대시보드에서 틱톡 계정 연결 후 "
-                 "HERO_TIKTOK_ACCOUNT_ID 환경변수에 해당 _id를 주입하세요"
-                 if str(platform).lower() == "tiktok" else
-                 "Zernio 계정 ID 누락 — 소스 기본값 손상 또는 빈 값 주입. 환경변수 또는 --account-id로 주입 필요")
+        from . import secret_env as _secrets
+        _env_name = _secrets.ACCOUNT_ENV_BY_PLATFORM.get(
+            str(platform).strip().lower(), _secrets.GENERIC_ACCOUNT_ENV)
+        _hint = (
+            f"{_env_name} 미설정 — 소스 기본값은 2026-10-18 제거되었습니다. "
+            "GitHub Secrets / 환경변수 / --account-id 로 계정 ID를 주입하세요"
+        )
+        if str(platform).lower() == "tiktok":
+            _hint += " (TikTok: Zernio 대시보드에서 계정 연결 후 _id 확인)"
         raise RuntimeError(_hint)
     caption = Path(caption_file).read_text(encoding="utf-8").strip()
     if platform == "youtube":
