@@ -5,7 +5,7 @@ on:
   workflow_dispatch:          # 수동 실행 전용 — fal 실생성(현금)은 여기서만 발생
     inputs:
       step:
-        description: "실행 단계 (plan|generate|assemble|qc|run|publish_combined|preflight)"
+        description: "실행 단계 (plan|generate|assemble|qc|run|publish_youtube|preflight)"
         required: true
         default: "plan"
       only:
@@ -13,15 +13,15 @@ on:
         required: false
         default: "2"
       ep:
-        description: "회차 태그 (publish_combined 시 필수, 예: ep86)"
+        description: "회차 태그 (publish_youtube 시 필수, 예: ep86)"
         required: false
         default: ""
       title:
-        description: "회차 제목 (publish_combined 시 필수 — 캡션 헤드)"
+        description: "회차 제목 (publish_youtube 시 필수 — 캡션 헤드)"
         required: false
         default: ""
       media_url:
-        description: "발행할 합본 영상의 공개 URL (publish_combined 시 필수, gsk upload 결과)"
+        description: "발행할 합본 영상의 공개 URL (publish_youtube 시 필수, gsk upload 결과)"
         required: false
         default: ""
       duration:
@@ -57,38 +57,23 @@ jobs:
             fi
             python3 -m gen.hero_shorts.pipeline "${ARGS[@]}"
           elif [ "$STEP" = "preflight" ]; then
-            # 2026-10-13 추가: 시크릿 HERO_TIKTOK_ACCOUNT_ID 실값 검증 — 0크레딧·발행 없음
-            # 지문(sha256)만 출력 — 값 자체는 노출되지 않으며, 로컬 계산값과 대조한다.
-            python3 -c "import hashlib,os;s=os.environ.get('HERO_TIKTOK_ACCOUNT_ID') or '';print('HERO_TIKTOK_ACCOUNT_ID sha256:', hashlib.sha256(s.encode()).hexdigest())"
-            python3 -m gen.hero_shorts.tiktok.runner preflight
-          elif [ "$STEP" = "publish_combined" ]; then
-            echo "TIKTOK_PUBLISH_SUSPENDED: 마스터 지시로 TikTok 발행 중단"
-            exit 0
-            # 2026-10-13 마스터 지시: 정기 발행은 3편 분할이 아니라 전편 합본 1편으로 올린다.
-            # 60초 초과 무관 — 상한은 플랫폼 한도(TikTok/Zernio 3초~10분).
-            if [ -z "$EP" ] || [ -z "$TITLE" ] || [ -z "$MEDIA_URL" ]; then
-              echo "publish_combined: ep / title / media_url 3개 입력이 모두 필요합니다" >&2
+            # Configuration check only: no account-health or publishing API call.
+            python3 -c "from gen.hero_shorts.pipeline import _resolve_publish_opts; print('YouTube routing configured:', _resolve_publish_opts(platform='youtube')['account_id']); print('Connectivity is not checked')"
+          elif [ "$STEP" = "publish_combined" ] || [ "$STEP" = "publish_youtube" ]; then
+            # Existing combined action now targets YouTube; never use TikTok runner.
+            EP="${EP#ep}"
+            if [ -z "$EP" ] || [ -z "$MEDIA_URL" ]; then
+              echo "YouTube 발행: ep / media_url 입력이 필요합니다" >&2
               exit 64
             fi
-            if [ -z "${HERO_TIKTOK_ACCOUNT_ID:-}" ]; then
-              echo "HERO_TIKTOK_ACCOUNT_ID secret 미설정 — 틱톡 계정 ID를 등록하세요" >&2
-              exit 65
-            fi
-            # Actions 러너에는 합본 mp4가 없다(gen/data 미추적·러너 초기화).
-            # 로컬 파일이 있으면 ffprobe 실측, 없으면 --duration 입력으로 매니페스트 생성.
-            CARGS=(combined --title "$TITLE" --media-url "$MEDIA_URL" --out gen/data/out/tiktok_combined.json)
-            if [ -f "gen/data/out/${EP}_final.mp4" ]; then
-              CARGS+=(--video "gen/data/out/${EP}_final.mp4")
-            elif [ -n "$DURATION" ]; then
-              CARGS+=(--duration "$DURATION")
-            else
-              echo "publish_combined: 로컬 합본 파일도 --duration 입력도 없음(둘 중 하나 필수)" >&2
+            # Fresh Actions runners do not contain production assets or approval state.
+            # Fail closed; use an environment with restored assets and ledger.
+            if [ ! -f "gen/data/out/ep${EP}_plan.json" ] || [ ! -f "gen/data/publish_state.json" ]; then
+              echo "YouTube 발행 차단: 영상/plan/캡션/승인 원장을 복원한 운영 환경에서 gen/run_zernio_publish.sh를 실행하세요" >&2
               exit 66
             fi
-            python3 -m gen.hero_shorts.tiktok.runner "${CARGS[@]}"
-            python3 -m gen.hero_shorts.tiktok.runner publish \
-              --manifest gen/data/out/tiktok_combined.json \
-              --segment 1 --media-url "$MEDIA_URL"
+            python3 -m gen.hero_shorts.pipeline zernio_publish --ep "$EP" \
+              --platform youtube --media-url "$MEDIA_URL" --require-audible-audio
           else
             python3 -m gen.hero_shorts.pipeline "${STEP:-plan}"
           fi
@@ -99,9 +84,8 @@ jobs:
           NOTION_API_TOKEN: ${{ secrets.NOTION_API_TOKEN }}   # 표준 시크릿명(우선)
           NOTION_TOKEN: ${{ secrets.NOTION_TOKEN }}   # 과거 별칭 호환
           NOTION_API_KEY: ${{ secrets.NOTION_API_KEY }}   # 과거 레포 관례 호환
-          HERO_TIKTOK_ACCOUNT_ID: ${{ secrets.HERO_TIKTOK_ACCOUNT_ID }}   # 틱톡 계정 _id
-          HERO_TIKTOK_PRIVACY_LEVEL: "PUBLIC_TO_EVERYONE"
-          HERO_TIKTOK_PREFLIGHT_WARN_HOURS: "2"    # 만료 임박 경보 임계(차단 아님) — 24h 토큰 자동갱신 실측(2026-10-15)
+          HERO_ZERNIO_PLATFORM: "youtube"
+          HERO_YOUTUBE_ACCOUNT_ID: "6ad38f1d80b2fa2e1133f591"
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_PAID_CHANNEL_ID: ${{ secrets.TELEGRAM_PAID_CHANNEL_ID }}
       - name: Upload artifacts (컷 영상·합본·QC·로그)   # v2.4.3 — 러너 소실 방지 필수

@@ -88,20 +88,20 @@ def _env(name: str, default=None):
 
 
 # 발행 운영 식별값 — 소스 기본값 허용(마스터 승인 v2.5.2). 환경변수/CLI 인자가 우선한다.
+DEFAULT_YOUTUBE_ACCOUNT_ID = "6ad38f1d80b2fa2e1133f591"
+DEFAULT_PUBLISH_PLATFORM = "youtube"
 DEFAULT_ZERNIO_ACCOUNT_ID = "6aafea9b8d284ffb2120fa6f"
 DEFAULT_ALERT_EMAIL = "yumens2@gmail.com"
 DEFAULT_FROM_ACCOUNT = "yumens2@gmail.com"
 
 
-def _resolve_publish_opts(account_id=None, alert_to=None, from_account=None, platform="instagram"):
-    """v2.8.0 — 플랫폼별 계정 ID 분기.
-
-    TikTok 발행은 틱톡 전용 계정 ID가 필요하다(인스타 계정 ID로는 틱톡 발행 불가).
-    우선순위: CLI --account-id > (tiktok) HERO_TIKTOK_ACCOUNT_ID > HERO_ZERNIO_ACCOUNT_ID > 소스 기본값.
-    """
+def _resolve_publish_opts(account_id=None, alert_to=None, from_account=None, platform=DEFAULT_PUBLISH_PLATFORM):
+    """CLI 계정 > 플랫폼별 환경변수 > 플랫폼별 기본 계정. YouTube는 Instagram 계정으로 폴백하지 않는다."""
     if account_id:
         resolved_account = account_id
-    elif str(platform).lower() == "tiktok":
+    elif str(platform).strip().lower() == "youtube":
+        resolved_account = _env("HERO_YOUTUBE_ACCOUNT_ID", DEFAULT_YOUTUBE_ACCOUNT_ID)
+    elif str(platform).strip().lower() == "tiktok":
         resolved_account = _env("HERO_TIKTOK_ACCOUNT_ID", "")
     else:
         resolved_account = _env("HERO_ZERNIO_ACCOUNT_ID", DEFAULT_ZERNIO_ACCOUNT_ID)
@@ -216,7 +216,7 @@ def cmd_qc(plan_file, final_video):
                    "outcome": plan["outcome"]})
 
 
-def cmd_publish(plan_file, final_video, qc_result, channel="instagram", require_audible_audio=False,
+def cmd_publish(plan_file, final_video, qc_result, channel=DEFAULT_PUBLISH_PLATFORM, require_audible_audio=False,
                 allow_duplicate_post: bool = False):
     """발행 원장 갱신 — 실제 SNS 업로드 전 QC 통과 상태를 기록."""
     from . import assemble_qc
@@ -296,8 +296,8 @@ def record_combined(ep, title, video_path, media_url=None, aidrive_path=None):
 def cmd_zernio_publish(plan_file, final_video, caption_file, media_url,
                        qc_result=None, schedule_at: str | None = None,
                        account_id: str | None = None,
-                       platform: str = "instagram",
-                       channel: str = "instagram",
+                       platform: str = DEFAULT_PUBLISH_PLATFORM,
+                       channel: str | None = None,
                        max_wait_sec: int = 900,
                        poll_interval_sec: int = 30,
                        alert_to: str | None = None,
@@ -308,6 +308,9 @@ def cmd_zernio_publish(plan_file, final_video, caption_file, media_url,
                        require_media_reachable: bool = True):
     """QC/G5 통과 산출물로 Zernio 발행 후 공개 링크까지 회수한다."""
     from . import assemble_qc, publish_runtime
+    platform = str(platform).strip().lower()
+    publish_runtime.assert_publish_allowed(platform=platform)
+    channel = channel or platform
     qc = qc_result or {}
     if not (qc.get("G1") and qc.get("G2") and qc.get("G3") and qc.get("G4")):
         raise RuntimeError("QC 미통과 — Zernio 발행 거부(G1~G4 전부 통과 후만 허용)")
@@ -319,6 +322,9 @@ def cmd_zernio_publish(plan_file, final_video, caption_file, media_url,
                  "Zernio 계정 ID 누락 — 소스 기본값 손상 또는 빈 값 주입. 환경변수 또는 --account-id로 주입 필요")
         raise RuntimeError(_hint)
     caption = Path(caption_file).read_text(encoding="utf-8").strip()
+    if platform == "youtube":
+        from .publish_runtime import youtube_text
+        caption = youtube_text(_load_plan(plan_file).get("title"), caption)
     effective_schedule = schedule_at or datetime_now_iso_local()
     assemble_qc.validate_publish_assets(
         final_video,
@@ -336,7 +342,7 @@ def cmd_zernio_publish(plan_file, final_video, caption_file, media_url,
             f"중복 발행 방지 — {key} 기존 post_id={existing.get('zernio_post_id')} status={existing.get('status')}"
         )
     approval = existing.get("approval") or {}
-    gate_on = os.getenv("HERO_APPROVAL_REQUIRED") == "1" or bool(approval.get("requested_at"))
+    gate_on = platform == "youtube" or os.getenv("HERO_APPROVAL_REQUIRED") == "1" or bool(approval.get("requested_at"))
     if gate_on and approval.get("status") != "APPROVED":
         # v2.7.0 승인 게이트(fail-closed) — 텔레그램 승인(resolve_approvals) 후에만 발행 허용
         raise RuntimeError(
@@ -362,7 +368,7 @@ def cmd_zernio_publish(plan_file, final_video, caption_file, media_url,
     )
     row_id = (plan.get("source") or {}).get("row_id")
     tracker_sync = "skipped: plan에 source.row_id 없음(구버전 plan)"
-    if row_id:
+    if row_id and result.get("outcome") == "published":
         try:
             from . import ledger as _ledger
             _ledger.update_publish_status(row_id)
@@ -371,6 +377,7 @@ def cmd_zernio_publish(plan_file, final_video, caption_file, media_url,
             tracker_sync = f"failed: {exc}"
             logging.getLogger("hero_shorts").warning("트래커 역동기화 실패(발행 상태는 유지): %s", exc)
     state[key] = {
+        **existing,
         "title": plan["title"],
         "type": plan["type"],
         "final": final_video,
@@ -385,7 +392,7 @@ def cmd_zernio_publish(plan_file, final_video, caption_file, media_url,
         "schedule_at": schedule_at,
         "version": VERSION,
         "require_audible_audio": require_audible_audio,
-        "published_at": ((result.get("snapshot") or {}).get("platforms") or [{}])[0].get("publishedAt") if result.get("snapshot") else None,
+        "published_at": next((p.get("publishedAt") for p in (result.get("snapshot") or {}).get("platforms", []) if p.get("platform") == platform), None),
     }
     if existing.get("approval"):                     # v2.7.0 — 승인 결정 이력 보존
         state[key]["approval"] = existing["approval"]
@@ -419,7 +426,7 @@ def main(argv=None):
     ap.add_argument("--media-url", default=None, help="제르니오가 내려받을 Genspark 파일 URL")
     ap.add_argument("--schedule-at", default=None, help="예약 발행 ISO8601 시각")
     ap.add_argument("--account-id", default=None, help="제르니오 계정 ID(환경변수 주입 권장)")
-    ap.add_argument("--platform", default="instagram", help="게시 플랫폼")
+    ap.add_argument("--platform", default=_env("HERO_ZERNIO_PLATFORM", DEFAULT_PUBLISH_PLATFORM), choices=["youtube", "instagram", "tiktok"], help="게시 플랫폼(기본 YouTube)")
     ap.add_argument("--alert-to", default=None, help="지연/실패 알림 수신 메일(환경변수 주입 권장)")
     ap.add_argument("--from-account", default=None, help="지연/실패 알림 발신 Gmail 계정(환경변수 주입 권장)")
     ap.add_argument("--max-wait-sec", type=int, default=900, help="게시 완료 대기 최대 초")
@@ -514,7 +521,7 @@ def main(argv=None):
         qc_result = json.loads(qc_path.read_text()) if qc_path.exists() else cmd_qc(plan_file, final_video)
         if not qc_path.exists():
             qc_path.write_text(json.dumps(qc_result, ensure_ascii=False, indent=2), encoding="utf-8")
-        print(cmd_publish(plan_file, final_video, qc_result, require_audible_audio=args.require_audible_audio))
+        print(cmd_publish(plan_file, final_video, qc_result, channel=args.platform, require_audible_audio=args.require_audible_audio))
     elif args.step == "request_approval":
         # v2.7.0 러너1 단독 실행(재요청) — 캡션/업로드 자동화 포함
         from . import approval as _ap
@@ -606,7 +613,7 @@ def main(argv=None):
         from .caption import save_caption
         caption_path = save_caption(plan_file, OUT / f"ep{args.ep}_caption.txt")
         log.info("캡션 생성 완료: %s", caption_path)
-        cmd_publish(plan_file, voiced_final, qc, require_audible_audio=True)
+        cmd_publish(plan_file, voiced_final, qc, channel=args.platform, require_audible_audio=True)
         # v2.9.0 (C-1) — 러너3 발행 입력원 기록: 제목 + duration ffprobe 실측 + 영상 경로.
         _ep_meta = _load_plan(plan_file)
         record_combined(args.ep, _ep_meta.get("title"), voiced_final)

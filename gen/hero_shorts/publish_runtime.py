@@ -42,6 +42,18 @@ TERMINAL_FAIL = {"failed", "error", "rejected", "cancelled"}
 TERMINAL_OK = {"published", "completed", "success"}
 
 
+def youtube_text(title, description):
+    """Zernio derives YouTube title from the first content line."""
+    title = str(title or "").strip()
+    description = str(description or "").strip()
+    if not title or "\n" in title or "\r" in title or len(title) > 100:
+        raise ValueError("YouTube 제목은 줄바꿈 없는 1~100자여야 합니다")
+    text = description if description.splitlines()[:1] == [title] else title + "\n\n" + description
+    if len(text) > 5000:
+        raise ValueError("YouTube 설명은 제목을 포함해 5000자 이하여야 합니다")
+    return text
+
+
 def _run_cmd(args: List[str]) -> subprocess.CompletedProcess:
     return subprocess.run(args, capture_output=True, text=True)
 
@@ -103,6 +115,19 @@ def _post_url(entry: Optional[Dict[str, Any]]) -> Optional[str]:
 def _normalize_status(post: Dict[str, Any], platform: str) -> Tuple[str, Optional[str]]:
     entry = _platform_entry(post, platform)
     url = _post_url(entry)
+    if platform == "youtube":
+        # Never infer YouTube success from another platform or aggregate status.
+        if not entry:
+            return "pending", None
+        p_status = str(entry.get("status", "")).lower()
+        if p_status in TERMINAL_FAIL:
+            return "failed", url
+        if p_status in TERMINAL_OK:
+            from urllib.parse import urlparse
+            host = (urlparse(url or "").hostname or "").lower()
+            if host in {"youtube.com", "www.youtube.com", "m.youtube.com", "youtu.be"}:
+                return "published", url
+        return "pending", url
     if entry:
         p_status = str(entry.get("status", "")).lower()
         if p_status in TERMINAL_OK:

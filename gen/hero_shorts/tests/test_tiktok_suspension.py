@@ -67,7 +67,7 @@ class TikTokSuspensionTests(unittest.TestCase):
     def test_shell_skips_tiktok_and_combined_without_arguments(self):
         root = Path(__file__).resolve().parents[3]
         script = root / "gen/run_zernio_publish.sh"
-        for platform, combined in [("tiktok", "0"), ("TikTok", "0"), ("instagram", "1")]:
+        for platform, combined in [("tiktok", "0"), ("TikTok", "0"), ("tiktok", "1")]:
             with self.subTest(platform=platform, combined=combined):
                 env = {**os.environ, "HERO_ZERNIO_PLATFORM": platform, "HERO_COMBINED": combined}
                 result = subprocess.run(["bash", str(script)], env=env, capture_output=True, text=True)
