@@ -6,6 +6,7 @@ gen/hero_shorts/publish_targets/runner.py — 2채널 발행 CLI (W8)
     python3 -m gen.hero_shorts.publish_targets.runner dry-run  [--eps ep89]
     python3 -m gen.hero_shorts.publish_targets.runner publish  --ep ep89 --apply
     python3 -m gen.hero_shorts.publish_targets.runner verify   --ep ep89
+    python3 -m gen.hero_shorts.publish_targets.runner stage --ep ep88 --file <mp4> [--write]
     python3 -m gen.hero_shorts.publish_targets.runner migrate  [--apply] [--mirror]
 
 원칙(fail-closed):
@@ -22,7 +23,7 @@ import sys
 from typing import Any, Dict, List, Optional, Sequence
 
 from . import ledger_v2, planner
-from .transport import make_transport
+from .transport import TransportError, is_genspark_wrapper, make_transport
 
 log = logging.getLogger("hero_shorts.publish_targets.runner")
 
@@ -152,6 +153,64 @@ def cmd_publish(args) -> int:
     return EXIT_TRANSPORT if failed else EXIT_OK
 
 
+def cmd_stage(args) -> int:
+    """스테이징 업로드 — 로컬 실물 → Zernio 저장소 publicUrl (블로커#3 해소 경로, D).
+
+    승인 A 실측(2026-10-18): 원장 래퍼 URL 은 외부 서버에서 403 — 발행
+    mediaItems 로 쓸 수 없다. 스테이징 `public_url` 이 새 정본이다.
+
+    fail-closed:
+        - `--write` 없이는 **원장을 바꾸지 않는다**(업로드만 — 재시도 안전).
+        - 틱톡 블록 해시 가드 — 저장 전후 해시가 다르면 쓰기를 중단한다.
+        - `upload_url`(1시간짜리 쓰기 자격증명)은 어디에도 기록하지 않는다.
+    """
+    doc = _load(args.ledger)
+    ep = args.ep if str(args.ep).startswith("ep") else f"ep{args.ep}"
+    record = doc.get(ep)
+    if not isinstance(record, dict):
+        print(f"원장에 {ep} 없음", file=sys.stderr)
+        return EXIT_GATE_BLOCKED
+
+    transport = make_transport(args.transport)
+    try:
+        result = transport.stage_media_file(args.file, filename=args.filename)
+    except TransportError as exc:                 # 파일·스펙·네트워크 — 원장 무변경
+        print(f"{ep}: 스테이징 실패 — {exc}", file=sys.stderr)
+        return EXIT_TRANSPORT
+
+    public_url = result["public_url"]
+    if not args.write:
+        print(json.dumps({"ep": ep, "staged": result, "ledger_written": False},
+                         ensure_ascii=False, indent=2))
+        print("\n[미기록] --write 없이는 원장을 바꾸지 않습니다.", file=sys.stderr)
+        return EXIT_OK
+
+    comb = record.get("combined") if isinstance(record.get("combined"), dict) else {}
+    if "combined" not in record:
+        record["combined"] = comb
+    prev = comb.get("media_url")
+    if prev and prev != public_url and not comb.get("media_staged"):
+        comb["media_url_prev"] = prev             # 최초 교체 시 구값 출처 보존(가산)
+    comb["media_url"] = public_url
+    comb["media_staged"] = {k: result[k] for k in
+                            ("filename", "content_type", "size_bytes", "sha256",
+                             "key", "etag")}
+    comb["media_staged"]["at"] = ledger_v2.now_utc()
+    if isinstance(record.get("media_url"), str) and record["media_url"] != public_url:
+        if not record.get("media_url_staged"):
+            record["media_url_prev"] = record["media_url"]
+        record["media_url"] = public_url
+
+    before = ledger_v2.tiktok_hashes(doc)
+    ledger_v2.assert_tiktok_unchanged(before, ledger_v2.tiktok_hashes(doc))
+    ledger_v2.backup_ledger(args.ledger)
+    ledger_v2.save_ledger(doc, args.ledger)
+    print(json.dumps({"ep": ep, "staged": result, "ledger_written": True,
+                      "replaced_wrapper": is_genspark_wrapper(prev)},
+                     ensure_ascii=False, indent=2))
+    return EXIT_OK
+
+
 def cmd_verify(args) -> int:
     doc = _load(args.ledger)
     ep = args.ep if str(args.ep).startswith("ep") else f"ep{args.ep}"
@@ -226,6 +285,15 @@ def build_parser() -> argparse.ArgumentParser:
     m.add_argument("--apply", action="store_true")
     m.add_argument("--mirror", action="store_true")
     m.set_defaults(func=cmd_migrate)
+
+    st = sub.add_parser("stage",
+                        help="로컬 미디어 실물 → Zernio 저장소 업로드(publicUrl, 발행 아님)")
+    st.add_argument("--ep", required=True)
+    st.add_argument("--file", required=True, help="업로드할 로컬 미디어 실물 경로")
+    st.add_argument("--filename", default=None, help="스토리지 파일명(기본: 원본 파일명)")
+    st.add_argument("--write", action="store_true",
+                    help="원장 media_url 을 staged publicUrl 로 교체(미지정 시 원장 무변경)")
+    st.set_defaults(func=cmd_stage)
     return ap
 
 

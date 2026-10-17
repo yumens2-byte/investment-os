@@ -1,0 +1,115 @@
+name: "🧪 Zernio Media Staging A2 (presign→PUT→validate, 발행 아님)"
+# 승인 A2 — 스테이징 경로 실증 1회(블로커#3). 외부(Zernio) 호출 정확히 3회:
+#   1) POST /v1/media/presign   2) PUT uploadUrl   3) POST /v1/tools/validate/media
+# 발행·회차 변화·원장 쓰기 없음. uploadUrl(1시간짜리 쓰기 자격증명)은 출력하지 않는다.
+# 키는 Secrets 에서만 사용되며 값은 어떤 출력에도 나오지 않는다.
+on:
+  workflow_dispatch:
+    inputs:
+      asset_tag:
+        description: "ep88 mp4 가 붙은 release 태그"
+        required: true
+        default: "a2-staging-ep88"
+      asset_name:
+        description: "release 자산 파일명"
+        required: true
+        default: "ep88_final_voiced.mp4"
+      expected_sha256:
+        description: "자산 무결성 sha256(샌드박스 실측값)"
+        required: true
+        default: "5eb13aa5d5552059b05cc02b8d01e68df8193ee9c539340a5c40273033412d09"
+      expected_size:
+        description: "자산 바이트 수"
+        required: true
+        default: "9455069"
+
+permissions:
+  contents: read
+
+jobs:
+  stage-validate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Fetch ep88 media from release asset (public, integrity-checked)
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ github.event.inputs.asset_tag }}
+          NAME: ${{ github.event.inputs.asset_name }}
+          EXPECTED_SHA: ${{ github.event.inputs.expected_sha256 }}
+          EXPECTED_SIZE: ${{ github.event.inputs.expected_size }}
+        run: |
+          set -euo pipefail
+          gh release download "$TAG" --repo "$GITHUB_REPOSITORY" --pattern "$NAME" \
+            --output "$NAME"
+          ACTUAL_SIZE=$(stat -c%s "$NAME")
+          ACTUAL_SHA=$(sha256sum "$NAME" | awk '{print $1}')
+          echo "SIZE=$ACTUAL_SIZE"
+          echo "SHA256=$ACTUAL_SHA"
+          [ "$ACTUAL_SIZE" = "$EXPECTED_SIZE" ] || { echo "SIZE_MISMATCH"; exit 61; }
+          [ "$ACTUAL_SHA" = "$EXPECTED_SHA" ] || { echo "SHA_MISMATCH"; exit 62; }
+
+      - name: Stage upload (presign → PUT) + validate publicUrl — Zernio 3 calls
+        env:
+          ZERNIO_API_KEY: ${{ secrets.ZERNIO_API_KEY }}
+          NAME: ${{ github.event.inputs.asset_name }}
+        run: |
+          set -euo pipefail
+          if [ -z "${ZERNIO_API_KEY:-}" ]; then echo "RESULT=NO_KEY"; exit 64; fi
+          echo "KEY_LEN=${#ZERNIO_API_KEY}"
+          python3 - "$NAME" <<'PY'
+          import hashlib, json, os, sys, urllib.error, urllib.request
+
+          name = sys.argv[1]
+          size = os.path.getsize(name)
+          key = os.environ["ZERNIO_API_KEY"]
+          base = "https://zernio.com/api/v1"
+          hdr = {"Content-Type": "application/json",
+                 "Authorization": f"Bearer {key}", "Accept": "application/json"}
+
+          def post_json(url, payload):
+              req = urllib.request.Request(url, data=json.dumps(payload).encode(),
+                                           method="POST", headers=hdr)
+              try:
+                  with urllib.request.urlopen(req, timeout=120) as r:
+                      return r.status, json.loads(r.read().decode() or "{}")
+              except urllib.error.HTTPError as e:
+                  return e.code, json.loads(e.read().decode() or "{}")
+
+          # 1) presign — 업로드 URL 발급(1시간짜리 쓰기 자격증명 → 절대 출력하지 않음)
+          st, body = post_json(f"{base}/media/presign",
+                               {"filename": name, "contentType": "video/mp4", "size": size})
+          upload_url = body.get("uploadUrl")
+          public_url = body.get("publicUrl")
+          print(f"PRESIGN_HTTP={st}")
+          print(f"PRESIGN_KEY_FIELDS={sorted(body.keys())}")
+          print(f"EXPIRES_IN={body.get('expiresIn')}")
+          if st >= 400 or not upload_url or not public_url:
+              print("PRESIGN_FAILED"); print(json.dumps(body)[:500]); sys.exit(63)
+          print(f"PUBLIC_URL={public_url}")
+
+          # 2) PUT — 스토리지 서명 URL: Authorization 없음, Content-Type 동일
+          data = open(name, "rb").read()
+          req = urllib.request.Request(upload_url, data=data, method="PUT",
+                                       headers={"Content-Type": "video/mp4"})
+          try:
+              with urllib.request.urlopen(req, timeout=300) as r:
+                  put_status = r.status
+                  etag = (r.headers or {}).get("ETag")
+          except urllib.error.HTTPError as e:
+              put_status = e.code
+              etag = None
+          print(f"PUT_HTTP={put_status}")
+          print(f"PUT_ETAG={etag}")
+          if put_status != 200:
+              print("PUT_FAILED"); sys.exit(65)
+
+          # 3) validate — 스테이징 publicUrl 이 실제로 인제스트 가능한지(읽기 전용)
+          st, body = post_json(f"{base}/tools/validate/media", {"url": public_url})
+          print(f"VALIDATE_HTTP={st}")
+          print("--- VALIDATE_BODY_START ---")
+          print(json.dumps(body, ensure_ascii=False))
+          print("--- VALIDATE_BODY_END ---")
+          print(f"VERDICT={'VALID' if body.get('valid') is True else 'INVALID'}")
+          sys.exit(0 if body.get("valid") is True else 66)
+          PY

@@ -35,14 +35,20 @@ Zernio 는 `publishNow: true` 거부를 **HTTP 207** 로 돌려주고, 이때
     멱등         Idempotency-Key 헤더(≤255) — 24h 내 재사용 시 원본 반환(HTTP 200)
     409          동일 지문(platform,accountId,content+mediaUrls) 중복 → existingPostId 동반
     207          publishNow 거부 — 2xx 지만 실패. post.status = failed | partial
-    검증         POST {base}/tools/validate/media {"url"} → size · platformLimits
-    업로드       POST {base}/media/presign {"filename","contentType","size"} → uploadUrl/publicUrl
+    검증         POST {base}/tools/validate/media {"url"} → {valid,size,contentType,platformLimits}
+    업로드       3단 — POST {base}/media/presign {"filename","contentType","size"}
+                        → 200 {uploadUrl, publicUrl, key, expiresIn=3600}
+                 PUT  uploadUrl (Content-Type 동일 · **Authorization 없음**) → 빈 200 + ETag
+                 POST {base}/posts 에 publicUrl 을 mediaItems 로 — **업로드 후 7일 내 발행 필요**
+                 (게시 참조 시 Zernio 가 영구 보관소로 복제 — docs.zernio.com/guides/media-uploads.
+                  원장의 Genspark 래퍼 URL 은 403 실측 차단 → 스테이징 publicUrl 이 새 정본)
 
 설계서 §13-2 의 미확인 2건(인증 방식·엔드포인트 경로)은 이로써 **해소됐다**.
 `ZERNIO_API_BASE` 로 교체 가능성은 유지한다.
 """
 from __future__ import annotations
 
+import hashlib
 import json
 import logging
 import shlex
@@ -79,6 +85,51 @@ DEFAULT_API_BASE = "https://zernio.com/api/v1"
 DEFAULT_TIMEZONE = "Asia/Seoul"     # scheduledFor 를 해석할 IANA 타임존(스펙: timezone 필드)
 DEFAULT_TIMEOUT_SEC = 120
 MAX_RETRY = 3
+
+# 스테이징 — 스펙 허용 MIME 전수(docs.zernio.com · generic octet-stream 은 400).
+# 확장자 → MIME 매핑은 이 표 안에서만 하고, 밖은 fail-closed 다.
+STAGING_CONTENT_TYPES = {
+    ".mp4": "video/mp4", ".m4v": "video/x-m4v", ".mov": "video/quicktime",
+    ".webm": "video/webm", ".avi": "video/x-msvideo", ".mpeg": "video/mpeg",
+    ".mpg": "video/mpeg",
+    ".jpg": "image/jpeg", ".jpeg": "image/jpeg", ".png": "image/png",
+    ".webp": "image/webp", ".gif": "image/gif",
+    ".mp3": "audio/mpeg", ".m4a": "audio/x-m4a", ".aac": "audio/aac",
+    ".ogg": "audio/ogg", ".wav": "audio/wav",
+    ".pdf": "application/pdf", ".srt": "application/x-subrip", ".vtt": "text/vtt",
+}
+STAGING_MAX_BYTES = 5 * 1024 * 1024 * 1024        # 스펙 상한 5GB
+
+
+def guess_content_type(filename: str) -> str:
+    """확장자 → 스펙 허용 MIME. 모르면 거부 — octet-stream 으로 보내봤자 400이다."""
+    ext = Path(filename).suffix.lower()
+    mime = STAGING_CONTENT_TYPES.get(ext)
+    if not mime:
+        raise TransportError(
+            f"스테이징: {filename!r} 의 확장자를 스펙 MIME 로 해석 못 한다 — fail-closed")
+    return mime
+
+
+def is_genspark_wrapper(url: Optional[str]) -> bool:
+    """원장 구값 판별 — Genspark 파일 래퍼(`genspark.ai/api/files/`)면 True.
+
+    래퍼는 비인증 외부 서버에 403(A 실측) — 발행 mediaItems 로 쓸 수 없다.
+    """
+    if not url:
+        return False
+    from urllib.parse import urlparse
+
+    host = (urlparse(str(url)).hostname or "").lower()
+    return host.endswith("genspark.ai") and "/api/files/" in str(url)
+
+
+def _sha256_of(p: Path) -> str:
+    h = hashlib.sha256()
+    with p.open("rb") as f:
+        for chunk in iter(lambda: f.read(1024 * 1024), b""):
+            h.update(chunk)
+    return h.hexdigest()
 
 
 class TransportError(RuntimeError):
@@ -308,6 +359,146 @@ class ZernioRestTransport:
         log.info("Zernio REST 응답: HTTP %s · 플랫폼 %s", status, list(platforms) or "-")
         return TransportResponse(transport=self.name, http_status=status,
                                  body=body, raw=raw, request=request_body)
+
+    # ---------------------------------------------------------------- #
+    # 스테이징 업로드 — 블로커#3(원장 래퍼 403) 해소 경로
+    # 스펙 1차 출처: docs.zernio.com/media/get-media-presigned-url (2026-10-18 읽음)
+    # ---------------------------------------------------------------- #
+    def presign_media(self, filename: str, content_type: str,
+                      size: Optional[int] = None) -> Dict[str, Any]:
+        """POST {base}/media/presign → {upload_url, public_url, key, expires_in}.
+
+        스펙: filename·contentType 필수, size 선택(사전 검증, 최대 5GB).
+        응답 200: {uploadUrl, publicUrl, key, expiresIn=3600}.
+        `upload_url` 은 **1시간짜리 쓰기 자격증명**이다 — 로그·원장·보고서에 남기지 않는다.
+        """
+        if not filename:
+            raise TransportError("presign: filename 필요")
+        if content_type not in STAGING_CONTENT_TYPES.values():
+            raise TransportError(
+                f"presign: contentType 미허용({content_type!r}) — 스펙 목록만 받는다"
+                " (generic octet-stream 은 400)")
+        body = {"filename": str(filename), "contentType": content_type}
+        if size is not None:
+            size = int(size)
+            if size <= 0:
+                raise TransportError(f"presign: size 는 양수여야 한다: {size}")
+            if size > STAGING_MAX_BYTES:
+                raise TransportError(f"presign: size {size}B > 5GB 상한")
+            body["size"] = size
+        req = urllib.request.Request(
+            f"{self.base}/media/presign",
+            data=json.dumps(body, ensure_ascii=False).encode("utf-8"),
+            method="POST", headers={
+                "Content-Type": "application/json",
+                "Authorization": f"Bearer {self.api_key}",
+                "Accept": "application/json",
+            })
+        status, parsed = self._request_json(req, tag="presign")
+        upload = parsed.get("uploadUrl") or parsed.get("upload_url")
+        public = parsed.get("publicUrl") or parsed.get("public_url")
+        if status >= 400:
+            raise TransportError(
+                f"presign 거부 — HTTP {status} · code={parsed.get('code') or '?'}"
+                f" · error={str(parsed.get('error'))[:120]}")
+        if not upload or not public:
+            raise TransportError(
+                f"presign 응답에 uploadUrl/publicUrl 없음 — 스펙 불일치(HTTP {status})"
+                f" · keys={sorted(parsed.keys())[:8]}")
+        return {"upload_url": upload, "public_url": public,
+                "key": parsed.get("key"),
+                "expires_in": parsed.get("expiresIn") or parsed.get("expires_in")}
+
+    def put_media_file(self, upload_url: str, file_path, content_type: str) -> Dict[str, Any]:
+        """바이트 PUT. **Authorization 헤더를 붙이지 않는다** — 스토리지 서명 URL 이다.
+
+        스펙: 같은 Content-Type 으로 PUT, 응답은 본문 없는 200 + ETag.
+        쇼츠 실물(~10MB) 전제의 전역 read — 5GB 스트리밍은 이 경로의 요구가 아니다.
+        """
+        p = Path(file_path)
+        data = p.read_bytes()
+        req = urllib.request.Request(
+            upload_url, data=data, method="PUT",
+            headers={"Content-Type": content_type, "Accept": "*/*"})
+        try:
+            with self._opener(req, timeout=self.timeout_sec) as resp:
+                status = int(getattr(resp, "status", 0) or 0)
+                hdrs = getattr(resp, "headers", None)
+                etag = hdrs.get("ETag") if hdrs else None
+                resp.read()
+        except urllib.error.HTTPError as exc:
+            status = int(getattr(exc, "code", 0) or 0)
+            etag = None
+        except Exception as exc:
+            raise TransportError(f"PUT 업로드 실패: {type(exc).__name__}: {exc}") from exc
+        if not (200 <= status < 300):
+            raise TransportError(f"PUT 업로드 거부 — HTTP {status}")
+        return {"http_status": status, "etag": etag, "bytes": len(data)}
+
+    def validate_media(self, url: str) -> TransportResponse:
+        """POST {base}/tools/validate/media — 읽기 전용 검증(발행 아님).
+
+        스펙: {valid, size, contentType, platformLimits}. 스테이징 후
+        `{"valid": true}` 확인까지 가야 인제스트 경로가 실측으로 닫힌다(A2).
+        """
+        req = urllib.request.Request(
+            f"{self.base}/tools/validate/media",
+            data=json.dumps({"url": str(url)}, ensure_ascii=False).encode("utf-8"),
+            method="POST", headers={
+                "Content-Type": "application/json",
+                "Authorization": f"Bearer {self.api_key}",
+                "Accept": "application/json",
+            })
+        status, parsed = self._request_json(req, tag="validate")
+        return TransportResponse(transport=self.name, http_status=status,
+                                 body=parsed, raw=json.dumps(parsed, ensure_ascii=False),
+                                 request={"url": url})
+
+    def stage_media_file(self, file_path, filename: Optional[str] = None,
+                         content_type: Optional[str] = None) -> Dict[str, Any]:
+        """스테이징 전체 — 존재·크기·MIME 검증 → presign → PUT → 실측 반환.
+
+        반환의 `public_url` 이 원장 `media_url` 의 새 정본이다(래퍼 403 · 24h
+        토큰 만료 문제 소멸). 업로드 실물은 7일 보관 — **7일 내 게시 필요**,
+        게시 참조 시 Zernio 가 영구 보관소로 복제한다(스펙).
+        반환에 `upload_url` 은 **포함하지 않는다**(1시간짜리 자격증명 — 유출 지점 제거).
+        """
+        p = Path(file_path)
+        if not p.is_file():
+            raise TransportError(f"스테이징 대상 파일 없음: {p}")
+        size = p.stat().st_size
+        if size <= 0:
+            raise TransportError(f"빈 파일 — 스테이징 거부: {p}")
+        if size > STAGING_MAX_BYTES:
+            raise TransportError(f"파일 {size}B > 5GB 상한: {p}")
+        fname = filename or p.name
+        ctype = content_type or guess_content_type(fname)
+        digest = _sha256_of(p)
+        pre = self.presign_media(fname, ctype, size=size)
+        put = self.put_media_file(pre["upload_url"], p, ctype)
+        log.info("스테이징 완료: %s · %dB · sha256=%s… · PUT HTTP %s",
+                 fname, size, digest[:12], put["http_status"])
+        return {"public_url": pre["public_url"], "key": pre["key"],
+                "expires_in": pre["expires_in"], "filename": fname,
+                "content_type": ctype, "size_bytes": size, "sha256": digest,
+                "put_status": put["http_status"], "etag": put["etag"]}
+
+    def _request_json(self, req: urllib.request.Request, tag: str) -> tuple:
+        """공통 — JSON 요청 1회 → (http_status, parsed_dict). 4xx/5xx 도 본문을 살린다."""
+        try:
+            with self._opener(req, timeout=self.timeout_sec) as resp:
+                raw = resp.read().decode("utf-8", "replace")
+                status = int(getattr(resp, "status", 0) or 0)
+        except urllib.error.HTTPError as exc:
+            raw = exc.read().decode("utf-8", "replace") if hasattr(exc, "read") else ""
+            status = int(getattr(exc, "code", 0) or 0)
+        except Exception as exc:
+            raise TransportError(f"{tag} 호출 실패: {type(exc).__name__}: {exc}") from exc
+        try:
+            parsed = json.loads(raw) if raw.strip() else {}
+        except json.JSONDecodeError:
+            parsed = {"_unparsed": raw[:1000]}
+        return status, parsed
 
 
 # --------------------------------------------------------------------------- #
