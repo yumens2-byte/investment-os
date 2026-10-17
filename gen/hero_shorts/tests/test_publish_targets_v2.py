@@ -379,7 +379,7 @@ class PlannerTest(unittest.TestCase):
                                  platforms=["youtube", "threads"])
 
         class OneOk:
-            def send(self, body, platforms=()):
+            def send(self, body, platforms=(), **kwargs):
                 from gen.hero_shorts.publish_targets.transport import TransportResponse
                 return TransportResponse(
                     transport="fake", http_status=207,
