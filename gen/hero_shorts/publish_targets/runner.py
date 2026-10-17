@@ -54,7 +54,8 @@ def _target_instances(platforms, args) -> Dict[str, Any]:
     if "threads" in platforms:
         kw["threads"] = {"first_comment": getattr(args, "first_comment", None)}
     if "youtube" in platforms:
-        kw["youtube"] = {"visibility": getattr(args, "visibility", "public")}
+        kw["youtube"] = {"visibility": getattr(args, "visibility", "public"),
+                         "regular_publish": not getattr(args, "nonregular", False)}
     return planner.make_targets(platforms, **kw)
 
 
@@ -255,6 +256,9 @@ def build_parser() -> argparse.ArgumentParser:
     ap.add_argument("--topic-tag", default="JCUniverse")
     ap.add_argument("--max-attempts", type=int, default=planner.DEFAULT_MAX_ATTEMPTS)
     ap.add_argument("--visibility", default="public")
+    ap.add_argument("--nonregular", action="store_true",
+                    help="비정기(시험) 발행 — Y-G4 의 정기 public 강제만 해제"
+                         "(visibility 유효집합 {public,private,unlisted} 검사는 유지)")
     ap.add_argument("--first-comment", default=None)
     ap.add_argument("--transport", default="rest", choices=["rest", "cli"])
     sub = ap.add_subparsers(dest="cmd", required=True)

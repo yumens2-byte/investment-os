@@ -1,0 +1,118 @@
+name: "🚀 Hero Shorts W11 — ep88 비공개 실발행 (stage 2호출 + publish 1호출)"
+# W11 승인(2026-10-18) — 원장 ep88 을 staged publicUrl 로 정본화하고
+# 유튜브 비공개(visibility=private)로 1회 실발행한다. Zernio 외부 호출 정확히 3회:
+#   1) POST /v1/media/presign   2) PUT uploadUrl   3) POST /v1/posts
+# uploadUrl(1시간짜리 쓰기 자격증명)은 어떤 출력에도 내보내지 않는다.
+# 원장 갱신본은 artifact 로 회수 — 샌드박스가 검증 후 AI Drive 미러에 반영한다.
+on:
+  workflow_dispatch:
+    inputs:
+      asset_tag:
+        description: "자산(미디어+원장) release 태그"
+        required: true
+        default: "w11-publish-ep88"
+      media_name:
+        description: "미디어 자산 파일명"
+        required: true
+        default: "ep88_final_voiced.mp4"
+      media_sha256:
+        description: "미디어 sha256(샌드박스 실측값)"
+        required: true
+        default: "5eb13aa5d5552059b05cc02b8d01e68df8193ee9c539340a5c40273033412d09"
+      media_size:
+        description: "미디어 바이트 수"
+        required: true
+        default: "9455069"
+      ledger_name:
+        description: "원장 자산 파일명"
+        required: true
+        default: "publish_state.json"
+      ledger_sha256:
+        description: "원장 sha256(교정본)"
+        required: true
+        default: "3ee07bc2f11e01313561001d87adcf3ce1dfc2f9d0ceb1b508c555ec1688516c"
+      ep:
+        description: "회차 키"
+        required: true
+        default: "ep88"
+      visibility:
+        description: "유튜브 공개 범위(비공개 실발행=private)"
+        required: true
+        default: "private"
+
+permissions:
+  contents: read
+
+jobs:
+  w11-stage-publish:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Fetch assets (media + ledger) and verify integrity
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ github.event.inputs.asset_tag }}
+          MEDIA: ${{ github.event.inputs.media_name }}
+          MSHA: ${{ github.event.inputs.media_sha256 }}
+          MSIZE: ${{ github.event.inputs.media_size }}
+          LEDGER: ${{ github.event.inputs.ledger_name }}
+          LSHA: ${{ github.event.inputs.ledger_sha256 }}
+        run: |
+          set -euo pipefail
+          gh release download "$TAG" --repo "$GITHUB_REPOSITORY" --pattern "$MEDIA" --output "$MEDIA"
+          gh release download "$TAG" --repo "$GITHUB_REPOSITORY" --pattern "$LEDGER" --output "$LEDGER"
+          [ "$(stat -c%s "$MEDIA")" = "$MSIZE" ] || { echo MEDIA_SIZE_MISMATCH; exit 61; }
+          [ "$(sha256sum "$MEDIA" | awk '{print $1}')" = "$MSHA" ] || { echo MEDIA_SHA_MISMATCH; exit 62; }
+          [ "$(sha256sum "$LEDGER" | awk '{print $1}')" = "$LSHA" ] || { echo LEDGER_SHA_MISMATCH; exit 63; }
+          echo "ASSETS_VERIFIED media=$MSIZE ledger_sha=$LSHA"
+
+      - name: "Stage ep88 media (presign → PUT) + 원장 기록 — Zernio 2 calls"
+        env:
+          ZERNIO_API_KEY: ${{ secrets.ZERNIO_API_KEY }}
+          MEDIA: ${{ github.event.inputs.media_name }}
+          LEDGER: ${{ github.event.inputs.ledger_name }}
+          EP: ${{ github.event.inputs.ep }}
+        run: |
+          set -euo pipefail
+          [ -n "${ZERNIO_API_KEY:-}" ] || { echo NO_KEY; exit 64; }
+          echo "KEY_LEN=${#ZERNIO_API_KEY}"
+          python3 -m gen.hero_shorts.publish_targets.runner --ledger "$LEDGER" \
+            stage --ep "$EP" --file "$MEDIA" --write | tee stage_result.json
+          grep -q '"ledger_written": true' stage_result.json
+
+      - name: Gate pre-assert (dry-run — 전송 0회)
+        env:
+          HERO_YOUTUBE_ACCOUNT_ID: ${{ secrets.HERO_YOUTUBE_ACCOUNT_ID }}
+          LEDGER: ${{ github.event.inputs.ledger_name }}
+          EP: ${{ github.event.inputs.ep }}
+          VIS: ${{ github.event.inputs.visibility }}
+        run: |
+          set -euo pipefail
+          python3 -m gen.hero_shorts.publish_targets.runner --ledger "$LEDGER" \
+            --platforms youtube --visibility "$VIS" --nonregular dry-run --eps "$EP" > dry.json
+          python3 -c 'import json; d=json.load(open("dry.json")); d=d[0] if isinstance(d,list) else d; \
+            assert d["pending"]==["youtube"], f"게이트 미달: pending={d[\"pending\"]} blocked={d[\"blocked\"]}"; \
+            print("GATE_OK pending=youtube")'
+
+      - name: "Publish ep88 → YouTube 비공개 1회 + 원장 기록 — Zernio 1 call"
+        env:
+          ZERNIO_API_KEY: ${{ secrets.ZERNIO_API_KEY }}
+          HERO_YOUTUBE_ACCOUNT_ID: ${{ secrets.HERO_YOUTUBE_ACCOUNT_ID }}
+          LEDGER: ${{ github.event.inputs.ledger_name }}
+          EP: ${{ github.event.inputs.ep }}
+          VIS: ${{ github.event.inputs.visibility }}
+        run: |
+          set -euo pipefail
+          python3 -m gen.hero_shorts.publish_targets.runner --ledger "$LEDGER" \
+            --platforms youtube --visibility "$VIS" --nonregular \
+            publish --ep "$EP" --apply --write | tee publish_result.json
+
+      - name: Upload updated ledger artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: w11-ledger
+          path: ${{ github.event.inputs.ledger_name }}
+          if-no-files-found: error
