@@ -49,6 +49,7 @@ jobs:
 
       - name: Gate pre-assert (dry-run — 전송 0회)
         env:
+          HERO_THREADS_ACCOUNT_ID: ${{ secrets.HERO_THREADS_ACCOUNT_ID }}
           LEDGER: ${{ github.event.inputs.ledger_name }}
           EP: ${{ github.event.inputs.ep }}
         run: |
