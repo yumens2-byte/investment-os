@@ -287,7 +287,7 @@ class TransportPartialFailureTest(unittest.TestCase):
 
     def test_build_request_shape(self):
         body = build_request("https://x/y.mp4", [{"platform": "youtube"}])
-        self.assertEqual(body["mediaUrls"], ["https://x/y.mp4"])
+        self.assertEqual(body["mediaItems"], [{"url": "https://x/y.mp4", "type": "video"}])
         self.assertTrue(body["publishNow"])
         self.assertEqual(planner.__name__.split(".")[-1], "planner")
 
@@ -498,3 +498,139 @@ class RegistryAndFactsTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+# --------------------------------------------------------------------------- #
+# T14 — Zernio REST 스펙 정합성 (2026-10-18 docs.zernio.com 1차 출처 확정분)
+#   이 클래스는 "코드가 실제 API 스펙과 어긋나지 않는가"를 고정한다.
+#   2026-10-18 이전 코드는 mediaUrls · scheduledAt · platformSpecificData.text 를
+#   쓰고 있었고 셋 다 스펙과 달랐다 — 재발 방지용 잠금이다.
+# --------------------------------------------------------------------------- #
+class _FakeResp:
+    def __init__(self, payload=b"{}", status=200):
+        self._payload, self.status = payload, status
+
+    def read(self):
+        return self._payload
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *a):
+        return False
+
+
+class SpecConformanceTest(unittest.TestCase):
+    def _proj(self, platform, ep="Ep89"):
+        return caption_plan.build_projections(make_record(), ep_label=ep)[platform]
+
+    # --- 요청 봉투 ---------------------------------------------------------- #
+    def test_media_items_not_media_urls(self):
+        body = build_request("https://x/y.mp4", [{"platform": "youtube"}])
+        self.assertIn("mediaItems", body)
+        self.assertNotIn("mediaUrls", body)
+        self.assertEqual(body["mediaItems"][0]["url"], "https://x/y.mp4")
+        self.assertEqual(body["mediaItems"][0]["type"], "video")
+
+    def test_media_url_must_be_https(self):
+        from gen.hero_shorts.publish_targets.transport import TransportError
+        with self.assertRaises(TransportError):
+            build_request("http://x/y.mp4", [{"platform": "youtube"}])
+
+    def test_scheduled_for_and_timezone_not_scheduled_at(self):
+        body = build_request("https://x/y.mp4", [{"platform": "youtube"}],
+                             publish_now=True,
+                             scheduled_for="2026-10-20T10:30:00+09:00",
+                             timezone="Asia/Seoul")
+        self.assertEqual(body["scheduledFor"], "2026-10-20T10:30:00+09:00")
+        self.assertEqual(body["timezone"], "Asia/Seoul")
+        self.assertNotIn("scheduledAt", body)
+        self.assertNotIn("publishNow", body)   # 스펙: 둘 중 하나만
+
+    def test_publish_now_default_path(self):
+        body = build_request("https://x/y.mp4", [{"platform": "youtube"}])
+        self.assertTrue(body["publishNow"])
+        self.assertNotIn("scheduledFor", body)
+
+    def test_entry_without_platform_rejected(self):
+        from gen.hero_shorts.publish_targets.transport import TransportError
+        with self.assertRaises(TransportError):
+            build_request("https://x/y.mp4", [{"accountId": "x"}])
+
+    # --- 플랫폼 엔트리 배치 -------------------------------------------------- #
+    def test_youtube_entry_layout(self):
+        e = youtube_pkg.payload.platform_entry("yt-acc", self._proj("youtube"))
+        self.assertEqual(e["platform"], "youtube")
+        self.assertEqual(e["accountId"], "yt-acc")
+        self.assertIn("customContent", e)
+        psd = e["platformSpecificData"]
+        for k in ("title", "visibility", "categoryId", "madeForKids",
+                  "containsSyntheticMedia"):
+            self.assertIn(k, psd)
+        self.assertNotIn("description", psd)   # 스펙: 설명은 content 다
+        self.assertNotIn("tags", psd)          # 스펙: 태그는 최상위다
+
+    def test_threads_entry_layout(self):
+        e = threads_pkg.payload.platform_entry("th-acc", self._proj("threads"))
+        self.assertEqual(e["platform"], "threads")
+        self.assertIn("customContent", e)
+        self.assertNotIn("text", e.get("platformSpecificData") or {})
+        self.assertEqual(e["platformSpecificData"]["topic_tag"], "JCUniverse")
+
+    def test_threads_content_within_500(self):
+        txt = threads_pkg.payload.content_text(self._proj("threads"))
+        self.assertLessEqual(len(txt), 500)
+
+    def test_threads_over_500_rejected(self):
+        with self.assertRaises(ValueError):
+            threads_pkg.payload.content_text({"content": "가" * 501})
+
+    # --- 유튜브 제목 · 태그 -------------------------------------------------- #
+    def test_youtube_content_first_line_is_title(self):
+        proj = self._proj("youtube")
+        txt = youtube_pkg.payload.content_text(proj)
+        self.assertEqual(txt.splitlines()[0].strip(), proj["title"])
+
+    def test_youtube_tags_truncation_rules(self):
+        tags = youtube_pkg.payload.tags_of(
+            {"title": "T", "content": "T",
+             "tags": ["a" * 101, "b" * 10, "c" * 500]})
+        self.assertEqual(tags, ["b" * 10])   # 101자 탈락 · 합계 500자에서 중단
+
+    def test_youtube_first_comment_limit_is_10000(self):
+        proj = self._proj("youtube")
+        ok = youtube_pkg.payload.platform_specific_data(proj, first_comment="x" * 10000)
+        self.assertEqual(len(ok["firstComment"]), 10000)
+        with self.assertRaises(ValueError):
+            youtube_pkg.payload.platform_specific_data(proj, first_comment="x" * 10001)
+
+    # --- 응답 판정 · 멱등 ---------------------------------------------------- #
+    def test_partial_is_terminal_failure(self):
+        from gen.hero_shorts.publish_targets import transport as tm
+        self.assertIn("partial", tm.TERMINAL_FAIL)
+        self.assertNotIn("partial", tm.TERMINAL_OK)
+
+    def test_idempotency_key_length_guard(self):
+        from gen.hero_shorts.publish_targets.transport import (
+            ZernioRestTransport, TransportError)
+        t = ZernioRestTransport(api_key="sk_test", opener=lambda *a, **k: _FakeResp())
+        with self.assertRaises(TransportError):
+            t.send({"platforms": []}, platforms=[], idempotency_key="k" * 256)
+
+    def test_endpoint_path_and_auth_header(self):
+        from gen.hero_shorts.publish_targets.transport import ZernioRestTransport
+        seen = {}
+
+        def opener(req, timeout=None):
+            seen["req"] = req
+            return _FakeResp(b'{"post": {"_id": "p1", "platforms": []}}')
+
+        t = ZernioRestTransport(api_key="sk_test", opener=opener)
+        t.send({"platforms": [{"platform": "youtube"}]},
+               platforms=["youtube"], idempotency_key="hero-ep89")
+        req = seen["req"]
+        self.assertEqual(req.full_url, "https://zernio.com/api/v1/posts")
+        self.assertEqual(req.get_method(), "POST")
+        h = {k.lower(): v for k, v in req.header_items()}
+        self.assertEqual(h.get("idempotency-key"), "hero-ep89")
+        self.assertTrue(h.get("authorization", "").startswith("Bearer "))

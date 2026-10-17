@@ -198,10 +198,16 @@ def results_from_response(plans: Dict[str, TargetPlan], response,
 def publish_batch(plans: Dict[str, TargetPlan], *, transport,
                   media_url: str, platforms: Sequence[str],
                   publish_now: bool = True,
-                  scheduled_at: Optional[str] = None) -> Dict[str, Any]:
+                  scheduled_at: Optional[str] = None,
+                  timezone: Optional[str] = None,
+                  content: Optional[str] = None,
+                  tags: Optional[Sequence[str]] = None,
+                  idempotency_key: Optional[str] = None) -> Dict[str, Any]:
     """정상 경로 — 유튜브·쓰레드를 **1회 호출**로 함께 보낸다.
 
     게이트 미통과 타깃은 전송 대상에서 제외하고 blocked 결과로 기록한다.
+    `content`/`tags` 를 주지 않으면 각 엔트리의 `customContent` 에서 승계한다
+    (단일 타깃 재시도 경로에서 최상위 content 가 비지 않게 한다).
     """
     send_plats = [p for p in platforms if p in plans and not plans[p].gate.get("blocked")]
     results: Dict[str, TargetResult] = {}
@@ -219,10 +225,18 @@ def publish_batch(plans: Dict[str, TargetPlan], *, transport,
     response = None
     if send_plats:
         entries = [plans[p].payload for p in send_plats]
+        if content is None:                       # 엔트리 customContent 승계
+            for p in send_plats:
+                cc = (plans[p].payload or {}).get("customContent")
+                if cc:
+                    content = cc
+                    break
         body = build_request(media_url, entries,
-                             publish_now=publish_now, scheduled_at=scheduled_at)
+                             publish_now=publish_now, scheduled_for=scheduled_at,
+                             timezone=timezone, content=content, tags=tags)
         try:
-            response = transport.send(body, platforms=send_plats)
+            response = transport.send(body, platforms=send_plats,
+                                      idempotency_key=idempotency_key)
             results.update(results_from_response(plans, response,
                                                 platforms=send_plats))
         except Exception as exc:                      # 전송 계층 예외 → 타깃별 failed
@@ -241,11 +255,17 @@ def publish_batch(plans: Dict[str, TargetPlan], *, transport,
 
 
 def publish_single(plan: TargetPlan, *, transport, media_url: str,
-                   publish_now: bool = True) -> TargetResult:
+                   publish_now: bool = True,
+                   content: Optional[str] = None,
+                   tags: Optional[Sequence[str]] = None,
+                   idempotency_key: Optional[str] = None) -> TargetResult:
     """재시도 경로 — **성공한 채널을 다시 올리지 않는다**(G2). 타깃 1건만 보낸다."""
-    body = build_request(media_url, [plan.payload], publish_now=publish_now)
+    body = build_request(media_url, [plan.payload], publish_now=publish_now,
+                         content=content or (plan.payload or {}).get("customContent"),
+                         tags=tags)
     try:
-        response = transport.send(body, platforms=[plan.platform])
+        response = transport.send(body, platforms=[plan.platform],
+                                  idempotency_key=idempotency_key)
     except Exception as exc:
         return TargetResult(
             platform=plan.platform, outcome=STATUS_FAILED,

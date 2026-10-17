@@ -24,10 +24,22 @@ Zernio 는 `publishNow: true` 거부를 **HTTP 207** 로 돌려주고, 이때
     3. 유튜브는 URL 호스트까지 확인한다(youtube.com/youtu.be) — 다른 플랫폼의
        성공을 유튜브 성공으로 승계하지 않는다.
 
-## 미확인 (설계서 §13-2)
-Zernio REST 인증 헤더·정확한 엔드포인트 경로는 1차 스펙 미열람 상태다.
-`ZERNIO_API_BASE` 환경변수로 교체 가능하게 두고, 값은 실측 1건 확보 후 확정한다.
-추정으로 확정하지 않는다 — 본 모듈의 외부 호출은 fail-closed 로만 동작한다.
+## 확정 스펙 (2026-10-18 · docs.zernio.com 1차 출처 실측)
+
+    엔드포인트   POST {base}/posts        base = https://zernio.com/api/v1
+    인증         Authorization: Bearer sk_<64hex>   (키는 sk_ + 64 hex = 67자)
+    최상위       content · tags · platforms[] · mediaItems[] · publishNow · scheduledFor · timezone
+    mediaItems   [{"url": "<public https>", "type": "video"}]  (type 생략 시 확장자로 추론)
+    platforms[]  {"platform","accountId"(24자 hex),"customContent"?,"platformSpecificData"?}
+    응답         post.platforms[].platformPostUrl = 공개 링크 · .errorMessage = 실패 사유
+    멱등         Idempotency-Key 헤더(≤255) — 24h 내 재사용 시 원본 반환(HTTP 200)
+    409          동일 지문(platform,accountId,content+mediaUrls) 중복 → existingPostId 동반
+    207          publishNow 거부 — 2xx 지만 실패. post.status = failed | partial
+    검증         POST {base}/tools/validate/media {"url"} → size · platformLimits
+    업로드       POST {base}/media/presign {"filename","contentType","size"} → uploadUrl/publicUrl
+
+설계서 §13-2 의 미확인 2건(인증 방식·엔드포인트 경로)은 이로써 **해소됐다**.
+`ZERNIO_API_BASE` 로 교체 가능성은 유지한다.
 """
 from __future__ import annotations
 
@@ -57,12 +69,14 @@ CLI_SUPPORTED_PLATFORMS = ("facebook", "instagram", "tiktok")
 
 # Zernio 응답의 종결 상태값(publish_runtime 관례 계승).
 TERMINAL_OK = ("published", "completed", "success")
-TERMINAL_FAIL = ("failed", "error", "rejected", "cancelled")
+TERMINAL_FAIL = ("failed", "error", "rejected", "cancelled", "partial",
+                 "idempotency_conflict")
 
 # 유튜브 성공 판정에 허용하는 호스트(설계서 §4.3 · publish_runtime 규칙 계승).
 YOUTUBE_HOSTS = ("youtube.com", "www.youtube.com", "m.youtube.com", "youtu.be")
 
 DEFAULT_API_BASE = "https://zernio.com/api/v1"
+DEFAULT_TIMEZONE = "Asia/Seoul"     # scheduledFor 를 해석할 IANA 타임존(스펙: timezone 필드)
 DEFAULT_TIMEOUT_SEC = 120
 MAX_RETRY = 3
 
@@ -253,24 +267,30 @@ class ZernioRestTransport:
 
         return secrets.resolve_required("ZERNIO_API_KEY")
 
+    MAX_IDEMPOTENCY_KEY_LEN = 255   # 스펙: 255자 초과는 400
+
     def send(self, request_body: Dict[str, Any],
-             platforms: Sequence[str] = ()) -> TransportResponse:
+             platforms: Sequence[str] = (),
+             idempotency_key: Optional[str] = None) -> TransportResponse:
         """단일 호출로 전송한다. 실패는 예외가 아니라 응답 봉투로 돌려준다.
 
         네트워크/프로토콜 오류만 TransportError 로 올린다 — 호출부가 재시도한다.
+        `idempotency_key` 를 주면 재시도가 이중 발행되지 않는다(24h 창).
         """
         url = f"{self.base}/posts"
         payload = json.dumps(request_body, ensure_ascii=False).encode("utf-8")
-        req = urllib.request.Request(
-            url,
-            data=payload,
-            method="POST",
-            headers={
-                "Content-Type": "application/json",
-                "Authorization": f"Bearer {self.api_key}",
-                "Accept": "application/json",
-            },
-        )
+        headers = {
+            "Content-Type": "application/json",
+            "Authorization": f"Bearer {self.api_key}",
+            "Accept": "application/json",
+        }
+        if idempotency_key:
+            key = str(idempotency_key)
+            if len(key) > self.MAX_IDEMPOTENCY_KEY_LEN:
+                raise TransportError(
+                    f"Idempotency-Key {len(key)}자 > {self.MAX_IDEMPOTENCY_KEY_LEN}자 — 400 반환됨")
+            headers["Idempotency-Key"] = key
+        req = urllib.request.Request(url, data=payload, method="POST", headers=headers)
         try:
             with self._opener(req, timeout=self.timeout_sec) as resp:
                 raw = resp.read().decode("utf-8", "replace")
@@ -358,26 +378,51 @@ def make_transport(kind: str = "rest", **kwargs) -> Any:
     raise ValueError(f"알 수 없는 전송 방식: {kind!r} (rest|cli)")
 
 
-def build_request(media_url: str, entries: Sequence[Dict[str, Any]],
-                  *, publish_now: bool = True,
-                  scheduled_at: Optional[str] = None) -> Dict[str, Any]:
-    """REST 요청 본문 조립 — `platforms` 배열 + 플랫폼별 `platformSpecificData`.
-
-    **미확인**: 필드명 대소문자·봉투 키는 Zernio REST 스펙 1차 열람 후 확정 대상이다.
-    구조를 한 곳에 모아 두어 확정 시 수정 지점을 1곳으로 제한한다.
-    """
+def build_media_items(media_url: str, media_type: str = "video") -> List[Dict[str, Any]]:
+    """`mediaItems` 봉투. 스펙: [{"url": "<public https>", "type": "video"}]."""
     if not media_url:
         raise TransportError("media_url 없음 — 업로드 단계 선행 필요")
+    if not str(media_url).lower().startswith("https://"):
+        raise TransportError(
+            f"media_url 은 공개 HTTPS 여야 한다(스펙): {str(media_url)[:60]}")
+    return [{"url": media_url, "type": media_type}]
+
+
+def build_request(media_url: str, entries: Sequence[Dict[str, Any]],
+                  *, publish_now: bool = True,
+                  scheduled_for: Optional[str] = None,
+                  timezone: Optional[str] = None,
+                  content: Optional[str] = None,
+                  tags: Optional[Sequence[str]] = None,
+                  media_type: str = "video") -> Dict[str, Any]:
+    """REST 요청 본문 조립 (2026-10-18 확정 스펙).
+
+    구조를 이 함수 1곳에 모은다 — 스펙 변경 시 수정 지점을 여기로 제한한다.
+
+    · `mediaItems`  — 공개 HTTPS URL. `mediaUrls` 아님(스펙 확인).
+    · `content`     — 유튜브 제목이 **첫 줄**에서 파생된다(스펙).
+    · `tags`        — 유튜브 전용 최상위 배열(태그당 ≤100자 · 합계 ≤500자).
+    · `customContent` — 플랫폼별 본문 오버라이드(쓰레드 500자 상한 대응).
+    · `scheduledFor` — `scheduledAt` 아님(스펙 확인).
+    """
     if not entries:
         raise TransportError("platforms 비어 있음 — 전송할 타깃이 없다")
+    plats = [str(e.get("platform", "")) for e in entries]
+    if any(not p for p in plats):
+        raise TransportError("platforms 엔트리에 platform 이 없는 항목이 있다")
     body: Dict[str, Any] = {
-        "mediaUrls": [media_url],
+        "mediaItems": build_media_items(media_url, media_type),
         "platforms": [dict(e) for e in entries],
-        "publishNow": bool(publish_now),
     }
-    if scheduled_at:
-        body["scheduledAt"] = scheduled_at
-        body["publishNow"] = False
+    if content:
+        body["content"] = str(content)
+    if tags:
+        body["tags"] = [str(t) for t in tags]
+    if scheduled_for:
+        body["scheduledFor"] = str(scheduled_for)
+        body["timezone"] = str(timezone or DEFAULT_TIMEZONE)
+    else:
+        body["publishNow"] = bool(publish_now)
     return body
 
 
