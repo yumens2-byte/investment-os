@@ -1,0 +1,39 @@
+name: "🔎 Zernio Media Validate (읽기 전용 검증)"
+# 마스터 승인 A — POST /v1/tools/validate/media 1회. 발행 아님·회차 변화 없음.
+# 시크릿 값을 셸에 두고 호출만 수행하며, 출력은 응답 본문뿐이다(키 미출력).
+on:
+  workflow_dispatch:
+    inputs:
+      url:
+        description: "검증할 공개 미디어 URL"
+        required: true
+        default: "https://www.genspark.ai/api/files/s/ioJNCDQU"
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Validate media URL (read-only)
+        env:
+          ZERNIO_API_KEY: ${{ secrets.ZERNIO_API_KEY }}
+        run: |
+          set -u
+          if [ -z "${ZERNIO_API_KEY:-}" ]; then
+            echo "RESULT=NO_KEY"; exit 64
+          fi
+          URL="${{ github.event.inputs.url }}"
+          echo "TARGET_URL=$URL"
+          echo "KEY_LEN=${#ZERNIO_API_KEY}"
+          BODY=$(python3 -c 'import json,sys; print(json.dumps({"url": sys.argv[1]}))' "$URL")
+          code=$(curl -sS -o /tmp/resp.json -w '%{http_code}' \
+            --max-time 60 \
+            -X POST "https://zernio.com/api/v1/tools/validate/media" \
+            -H "Authorization: Bearer ${ZERNIO_API_KEY}" \
+            -H "Content-Type: application/json" \
+            -H "Accept: application/json" \
+            -d "$BODY")
+          echo "HTTP_STATUS=$code"
+          echo "--- RESPONSE_BODY_START ---"
+          cat /tmp/resp.json
+          echo
+          echo "--- RESPONSE_BODY_END ---"
