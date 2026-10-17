@@ -208,6 +208,8 @@ def test_plan_pending_respects_attempt_cap(tmp_path):
     d = json.loads(p.read_text(encoding="utf-8"))
     d["ep87"]["targets"] = {"youtube": {"status": "failed", "attempts": [{}, {}, {}]},
                             "threads": {"status": "blocked", "attempts": [{}]}}
+    d["ep88"]["targets"] = {"youtube": {"status": "published", "attempts": [{}]},
+                            "threads": {"status": "published", "attempts": [{}]}}
     assert L.plan_pending(d) == []
 
 
