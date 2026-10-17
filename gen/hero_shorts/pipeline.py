@@ -641,7 +641,7 @@ def main(argv=None):
             record_combined(args.ep, _ep_meta.get("title"), voiced_final,
                             media_url=media.get("media_url") or media["wrapper_url"],
                             aidrive_path=aidrive_path)
-            log.info("승인 요청 완료 — approval.status=%s (러너3: runner ready → runner publish)", ap_block["status"])
+            log.info("승인 요청 완료 — approval.status=%s (발행: publish_targets.runner plan → publish --apply)", ap_block["status"])
 
     if args.step in ("publish", "zernio_publish", "run", "request_approval", "resolve_approvals"):
         from . import statestore as _ss

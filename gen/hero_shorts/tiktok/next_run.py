@@ -11,7 +11,7 @@
 
       1. PIN   HERO_TIKTOK_NEXT_RUN_PIN=1 + HERO_TIKTOK_NEXT_RUN_AT=<ISO>
                → 운영자 명시 고정. 어떤 경우에도 덮어쓰지 않는다(테스트/CI 용).
-      2. schedule  `gsk schedule list` 에서 skill_name==hero-shorts-tiktok-publish
+      2. schedule  `gsk schedule list` 에서 skill_name==hero-shorts-publish-yt-threads
                이고 is_active 인 항목의 next_run_at. **가장 실제에 가깝다**(스케줄러가
                계산한 발화 예정 시각). 0크레딧 CLI 호출.
       3. cron  HERO_TIKTOK_CRON(기본 "30 10 * * 2,4") 을 HERO_TIKTOK_TZ
@@ -62,7 +62,7 @@ ENV_TZ = "HERO_TIKTOK_TZ"
 ENV_CACHE = "HERO_TIKTOK_NEXT_RUN_CACHE"
 ENV_SCHEDULE_CMD = "HERO_SCHEDULE_CMD"
 
-SKILL_NAME = "hero-shorts-tiktok-publish"
+SKILL_NAME = "hero-shorts-publish-yt-threads"   # 2026-10-18 W10 — 발행 스킬 라인 교체(틱톡 폐지)
 DEFAULT_CRON = "30 10 * * 2,4"
 DEFAULT_TZ = "Asia/Seoul"
 DEFAULT_CACHE_FILENAME = "tiktok_next_run.json"

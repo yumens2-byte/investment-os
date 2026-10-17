@@ -55,7 +55,9 @@ ACTIONS_CRON = "0 1 * * 2,4"
 ACTIONS_CRON_TZ = "UTC"
 SKILL_CRON = "30 10 * * 2,4"
 HERO_WORKFLOW_NAME = "🎬 Hero Shorts Gen (v2.8.2 — gen 폴더)"
-SKILL_NAME = "hero-shorts-tiktok-publish"
+SKILL_NAME = "hero-shorts-publish-yt-threads"   # 2026-10-18 W10 — 발행 스킬 라인 교체(틱톡 폐지)
+# 원장 발행 활동 증거로 인정하는 블록 — 신규 유튜브·쓰레드 + 무손실 보존 중인 레거시 틱톡.
+LEDGER_BLOCK_NAMES = ("tiktok", "youtube", "threads")
 KO_DOW = ("월", "화", "수", "목", "금", "토", "일")
 
 OK, FRESH, MISSED, UNKNOWN = "ok", "fresh", "missed", "unknown"
@@ -191,7 +193,7 @@ def signal_token_history(now, path=None, loader=None):
 
 
 def signal_ledger(now, path=None, loader=None):
-    """발행 원장 — tiktok 기록의 최신 시각(러너3 발행 활동 증거)."""
+    """발행 원장 — 발행 타깃 기록(tiktok/youtube/threads)의 최신 시각(발행 러너 활동 증거)."""
     try:
         state = loader() if loader is not None else _load_ledger(path)
     except Exception as exc:  # noqa: BLE001
@@ -202,13 +204,16 @@ def signal_ledger(now, path=None, loader=None):
     for key, rec in state.items():
         if not isinstance(rec, dict):
             continue
-        tk = rec.get("tiktok") or {}
-        for field in ("published_at", "recorded_at", "updated_at"):
-            if tk.get(field):
-                stamps.append(tk[field])
-        ver = tk.get("verification") or {}
-        if ver.get("published_at"):
-            stamps.append(ver["published_at"])
+        for name in LEDGER_BLOCK_NAMES:
+            blk = rec.get(name) or {}
+            if not isinstance(blk, dict):
+                continue
+            for field in ("published_at", "recorded_at", "updated_at"):
+                if blk.get(field):
+                    stamps.append(blk[field])
+            ver = blk.get("verification") or {}
+            if isinstance(ver, dict) and ver.get("published_at"):
+                stamps.append(ver["published_at"])
     return {"name": "ledger", "available": True, "reason": None,
             "last_at": max(stamps) if stamps else None, "entries": len(state)}
 

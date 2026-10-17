@@ -27,6 +27,10 @@ CB_PREFIX = "hs"                       # callback_data 형식: "hs:approve:ep87"
 VIDEO_MAX_BYTES = 50 * 1024 * 1024     # Telegram 봇 API sendVideo 상한(50MB)
 CAPTION_MAX = 900                      # sendVideo 캡션 안전 자르기 길이(공식 1024)
 
+# 발행 채널 라벨 — 승인 요청 문구의 단일 출처 (2026-10-18 W10 문구 중립화).
+# 틱톡·인스타 전용 문구를 제거하고 유튜브 쇼츠·쓰레드 2채널 기준으로 고정한다.
+PUBLISH_CHANNELS = "유튜브 쇼츠 · 쓰레드"
+
 
 class ApprovalError(RuntimeError):
     pass
@@ -85,6 +89,7 @@ def request_approval(ep, title, caption, media_url, video_path=None):
         {"text": "⏸ 보류", "callback_data": f"{CB_PREFIX}:hold:ep{ep}"},
     ]]}
     text = (f"🎬 Hero Shorts Ep{ep} 발행 승인 요청\n제목: {title}\n\n"
+            f"발행처: {PUBLISH_CHANNELS}\n"
             f"{(caption or '').strip()[:CAPTION_MAX]}\n\n미리보기: {media_url}")
     sent = None
     if video_path and Path(video_path).exists():
