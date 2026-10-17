@@ -2,8 +2,8 @@ name: "🚀 Hero Shorts W11 — ep88 비공개 실발행 (stage 2호출 + publis
 # W11 승인(2026-10-18) — 원장 ep88 을 staged publicUrl 로 정본화하고
 # 유튜브 비공개(visibility=private)로 1회 실발행한다. Zernio 외부 호출 정확히 3회:
 #   1) POST /v1/media/presign   2) PUT uploadUrl   3) POST /v1/posts
+# skip_stage=true 재시도 시 스테이징을 건너뛴다(이미 staged 된 원장 입력 — 호출 중복 방지).
 # uploadUrl(1시간짜리 쓰기 자격증명)은 어떤 출력에도 내보내지 않는다.
-# 원장 갱신본은 artifact 로 회수 — 샌드박스가 검증 후 AI Drive 미러에 반영한다.
 on:
   workflow_dispatch:
     inputs:
@@ -28,9 +28,9 @@ on:
         required: true
         default: "publish_state.json"
       ledger_sha256:
-        description: "원장 sha256(교정본)"
+        description: "원장 sha256(입력본)"
         required: true
-        default: "3ee07bc2f11e01313561001d87adcf3ce1dfc2f9d0ceb1b508c555ec1688516c"
+        default: "SET_AT_DISPATCH"
       ep:
         description: "회차 키"
         required: true
@@ -39,6 +39,10 @@ on:
         description: "유튜브 공개 범위(비공개 실발행=private)"
         required: true
         default: "private"
+      skip_stage:
+        description: "스테이징 건너뜀(재시도 — 호출 중복 방지)"
+        required: false
+        default: "false"
 
 permissions:
   contents: read
@@ -69,6 +73,7 @@ jobs:
           echo "ASSETS_VERIFIED media=$MSIZE ledger_sha=$LSHA"
 
       - name: "Stage ep88 media (presign → PUT) + 원장 기록 — Zernio 2 calls"
+        if: ${{ github.event.inputs.skip_stage != 'true' }}
         env:
           ZERNIO_API_KEY: ${{ secrets.ZERNIO_API_KEY }}
           MEDIA: ${{ github.event.inputs.media_name }}
@@ -92,9 +97,7 @@ jobs:
           set -euo pipefail
           python3 -m gen.hero_shorts.publish_targets.runner --ledger "$LEDGER" \
             --platforms youtube --visibility "$VIS" --nonregular dry-run --eps "$EP" > dry.json
-          python3 -c 'import json; d=json.load(open("dry.json")); d=d[0] if isinstance(d,list) else d; \
-            assert d["pending"]==["youtube"], f"게이트 미달: pending={d[\"pending\"]} blocked={d[\"blocked\"]}"; \
-            print("GATE_OK pending=youtube")'
+          python3 -c "import json; d=json.load(open('dry.json')); d=d[0] if isinstance(d, list) else d; assert d['pending'] == ['youtube'], d; print('GATE_OK pending=youtube')"
 
       - name: "Publish ep88 → YouTube 비공개 1회 + 원장 기록 — Zernio 1 call"
         env:
