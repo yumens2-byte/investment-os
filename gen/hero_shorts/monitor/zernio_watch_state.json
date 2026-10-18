@@ -5,21 +5,28 @@
       "entry_status": "failed",
       "post_status": "failed",
       "url": null,
-      "last_checked": "2026-10-18T08:28:27Z"
+      "last_checked": "2026-10-18T11:33:31Z"
     },
     "6ad40e86d4d8e05fca81a3eb": {
       "label": "ep88 3차(207, retry 라운드 소진)",
       "entry_status": "failed",
       "post_status": "failed",
       "url": null,
-      "last_checked": "2026-10-18T08:28:27Z"
+      "last_checked": "2026-10-18T11:33:31Z"
     },
     "6ad4086017599484b5baf369": {
-      "label": "ep88 최초생성(Zernio published 보고 — URL 확인)",
+      "label": "ep88 유튜브 발행(W11 — youtube SR75FEKH6eo)",
       "entry_status": "published",
       "post_status": "published",
       "url": "https://www.youtube.com/watch?v=SR75FEKH6eo",
-      "last_checked": "2026-10-18T08:28:27Z"
+      "last_checked": "2026-10-18T11:33:31Z"
+    },
+    "6ad48c8302dff79071e36a59": {
+      "label": "ep87",
+      "entry_status": "failed",
+      "post_status": "failed",
+      "url": null,
+      "last_checked": "2026-10-18T11:33:31Z"
     }
   },
   "health": {
@@ -28,8 +35,8 @@
     "token_valid": true,
     "needs_reconnect": false,
     "issues": [],
-    "checked_at": "2026-10-18T08:28:28Z"
+    "checked_at": "2026-10-18T11:33:32Z"
   },
   "consecutive_poll_failures": 0,
-  "last_run": "2026-10-18T08:28:28Z"
+  "last_run": "2026-10-18T11:33:32Z"
 }
