@@ -135,15 +135,15 @@ jobs:
             gh release download "$TAG" --repo "$GITHUB_REPOSITORY" --pattern "$MEDIA_IN" --clobber
             [ "$(sha256sum "$MEDIA_IN" | awk '{print $1}')" = "$MSHA" ] || { echo MEDIA_SHA_MISMATCH; exit 63; }
             python3 - <<'PY'
-import json, os
-p = os.environ["HERO_PUBLISH_STATE"]; ep = os.environ["EP"]; f = os.environ["MEDIA_IN"]
-d = json.load(open(p)); rec = d[ep]; cur = rec.get("final") or ""
-if not os.path.exists(cur):
-    rec["final"] = f
-    rec["_media_repoint"] = {"from": cur, "to": f, "reason": "원장 경로 부재 — 릴리즈 asset 재지정"}
-    json.dump(d, open(p, "w"), ensure_ascii=False, indent=2)
-    print(f"MEDIA_REPOINT {ep}: {cur} -> {f}")
-PY
+          import json, os
+          p = os.environ["HERO_PUBLISH_STATE"]; ep = os.environ["EP"]; f = os.environ["MEDIA_IN"]
+          d = json.load(open(p)); rec = d[ep]; cur = rec.get("final") or ""
+          if not os.path.exists(cur):
+              rec["final"] = f
+              rec["_media_repoint"] = {"from": cur, "to": f, "reason": "원장 경로 부재 — 릴리즈 asset 재지정"}
+              json.dump(d, open(p, "w"), ensure_ascii=False, indent=2)
+              print(f"MEDIA_REPOINT {ep}: {cur} -> {f}")
+          PY
           fi
           if [ "$INCLUDE_YT" = "true" ]; then PLATS="threads,youtube"; else PLATS=threads; fi
           export PLATS
