@@ -1,0 +1,68 @@
+name: "🔍 Zernio GET posts — ep88 Threads 실측(읽기 전용)"
+# S 승인(2026-10-18) — GET /v1/posts/{id} ×2 만 실행한다.
+# 어떤 쓰기 연산(retry/delete/unpublish/stage/create)도 수행하지 않는다.
+# 시크릿(ZERNIO_API_KEY)은 로그에 출력하지 않는다(GitHub 자동 마스킹).
+on:
+  workflow_dispatch:
+    inputs:
+      post_id_1:
+        description: "1차 시도 Zernio post id"
+        required: true
+        default: "6ad40ad7f713d4aa3641d46e"
+      post_id_2:
+        description: "3차 시도 Zernio post id"
+        required: true
+        default: "6ad40e86d4d8e05fca81a3eb"
+
+permissions:
+  contents: read
+
+jobs:
+  get-posts:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: "GET /v1/posts/{id} ×2 (읽기 전용)"
+        env:
+          ZERNIO_API_KEY: ${{ secrets.ZERNIO_API_KEY }}
+          P1: ${{ github.event.inputs.post_id_1 }}
+          P2: ${{ github.event.inputs.post_id_2 }}
+        run: |
+          set -euo pipefail
+          for pair in "1:$P1" "2:$P2"; do
+            n="${pair%%:*}"; pid="${pair#*:}"
+            code=$(curl -sS -o "post_${n}.json" -w '%{http_code}' \
+              -H "Authorization: Bearer $ZERNIO_API_KEY" \
+              "https://zernio.com/api/v1/posts/${pid}")
+            echo "GET post_${n} id=${pid} http=${code}"
+          done
+
+      - name: "상태 요약 출력"
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import json
+          for n in ("1", "2"):
+              try:
+                  d = json.load(open(f"post_{n}.json"))
+              except Exception as e:
+                  print(f"POST_{n}: 파싱 실패 {e}")
+                  continue
+              if isinstance(d, dict) and "error" in d and "post" not in d:
+                  print(f"POST_{n}: ERROR ENVELOPE {json.dumps(d, ensure_ascii=False)[:500]}")
+                  continue
+              p = d.get("post", {})
+              print(f"POST_{n}: id={p.get('_id')} status={p.get('status')} scheduledFor={p.get('scheduledFor')}")
+              for e in p.get("platforms", []):
+                  print(f"  - platform={e.get('platform')} status={e.get('status')} url={e.get('platformPostUrl')}")
+                  if e.get("errorMessage"):
+                      print(f"    error={str(e.get('errorMessage'))[:300]} category={e.get('errorCategory')} source={e.get('errorSource')}")
+          PY
+
+      - name: Upload raw GET responses
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: zernio-get-posts-ep88
+          path: post_*.json
+          if-no-files-found: warn
