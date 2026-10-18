@@ -16,8 +16,8 @@
 - [x] TH 게이트 재판정(2026-10-18 로컬 실측): 치유본을 원장 기록 경로에 배치 시 `failed=[]` — TH-G4 포함 전부 통과. mp4/h264/aac/60.87s 실측.
 - [x] 러너2 워크플로우에 게이트 단계 `HERO_THREADS_ACCOUNT_ID` secret 주입 + 릴리즈 asset 사전 확보(sha 재검증) 배치 반영
 - [x] 모니터 가동 중: `zernio_publish_watch` 30분 폴링(텔레그램 알림) — ep88 게시물 2건 failed 감시 확정
-- [ ] **구 post 상태 확인**: 9·26 생성 Zernio post `6ab6ad110908be0a3604b286`(ep87) — GET 정본 조회로 pending/scheduled이면 **입회 전 Delete로 취소**(이중 게시 방지). failed/expired면 그대로 진행.
-- [ ] ep89 post_id 정본 확인 — GET 조회 후 watch 슬롯 `enabled=true` 전환
+- [x] **구 post 상태 확인 완료**(2026-10-18 GET): `6ab6ad110908be0a3604b286`은 `status=published`(9·26 02:19 KST 예약분, 인스타 치유본 — 원장 기록·타임라인 일치) — pending 아님, 취소 불필요. threads 발행은 신규 post 생성이므로 이중 게시 위험 없음.
+- [x] **ep89 정본 조회 완료**(2026-10-18, GET /posts?limit=20, run 39111408843): 계정 내 18건 전수에서 ep89 게시물 부재 — 이 계정에 ep89 발행 이력 없음이 확정. watch 슬롯은 비활성 유지(ep89 post 발급 시 전환).
 
 ## 2. 입회 실발행 (수동, shadow=false)
 
@@ -53,3 +53,11 @@ gh variable set RUNNER2_ENABLED --body "1"
 
 - 이후 cron(짝수 시각 23분, KST)이 게이트 A-G0~G5를 통과한 회차만 자동 발행. 즉시 중단: `gh variable set RUNNER2_ENABLED --body "0"`.
 - 무인화 개시 후 첫 3회	run은 watch 로그로 감시 권장.
+
+## 6. ep88 최초 생성 post `published` 정정 (2026-10-18 발견)
+
+- Zernio GET 전수(18건)에서 ep88 최초 생성 post `6ad4086017599484b5baf369`(2026-10-18 08:44 KST 생성, 내용 "Ep88 물러서지 않는 두 전선, 그 다음날")가 **`status=published`**(publishingClaimedAt 2026-10-17T23:44:32Z)로 확인.
+- 기존 "ep88 threads 게시 0·failed 소진" 판정은 재시도 post 2건(6ad40ad7·6ad40e86, 둘 다 failed) 기준이었고 **최초 post가 감시 대상에서 누락**되어 있었다.
+- 조치: watch targets 편입 완료(즉시 폴링) — `platformPostUrl` 관측으로 최종 확정.
+- **ep88 threads 재발행 영구 금지**(이중 게시 방지). 원장 정정은 URL 관측 확인 후 별도 승인으로 처리.
+- 마스터 확인 요망: Threads 앱에서 10-18 오전 게시물 실물 존재 여부 직접 확인.
