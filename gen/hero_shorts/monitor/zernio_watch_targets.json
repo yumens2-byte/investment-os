@@ -1,6 +1,10 @@
 {
   "posts": [
-    {"post_id": "6ad4086017599484b5baf369", "label": "ep88 유튜브 발행(W11 — youtube SR75FEKH6eo)", "enabled": true},
+    {
+      "post_id": "6ad4086017599484b5baf369",
+      "label": "ep88 유튜브 발행(W11 — youtube SR75FEKH6eo)",
+      "enabled": true
+    },
     {
       "post_id": "6ad40ad7f713d4aa3641d46e",
       "label": "ep88 1차(207)"
@@ -13,6 +17,11 @@
       "post_id": "",
       "label": "ep89 (post id 대기 중 — 발급 시 enabled=true 전환)",
       "enabled": false
+    },
+    {
+      "post_id": "6ad48c8302dff79071e36a59",
+      "label": "ep87",
+      "enabled": true
     }
   ]
 }

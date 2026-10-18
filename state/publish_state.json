@@ -112,7 +112,7 @@
   "ep87": {
     "title": "물러서지 않는 두 전선",
     "type": "BATTLE",
-    "final": "/tmp/verify-main/gen/data/out/ep87_final_voiced.mp4",
+    "final": "ep87_v273.mp4",
     "qc": {
       "G1": true,
       "G2": true,
@@ -220,10 +220,20 @@
     "combined": {
       "title": "물러서지 않는 두 전선",
       "duration_sec": 60.859,
-      "media_url": "https://www.genspark.ai/api/files/s/qq1CAoOZ",
+      "media_url": "https://media.zernio.com/temp/1792314495844_c7we47ov_ep87_v273.mp4",
       "aidrive_path": "/hero-shorts/ep87/ep87_final_voiced_v2.7.3.mp4",
       "aidrive_note": "보관본은 v2.7.3 치유본(60.867s) — 합본 발행본(60.859s)과 0.008s 차이, 재발행 시 재검증 필요",
-      "recorded_at": "2026-10-15T06:28:00+09:00"
+      "recorded_at": "2026-10-15T06:28:00+09:00",
+      "media_url_prev": "https://www.genspark.ai/api/files/s/qq1CAoOZ",
+      "media_staged": {
+        "filename": "ep87_v273.mp4",
+        "content_type": "video/mp4",
+        "size_bytes": 18997176,
+        "sha256": "af652be56d0eb3b09355e29ca5a794b217d63025e9cac585b336ee2246581c48",
+        "key": "temp/1792314495844_c7we47ov_ep87_v273.mp4",
+        "etag": "\"3cad906479bcbb30909afb919f7b9b3f\"",
+        "at": "2026-10-18T09:08:17Z"
+      }
     },
     "targets": {
       "youtube": {
@@ -232,8 +242,22 @@
       },
       "threads": {
         "status": "pending",
-        "attempts": []
+        "post_id": "6ad48c8302dff79071e36a59",
+        "recorded_at": "2026-10-18T09:10:10Z",
+        "error": "Threads: publish failed (userId video): {\"error\":{\"message\":\"An unexpected error has occurred. Please retry your request later.\",\"type\":\"OAuthException\",\"is_transient\":true,\"code\":2,\"fbtrace_id\":\"AkVmab6Vj-kx45eGmYzBphi\"}}",
+        "attempts": [
+          {
+            "at": "2026-10-18T09:10:10Z",
+            "outcome": "pending",
+            "note": "HTTP 207"
+          }
+        ]
       }
+    },
+    "_media_repoint": {
+      "from": "/tmp/verify-main/gen/data/out/ep87_final_voiced.mp4",
+      "to": "ep87_v273.mp4",
+      "reason": "원장 경로 부재 — 릴리즈 asset 재지정"
     }
   },
   "_ledger": {
