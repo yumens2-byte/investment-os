@@ -82,8 +82,8 @@ def test_disabled_target_is_never_polled(monkeypatch, tmp_path):
     mod = _load_module(monkeypatch, tmp_path, POST_PENDING)
     mod.TARGETS_PATH.write_text(json.dumps({"posts": [
         {"post_id": "AAA", "label": "활성"},
-        {"post_id": "", "label": "ep89 대기", "enabled": False},
-        {"post_id": "BBB", "label": "id 누락 슬롯"},
+        {"post_id": "BBB", "label": "ep89 대기", "enabled": False},
+        {"post_id": "", "label": "id 누락 슬롯"},
     ]}), encoding="utf-8")
     calls = []
 
