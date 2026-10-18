@@ -90,7 +90,8 @@ def main() -> int:
     poll_ok = True
 
     for tgt in targets.get("posts", []):
-        pid, label = tgt["post_id"], tgt.get("label", pid)
+        pid = tgt["post_id"]
+        label = tgt.get("label") or pid
         entry_status, post_status, url, raw_err = poll_post(pid, api_key)
         prev = posts_state.get(pid)
         if entry_status == "__poll_error__":
