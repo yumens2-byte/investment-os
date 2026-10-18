@@ -84,7 +84,10 @@ def main() -> int:
         raise SystemExit("ZERNIO_API_KEY 미주입 — 워크플로우 시크릿 확인 필요")
 
     targets = json.loads(TARGETS_PATH.read_text(encoding="utf-8"))
-    state: Dict[str, Any] = json.loads(STATE_PATH.read_text(encoding="utf-8"))
+    try:
+        state: Dict[str, Any] = json.loads(STATE_PATH.read_text(encoding="utf-8"))
+    except FileNotFoundError:
+        state = {}                    # 상태 파일 부재 = 최초 기준선 run
     posts_state: Dict[str, Any] = state.get("posts") or {}
     alerts: List[str] = []
     poll_ok = True
