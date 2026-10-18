@@ -1,0 +1,91 @@
+name: "🩺 Zernio 헬스 확인 + 조건부 retry — ep88 Threads (A 승인)"
+# A 승인(2026-10-18): GET /v1/accounts/health 1회 → threads 계정 canPost=true 확인 시에만
+# POST /v1/posts/{postId}/retry 1회. canPost가 아니면 retry 없이 종료(스킵 사유 출력).
+on:
+  workflow_dispatch:
+    inputs:
+      post_id:
+        description: "retry 대상 post id (Post2/3차)"
+        required: true
+        default: "6ad40e86d4d8e05fca81a3eb"
+
+permissions:
+  contents: read
+
+jobs:
+  health-then-retry:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: "1) GET /v1/accounts/health (읽기 1회)"
+        env:
+          ZERNIO_API_KEY: ${{ secrets.ZERNIO_API_KEY }}
+        run: |
+          set -euo pipefail
+          code=$(curl -sS -o health.json -w '%{http_code}' \
+            -H "Authorization: Bearer $ZERNIO_API_KEY" \
+            "https://zernio.com/api/v1/accounts/health")
+          echo "HEALTH http=${code}"
+
+      - name: "2) threads 계정 판정 → GO/SKIP"
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import json
+          d = json.load(open("health.json"))
+          accts = d.get("accounts", [])
+          t = [a for a in accts if a.get("platform") == "threads"]
+          if not t:
+              print("HEALTH: threads 계정 없음", json.dumps(d)[:400])
+              open("decision.txt", "w").write("SKIP no_threads_account")
+          else:
+              a = t[0]
+              print(f"HEALTH threads: status={a.get('status')} canPost={a.get('canPost')} tokenValid={a.get('tokenValid')} needsReconnect={a.get('needsReconnect')} issues={a.get('issues')}")
+              ok = (a.get("canPost") is True and a.get("needsReconnect") is not True and a.get("tokenValid") is not False)
+              open("decision.txt", "w").write("GO" if ok else f"SKIP health={a.get('status')} canPost={a.get('canPost')}")
+          PY
+          cat decision.txt
+
+      - name: "3) 조건부 retry (POST 1회, GO인 경우만)"
+        env:
+          ZERNIO_API_KEY: ${{ secrets.ZERNIO_API_KEY }}
+          PID: ${{ github.event.inputs.post_id }}
+        run: |
+          set -euo pipefail
+          if grep -q '^GO$' decision.txt; then
+            code=$(curl -sS -o retry.json -w '%{http_code}' -X POST \
+              -H "Authorization: Bearer $ZERNIO_API_KEY" \
+              "https://zernio.com/api/v1/posts/${PID}/retry")
+            echo "RETRY http=${code}"
+          else
+            echo "RETRY_SKIPPED — $(cat decision.txt)"
+            echo '{"skipped": true}' > retry.json
+          fi
+
+      - name: "4) retry 결과 요약"
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import json
+          d = json.load(open("retry.json"))
+          if d.get("skipped"):
+              print("RESULT: skipped"); raise SystemExit(0)
+          p = d.get("post", {})
+          print(f"RESULT http-status-in-response post.status={p.get('status')}")
+          for e in p.get("platforms", []):
+              print(f"  threads={e.get('status')} url={e.get('platformPostUrl')}")
+              if e.get("errorMessage"):
+                  print(f"  error_tail={str(e.get('errorMessage'))[-200:]}")
+          if "error" in d and not p:
+              print("ERROR ENVELOPE:", json.dumps(d, ensure_ascii=False)[:500])
+          PY
+
+      - name: Upload responses
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: zernio-health-retry-ep88
+          path: |
+            health.json
+            retry.json
+          if-no-files-found: warn
