@@ -56,3 +56,18 @@ def test_published_and_meta_keys_ignored():
     out = sel.select(ledger)
     assert out["candidates"] == []
     assert out["skipped"][0]["reason"].startswith("발행 대상 플랫폼 없음")
+
+
+def test_pending_inflight_attempt_blocks_platform():
+    ep = _ep(th_att=1)
+    ep["targets"]["threads"]["attempts"] = [{"at": "2026-10-18T09:10:10Z", "outcome": "pending"}]
+    ep["targets"]["threads"]["post_id"] = "6ad48c8302dff79071e36a59"
+    out = sel.select({"ep87": ep})
+    assert out["candidates"][0]["platforms"] == ["youtube"]   # threads만 잠금
+    assert out["skipped"][0]["gate"] == "A-G3"
+    assert "pending" in out["skipped"][0]["reason"]
+    # 유튜브도 동일: pending이면 스킵
+    ep2 = _ep(yt_att=1)
+    ep2["targets"]["youtube"]["attempts"] = [{"at": "2026-10-18T09:10:10Z", "outcome": "pending"}]
+    out2 = sel.select({"ep87": ep2})
+    assert out2["candidates"][0]["platforms"] == ["threads"]

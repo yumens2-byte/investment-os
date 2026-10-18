@@ -6,7 +6,7 @@
 
 게이트:
   A-G1 승인    — approval.status == "APPROVED" 만 통과(HOLD·무응답·null 전부 스킵)
-  A-G3 시도 예산 — 플랫폼별 attempts < 3
+  A-G3 시도 예산 — 플랫폼별 attempts < 3 · 진행 중(pending) 시도 존재 시 스킵(이중 발행 방지)
   A-G4 속도 제한 — run당 회차 1건, 플랫폼별 당일(UTC) 시도 4건 이하
 
 A-G0(계정 헬스)·A-G2(발행 게이트)는 워크플로우 단계에서 평가한다 — 원장 밖 정보라서다.
@@ -68,7 +68,12 @@ def select(ledger: Dict[str, Any], *, eps: Optional[List[str]] = None,
             t = targets.get(plat) or {}
             if t.get("status") == "published":
                 continue                   # 재발행 금지(G2)
-            used = len(t.get("attempts") or [])
+            rec_attempts = t.get("attempts") or []
+            if rec_attempts and (rec_attempts[-1] or {}).get("outcome") == "pending":
+                skipped.append({"ep": ep, "gate": "A-G3",
+                                "reason": f"{plat} 진행 중 시도(pending, post_id={t.get('post_id') or '?'}) — 이중 발행 방지"})
+                continue
+            used = len(rec_attempts)
             if used >= max_attempts:
                 skipped.append({"ep": ep, "gate": "A-G3",
                                 "reason": f"{plat} 시도 상한 도달({used}>={max_attempts})"})
