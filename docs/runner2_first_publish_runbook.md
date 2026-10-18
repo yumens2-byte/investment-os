@@ -57,7 +57,6 @@ gh variable set RUNNER2_ENABLED --body "1"
 ## 6. ep88 최초 생성 post `published` 정정 (2026-10-18 발견)
 
 - Zernio GET 전수(18건)에서 ep88 최초 생성 post `6ad4086017599484b5baf369`(2026-10-18 08:44 KST 생성, 내용 "Ep88 물러서지 않는 두 전선, 그 다음날")가 **`status=published`**(publishingClaimedAt 2026-10-17T23:44:32Z)로 확인.
-- 기존 "ep88 threads 게시 0·failed 소진" 판정은 재시도 post 2건(6ad40ad7·6ad40e86, 둘 다 failed) 기준이었고 **최초 post가 감시 대상에서 누락**되어 있었다.
-- 조치: watch targets 편입 완료(즉시 폴링) — `platformPostUrl` 관측으로 최종 확정.
-- **ep88 threads 재발행 영구 금지**(이중 게시 방지). 원장 정정은 URL 관측 확인 후 별도 승인으로 처리.
-- 마스터 확인 요망: Threads 앱에서 10-18 오전 게시물 실물 존재 여부 직접 확인.
+- watch 폴링 확정(2026-10-18 08:28): 이 post의 발행 URL은 **유튜브 `https://www.youtube.com/watch?v=SR75FEKH6eo`** — ep88 유튜브 발행분(W11 라인)이며 Threads가 아님. → **"ep88 Threads 게시 0·failed 소진" 판정은 유지된다.**
+- 유의: Zernio post 기록 상 visibility=public — W11이 비공개(unlisted) 실발행이었음과 상충 가능. 유튜브 실물 공개 상태 마스터 직접 확인 요망.
+- **ep88 threads 재발행 영구 금지**(attempts 소진 + Meta is_transient 거절 누적). watch 라벨도 유튜브 발행분으로 정정 완료.
