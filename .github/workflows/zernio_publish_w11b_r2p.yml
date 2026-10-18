@@ -1,0 +1,110 @@
+name: "🚀 Hero Shorts W11-B R2′ — ep88 재스테이징 + Threads 3차 발행"
+# R2′ 승인(2026-10-18) — 지문 변경(새 publicUrl) 후 3차 시도, 409 응답 본문 로그 확보 목적.
+# I 승인(커밋 5d280ba)으로 4xx 응답 본문이 run 로그 + 원장 error 에 기록된다.
+# Zernio 외부 호출: 스테이징 2회(presign+PUT) + 발행 POST 1회 = 총 3회.
+# 시크릿(계정 ID·API 키)은 어떤 출력에도 내보내지 않는다.
+# 주의: --platforms 는 nargs="+" — 서브커맨드가 삼켜지지 않게 '=' 형태로 지정한다.
+on:
+  workflow_dispatch:
+    inputs:
+      asset_tag:
+        description: "원장+미디어 릴리즈 태그"
+        required: true
+        default: "w11b-threads-ep88-r2p"
+      ledger_name:
+        description: "원장 자산 파일명"
+        required: true
+        default: "publish_state.json"
+      ledger_sha256:
+        description: "원장 sha256(입력본)"
+        required: true
+        default: "SET_AT_DISPATCH"
+      media_name:
+        description: "미디어 실물 파일명"
+        required: true
+        default: "ep88_final_voiced.mp4"
+      media_sha256:
+        description: "미디어 sha256"
+        required: true
+        default: "SET_AT_DISPATCH"
+      ep:
+        description: "회차 키"
+        required: true
+        default: "ep88"
+
+permissions:
+  contents: read
+
+jobs:
+  w11b-r2p-stage-publish:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Fetch ledger + media and verify integrity
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ github.event.inputs.asset_tag }}
+          LEDGER: ${{ github.event.inputs.ledger_name }}
+          LSHA: ${{ github.event.inputs.ledger_sha256 }}
+          MEDIA: ${{ github.event.inputs.media_name }}
+          MSHA: ${{ github.event.inputs.media_sha256 }}
+        run: |
+          set -euo pipefail
+          gh release download "$TAG" --repo "$GITHUB_REPOSITORY" --pattern "$LEDGER" --pattern "$MEDIA"
+          [ "$(sha256sum "$LEDGER" | awk '{print $1}')" = "$LSHA" ] || { echo LEDGER_SHA_MISMATCH; exit 63; }
+          [ "$(sha256sum "$MEDIA" | awk '{print $1}')" = "$MSHA" ] || { echo MEDIA_SHA_MISMATCH; exit 63; }
+          echo "VERIFIED ledger=$LSHA media=$MSHA"
+
+      - name: Gate pre-assert (dry-run — 전송 0회)
+        env:
+          HERO_THREADS_ACCOUNT_ID: ${{ secrets.HERO_THREADS_ACCOUNT_ID }}
+          LEDGER: ${{ github.event.inputs.ledger_name }}
+          EP: ${{ github.event.inputs.ep }}
+        run: |
+          set -euo pipefail
+          python3 -m gen.hero_shorts.publish_targets.runner --ledger "$LEDGER" \
+            --platforms=threads dry-run --eps "$EP" > dry1.json
+          python3 -c "import json; d=json.load(open('dry1.json')); d=d[0] if isinstance(d, list) else d; assert d['pending'] == ['threads'], d; g=d['gates']['threads']; assert g['ok'] is True, g; print('GATE_PRE_OK pending=threads')"
+
+      - name: "Re-stage media (presign+PUT 2회) + 원장 publicUrl 교체"
+        env:
+          ZERNIO_API_KEY: ${{ secrets.ZERNIO_API_KEY }}
+          LEDGER: ${{ github.event.inputs.ledger_name }}
+          EP: ${{ github.event.inputs.ep }}
+          MEDIA: ${{ github.event.inputs.media_name }}
+        run: |
+          set -euo pipefail
+          python3 -m gen.hero_shorts.publish_targets.runner --ledger "$LEDGER" \
+            stage --ep "$EP" --file "$MEDIA" --write | tee stage_result.json
+
+      - name: Gate post-stage (dry-run — 전송 0회)
+        env:
+          HERO_THREADS_ACCOUNT_ID: ${{ secrets.HERO_THREADS_ACCOUNT_ID }}
+          LEDGER: ${{ github.event.inputs.ledger_name }}
+          EP: ${{ github.event.inputs.ep }}
+        run: |
+          set -euo pipefail
+          python3 -m gen.hero_shorts.publish_targets.runner --ledger "$LEDGER" \
+            --platforms=threads dry-run --eps "$EP" > dry2.json
+          python3 -c "import json; d=json.load(open('dry2.json')); d=d[0] if isinstance(d, list) else d; assert d['pending'] == ['threads'], d; g=d['gates']['threads']; assert g['ok'] is True, g; print('GATE_POST_OK pending=threads (staged new publicUrl)')"
+
+      - name: "Publish ep88 → Threads (POST 1회) + 원장 기록"
+        env:
+          ZERNIO_API_KEY: ${{ secrets.ZERNIO_API_KEY }}
+          HERO_THREADS_ACCOUNT_ID: ${{ secrets.HERO_THREADS_ACCOUNT_ID }}
+          LEDGER: ${{ github.event.inputs.ledger_name }}
+          EP: ${{ github.event.inputs.ep }}
+        run: |
+          set -euo pipefail
+          python3 -m gen.hero_shorts.publish_targets.runner --ledger "$LEDGER" \
+            --platforms=threads publish --ep "$EP" --apply --write | tee publish_result.json
+
+      - name: Upload updated ledger artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: w11b-ledger-r2p
+          path: ${{ github.event.inputs.ledger_name }}
+          if-no-files-found: error
