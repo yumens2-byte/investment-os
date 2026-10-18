@@ -51,7 +51,7 @@ gh workflow run zernio_publish_runner2.yml \
 gh variable set RUNNER2_ENABLED --body "1"
 ```
 
-- 이후 cron(짝수 시각 23분, KST)이 게이트 A-G0~G5를 통과한 회차만 자동 발행. 즉시 중단: `gh variable set RUNNER2_ENABLED --body "0"`.
+- 이후 cron(UTC 짝수 시각 23분 = KST 홀수 시각 23분)이 게이트 A-G0~G5를 통과한 회차만 자동 발행. 즉시 중단: `gh variable set RUNNER2_ENABLED --body "0"`.
 - 무인화 개시 후 첫 3회	run은 watch 로그로 감시 권장.
 
 ## 6. ep88 최초 생성 post `published` 정정 (2026-10-18 발견)

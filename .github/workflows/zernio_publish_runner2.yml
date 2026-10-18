@@ -6,7 +6,7 @@ name: "🤖 Hero Shorts Runner2 — 승인 회차 정기 발행(무인)"
 # 원장: state/publish_state.json (추적 파일 — watch 커밋 선례와 동일한 정본 관리)
 on:
   schedule:
-    - cron: '23 */2 * * *'   # KST 08:23·10:23·…·06:23 — watch(*/30)와 시각 분리
+    - cron: '23 */2 * * *'   # UTC 짝수 시각 23분 = KST 홀수 시각 23분 — watch(*/30)와 시각 분리
   workflow_dispatch:
     inputs:
       ep:
@@ -237,7 +237,10 @@ jobs:
           INCLUDE_YT: ${{ github.event.inputs.include_yt || 'false' }}
         run: |
           set -euo pipefail
-          if [ "$INCLUDE_YT" = "true" ]; then PLATS="threads,youtube"; else PLATS=threads; fi
+          WANT="threads"; [ "$INCLUDE_YT" = "true" ] && WANT="threads,youtube"
+          ALLOWED=$(python3 -c "import json;s=json.load(open('selection.json'));c=s.get('candidates') or [];print(','.join(c[0]['platforms']) if c else '')") || ALLOWED=""
+          PLATS=$(comm -12 <(tr ',' '\n' <<< "$WANT" | sort -u) <(tr ',' '\n' <<< "$ALLOWED" | sort -u) | paste -sd, -)
+          [ -n "$PLATS" ] || { echo "PUBLISH_SKIPPED — 선별 허용 플랫폼 없음(pending 잠금 포함)"; exit 0; }
           python3 -m gen.hero_shorts.publish_targets.runner --ledger "$HERO_PUBLISH_STATE" \
             --platforms=$PLATS publish --ep "${{ steps.select.outputs.EP }}" --apply --write
 
