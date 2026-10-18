@@ -29,6 +29,10 @@ on:
         description: "릴리즈 미디어 sha256"
         required: false
         default: ""
+      include_yt:
+        description: "true=유튜브 동시 발행 포함(기본 off — 첫 유튜브 발행 전 시크릿 검증 필요)"
+        required: false
+        default: "false"
 
 permissions:
   contents: write
@@ -116,16 +120,50 @@ jobs:
       - id: gates
         name: "4) 게이트 A-G2 — 발행 게이트 전건 (dry-run, 전송 0회)"
         if: ${{ steps.mode.outputs.run == 'true' && steps.select.outputs.candidates != '0' }}
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ github.event.inputs.release_tag }}
+          MEDIA_IN: ${{ github.event.inputs.media_name }}
+          MSHA: ${{ github.event.inputs.media_sha256 }}
+          HERO_THREADS_ACCOUNT_ID: ${{ secrets.HERO_THREADS_ACCOUNT_ID }}
+          EP: ${{ steps.select.outputs.EP }}
+          INCLUDE_YT: ${{ github.event.inputs.include_yt || 'false' }}
+          SHADOW: ${{ steps.mode.outputs.shadow }}
         run: |
           set -euo pipefail
+          if [ -n "$TAG" ] && [ ! -f "$MEDIA_IN" ]; then
+            gh release download "$TAG" --repo "$GITHUB_REPOSITORY" --pattern "$MEDIA_IN" --clobber
+            [ "$(sha256sum "$MEDIA_IN" | awk '{print $1}')" = "$MSHA" ] || { echo MEDIA_SHA_MISMATCH; exit 63; }
+            python3 - <<'PY'
+            import json, os
+            p = os.environ["HERO_PUBLISH_STATE"]; ep = os.environ["EP"]; f = os.environ["MEDIA_IN"]
+            d = json.load(open(p)); rec = d[ep]; cur = rec.get("final") or ""
+            if not os.path.exists(cur):
+                rec["final"] = f
+                rec["_media_repoint"] = {"from": cur, "to": f, "reason": "원장 경로 부재 — 릴리즈 asset 재지정"}
+                json.dump(d, open(p, "w"), ensure_ascii=False, indent=2)
+                print(f"MEDIA_REPOINT {ep}: {cur} -> {f}")
+            PY
+          fi
+          if [ "$INCLUDE_YT" = "true" ]; then PLATS="threads,youtube"; else PLATS=threads; fi
+          export PLATS
           python3 -m gen.hero_shorts.publish_targets.runner --ledger "$HERO_PUBLISH_STATE" \
-            --platforms=threads dry-run --eps "${{ steps.select.outputs.EP }}" > dry2.json
+            --platforms=$PLATS dry-run --eps "$EP" > dry2.json
           python3 - <<'PY'
-          import json, sys
+          import json, os, sys
           d = json.load(open("dry2.json")); d = d[0] if isinstance(d, list) else d
-          g = d["gates"]["threads"]
-          print(f"A-G2 gate ok={g['ok']} failed={g.get('failed')}")
-          sys.exit(0 if g["ok"] else 42)
+          gates = d["gates"]
+          plats = os.environ["PLATS"].split(",")
+          ok = all(gates.get(p, {}).get("ok") for p in plats)
+          failed = {p: gates.get(p, {}).get("failed") for p in plats if not gates.get(p, {}).get("ok")}
+          print(f"A-G2 gate ok={ok} failed={failed}")
+          if ok:
+              sys.exit(0)
+          if os.environ.get("SHADOW") == "true":
+              with open(os.environ["GITHUB_OUTPUT"], "a") as fo:
+                  fo.write(f"blocked={json.dumps(failed, ensure_ascii=False)}\n")
+              sys.exit(0)
+          sys.exit(42)
           PY
 
       - id: shadow
@@ -134,14 +172,19 @@ jobs:
         env:
           BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           CHAT_ID: ${{ secrets.TELEGRAM_PAID_CHANNEL_ID }}
+          BLOCKED: ${{ steps.gates.outputs.blocked }}
         run: |
           set -euo pipefail
           MSG=$(python3 - <<'PY'
-          import json
+          import json, os
           d = json.load(open("selection.json"))
           c = d["candidates"]
           body = "; ".join(f"{x['ep']}({','.join(x['platforms'])})" for x in c) or "없음(전체 스킵)"
-          print(f"🤖 [Runner2 SHADOW] 발행 대상: {body} — 실전송 0회")
+          blocked = os.environ.get("BLOCKED", "")
+          if blocked:
+              print(f"🤖 [Runner2 SHADOW_BLOCKED] 게이트 차단: {blocked} — 실전송 0회, 원인 해소 후 재판정")
+          else:
+              print(f"🤖 [Runner2 SHADOW] 발행 대상: {body} — 실전송 0회")
           PY
           )
           curl -s -X POST "https://api.telegram.org/bot${BOT_TOKEN}/sendMessage" \
@@ -159,8 +202,12 @@ jobs:
         run: |
           set -euo pipefail
           if [ -n "$TAG" ]; then
-            gh release download "$TAG" --repo "$GITHUB_REPOSITORY" --pattern "$MEDIA_IN"
-            [ "$(sha256sum "$MEDIA_IN" | awk '{print $1}')" = "$MSHA" ] || { echo MEDIA_SHA_MISMATCH; exit 63; }
+            if [ -f "$MEDIA_IN" ]; then
+              echo "MEDIA_PREFETCHED $MEDIA_IN — 게이트 단계에서 확보·검증됨"
+            else
+              gh release download "$TAG" --repo "$GITHUB_REPOSITORY" --pattern "$MEDIA_IN" --clobber
+              [ "$(sha256sum "$MEDIA_IN" | awk '{print $1}')" = "$MSHA" ] || { echo MEDIA_SHA_MISMATCH; exit 63; }
+            fi
             OUT="$MEDIA_IN"
           else
             URL=$(python3 -c "import json,os;d=json.load(open(os.environ['HERO_PUBLISH_STATE']));ep=os.environ['EP'];a=d[ep].get('approval') or {};c=d[ep].get('combined') or {};print(a.get('media_url') or c.get('media_url') or '')")
@@ -187,10 +234,12 @@ jobs:
         env:
           ZERNIO_API_KEY: ${{ secrets.ZERNIO_API_KEY }}
           HERO_THREADS_ACCOUNT_ID: ${{ secrets.HERO_THREADS_ACCOUNT_ID }}
+          INCLUDE_YT: ${{ github.event.inputs.include_yt || 'false' }}
         run: |
           set -euo pipefail
+          if [ "$INCLUDE_YT" = "true" ]; then PLATS="threads,youtube"; else PLATS=threads; fi
           python3 -m gen.hero_shorts.publish_targets.runner --ledger "$HERO_PUBLISH_STATE" \
-            --platforms=threads publish --ep "${{ steps.select.outputs.EP }}" --apply --write
+            --platforms=$PLATS publish --ep "${{ steps.select.outputs.EP }}" --apply --write
 
       - name: "9) 감시 대상 등록 + 상태 커밋"
         if: ${{ steps.mode.outputs.run == 'true' && steps.mode.outputs.shadow == 'false' && steps.select.outputs.candidates != '0' }}

@@ -1,0 +1,55 @@
+name: "📡 Zernio Posts 정본 조회 (GET 읽기 전용)"
+
+on:
+  workflow_dispatch:
+    inputs:
+      limit:
+        description: "목록 조회 건수(기본 20)"
+        default: "20"
+      post_id:
+        description: "특정 post id 단건 조회(선택)"
+        default: ""
+
+permissions:
+  contents: read
+
+concurrency:
+  group: zernio-get-posts
+  cancel-in-progress: false
+
+jobs:
+  get-posts:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: "GET /posts — 읽기 전용(전송 0회)"
+        env:
+          ZERNIO_API_KEY: ${{ secrets.ZERNIO_API_KEY }}
+          LIMIT: ${{ github.event.inputs.limit }}
+          PID: ${{ github.event.inputs.post_id }}
+        run: |
+          set -euo pipefail
+          BASE="https://zernio.com/api/v1"
+          curl -sS --fail -H "Authorization: Bearer $ZERNIO_API_KEY" "$BASE/posts?limit=${LIMIT:-20}" -o list.json
+          if [ -n "$PID" ]; then
+            curl -sS --fail -H "Authorization: Bearer $ZERNIO_API_KEY" "$BASE/posts/$PID" -o one.json || echo "ONE_GET_FAILED id=$PID"
+          fi
+          python3 - <<'PY'
+          import json, os
+          def summ(p):
+              if not isinstance(p, dict):
+                  return p
+              keys = ("id", "status", "createdAt", "created_at", "scheduledAt",
+                      "caption", "title", "platformPostUrl")
+              return {k: p.get(k) for k in keys if p.get(k) not in (None, "")}
+          lst = json.load(open("list.json"))
+          posts = lst if isinstance(lst, list) else (lst.get("posts") or lst.get("data") or [])
+          print(f"LIST_COUNT={len(posts)}")
+          for p in posts:
+              print(json.dumps(summ(p), ensure_ascii=False)[:300])
+          if os.path.exists("one.json") and os.path.getsize("one.json"):
+              one = json.load(open("one.json"))
+              d = one.get("post") or one
+              print("ONE:", json.dumps(d, ensure_ascii=False)[:800])
+          PY
