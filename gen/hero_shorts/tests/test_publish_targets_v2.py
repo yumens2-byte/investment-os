@@ -278,6 +278,18 @@ class TransportPartialFailureTest(unittest.TestCase):
         d = decompose_response(resp, ["youtube"])
         self.assertEqual(d["youtube"]["outcome"], "failed")
 
+    def test_http_4xx_body_logged_and_kept_in_error(self):
+        """I 승인(2026-10-18) — 4xx 오류 본문이 로그와 원장 error 에 남는다."""
+        with self.assertLogs("hero_shorts.publish_targets.transport",
+                             level="WARNING") as captured:
+            resp = self._transport(409, {"error": {"message": "duplicate"}}).send(
+                {}, platforms=["threads"])
+        self.assertTrue(any("409" in m and "duplicate" in m for m in captured.output),
+                        captured.output)
+        d = decompose_response(resp, ["threads"])
+        self.assertEqual(d["threads"]["outcome"], "failed")
+        self.assertIn("duplicate", str(d["threads"]["error"]))
+
     def test_cli_transport_rejects_youtube_and_threads(self):
         t = ZernioCliTransport(runner=lambda a: FakeCP())
         for plat in ("youtube", "threads"):

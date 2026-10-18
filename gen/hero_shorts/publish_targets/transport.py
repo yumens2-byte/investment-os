@@ -256,10 +256,14 @@ def decompose_response(response: TransportResponse,
             }
             continue
         # 엔트리 부재 — 절대 published 로 승격하지 않는다.
+        # I 승인(2026-10-18) — 오류 본문을 원장 error 까지 전달한다(409 등 재판정 근거).
+        fail_detail = f"HTTP {http}"
+        if response.raw:
+            fail_detail += f": {response.raw[:200]}"
         out[platform] = {
             "outcome": STATUS_FAILED if hard_fail else STATUS_PENDING,
             "url": None,
-            "error": (f"HTTP {http}" + (" — 부분실패(207)" if response.partial_failure else "")
+            "error": (fail_detail + (" — 부분실패(207)" if response.partial_failure else "")
                       if hard_fail else None),
             "post_id": (post or {}).get("_id") or (post or {}).get("id"),
             "explicit": False,
@@ -357,6 +361,10 @@ class ZernioRestTransport:
         except json.JSONDecodeError:
             body = {"_unparsed": raw[:1000]}
         log.info("Zernio REST 응답: HTTP %s · 플랫폼 %s", status, list(platforms) or "-")
+        if not (200 <= status < 300) and raw:
+            # I 승인(2026-10-18) — 409 에서 본문 미기록으로 원인 판정이 불가했다.
+            # 응답 "본문"만 남긴다. 요청 헤더·API 키는 어떤 경우에도 기록하지 않는다.
+            log.warning("Zernio REST 오류 본문(HTTP %s): %s", status, raw[:800])
         return TransportResponse(transport=self.name, http_status=status,
                                  body=body, raw=raw, request=request_body)
 
