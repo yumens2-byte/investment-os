@@ -36,6 +36,14 @@ name: "🐕‍🦺 Watchdog"
       - Weekend Content
       - "🎬 Hero Shorts Gen (v2.8.2 — gen 폴더)"
       - "🐕‍🦺 Hero Shorts Watchdog"
+      - "🚀 Hero Shorts W11 — ep88 비공개 실발행 (stage 2호출 + publish 1호출)"
+      - "🚀 Hero Shorts W11-B — ep88 Threads 단일 발행 (정기 · Zernio 1호출)"
+      - "🚀 Hero Shorts W11-B R2′ — ep88 재스테이징 + Threads 3차 발행"
+      - "🧪 Zernio Media Staging A2 (presign→PUT→validate, 발행 아님)"
+      - "🔎 Zernio Media Validate (읽기 전용 검증)"
+      - "🔍 Zernio GET posts — ep88 Threads 실측(읽기 전용)"
+      - "🩺 Zernio 헬스 확인 + 조건부 retry — ep88 Threads (A 승인)"
+      - "📡 Zernio Publish Watch (30분 상태 폴링)"
 
     types:
       - completed

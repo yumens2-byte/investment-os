@@ -1,0 +1,24 @@
+{
+  "posts": {
+    "6ad40ad7f713d4aa3641d46e": {
+      "label": "ep88 1차(207)",
+      "entry_status": "failed",
+      "post_status": "failed",
+      "url": null,
+      "last_checked": "2026-10-18T05:08:26Z"
+    },
+    "6ad40e86d4d8e05fca81a3eb": {
+      "label": "ep88 3차(207, retry 라운드 소진)",
+      "entry_status": "failed",
+      "post_status": "failed",
+      "url": null,
+      "last_checked": "2026-10-18T05:08:26Z"
+    }
+  },
+  "health": {
+    "status": "healthy",
+    "can_post": true,
+    "checked_at": "2026-10-18T04:26:55Z"
+  },
+  "consecutive_poll_failures": 0
+}

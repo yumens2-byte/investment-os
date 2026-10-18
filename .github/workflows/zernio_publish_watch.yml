@@ -1,0 +1,57 @@
+name: "📡 Zernio Publish Watch (30분 상태 폴링)"
+# 30분 주기로 감시 대상 post(원장: gen/hero_shorts/monitor/zernio_watch_targets.json)를
+# GET 폴링해 상태 전이·계정 헬스 이상·폴링 실패를 텔레그램 FREE 채널로 알린다.
+# Zernio API 호출은 GET 뿐(게시·수정 없음). 상태 파일을 커밋으로 갱신한다(전이 감지의 정본).
+on:
+  schedule:
+    - cron: '*/30 * * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: zernio-publish-watch
+  cancel-in-progress: false
+
+jobs:
+  watch:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Poll Zernio (GET 전용) + 상태 차이 산출
+        env:
+          ZERNIO_API_KEY: ${{ secrets.ZERNIO_API_KEY }}
+        run: |
+          set -euo pipefail
+          python3 gen/hero_shorts/monitor/zernio_publish_watch.py
+
+      - name: Send Telegram alerts (변화 시만)
+        env:
+          BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          CHAT_ID: ${{ secrets.TELEGRAM_FREE_CHANNEL_ID }}
+        run: |
+          set -euo pipefail
+          [ -s alerts.txt ] || { echo "ALERT 없음 — 전송 생략"; exit 0; }
+          while IFS= read -r line; do
+            [ -n "$line" ] || continue
+            curl -s -X POST "https://api.telegram.org/bot${BOT_TOKEN}/sendMessage" \
+              -d "chat_id=${CHAT_ID}" --data-urlencode "text=${line}" || true
+          done < alerts.txt
+
+      - name: Commit state (전이 기록 정본)
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add gen/hero_shorts/monitor/zernio_watch_state.json
+          if git diff --cached --quiet; then
+            echo "STATE_NO_CHANGE"
+            exit 0
+          fi
+          git commit -m "monitor: zernio watch state update (run ${GITHUB_RUN_ID})"
+          git push "https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git" main
