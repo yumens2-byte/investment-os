@@ -5,20 +5,24 @@
       "entry_status": "failed",
       "post_status": "failed",
       "url": null,
-      "last_checked": "2026-10-18T05:08:26Z"
+      "last_checked": "2026-10-18T06:09:04Z"
     },
     "6ad40e86d4d8e05fca81a3eb": {
       "label": "ep88 3차(207, retry 라운드 소진)",
       "entry_status": "failed",
       "post_status": "failed",
       "url": null,
-      "last_checked": "2026-10-18T05:08:26Z"
+      "last_checked": "2026-10-18T06:09:04Z"
     }
   },
   "health": {
     "status": "healthy",
     "can_post": true,
-    "checked_at": "2026-10-18T04:26:55Z"
+    "token_valid": true,
+    "needs_reconnect": false,
+    "issues": [],
+    "checked_at": "2026-10-18T06:09:05Z"
   },
-  "consecutive_poll_failures": 0
+  "consecutive_poll_failures": 0,
+  "last_run": "2026-10-18T06:09:05Z"
 }
