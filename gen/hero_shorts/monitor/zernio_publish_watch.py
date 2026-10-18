@@ -140,8 +140,24 @@ def main() -> int:
 
     state["posts"] = posts_state
     state["last_run"] = now_utc()
-    STATE_PATH.write_text(json.dumps(state, ensure_ascii=False, indent=2) + "\n",
-                          encoding="utf-8")
+    volatile = {"last_checked", "checked_at", "last_run"}
+
+    def _strip(d):
+        if isinstance(d, dict):
+            return {k: _strip(v) for k, v in d.items() if k not in volatile}
+        if isinstance(d, list):
+            return [_strip(x) for x in d]
+        return d
+
+    try:
+        old_snapshot = json.loads(STATE_PATH.read_text(encoding="utf-8"))
+    except Exception:
+        old_snapshot = None
+    if old_snapshot is not None and _strip(old_snapshot) == _strip(state):
+        pass                    # 유의 변화 없음 — 파일 미수정(30분 커밋 노이즈 방지)
+    else:
+        STATE_PATH.write_text(json.dumps(state, ensure_ascii=False, indent=2) + "\n",
+                              encoding="utf-8")
     ALERTS_PATH.write_text("\n".join(alerts) + ("\n" if alerts else ""), encoding="utf-8")
     print(f"POLL_OK={poll_ok} ALERTS={len(alerts)}")
     for line in alerts:
