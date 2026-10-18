@@ -1,0 +1,379 @@
+{
+  "ep86": {
+    "title": "배분을 바꾼다, 지금 필요한 곳으로",
+    "type": "BATTLE",
+    "final": "/tmp/verify-main/gen/data/out/ep86_final_voiced.mp4",
+    "caption_file": "/tmp/opencode/ep86-post-final/ep86_caption_ko.txt",
+    "media_url": "https://www.genspark.ai/api/files/s/oMnaPlFE",
+    "channel": "instagram",
+    "platform": "instagram",
+    "qc": {
+      "G1": true,
+      "G2": true,
+      "G3": {
+        "w": 720,
+        "h": 1280,
+        "duration": 60.864,
+        "audio": 1
+      },
+      "G4": true
+    },
+    "status": "published",
+    "zernio_post_id": "6ab462eea790a191fed2fe16",
+    "platform_post_url": "https://www.instagram.com/reel/DdpgqdpicEi/",
+    "schedule_at": null,
+    "version": "2.5.0",
+    "require_audible_audio": true,
+    "tiktok": {
+      "status": "published",
+      "mode": "split",
+      "segment_count": 6,
+      "segments": [
+        {
+          "segment_no": 1,
+          "post_id": "6ace307797110f678b52233d",
+          "platform_post_id": "7696142155445767431",
+          "platform_post_url": "https://www.tiktok.com/@tiger182725/video/7696142155445767431",
+          "published_at": "2026-10-13T13:22:19.213Z",
+          "outcome": "published",
+          "post_id_was": "6ace307797110f678b52233e"
+        },
+        {
+          "segment_no": 1,
+          "post_id": "6ace291c6d4354144a6b749f",
+          "platform_post_id": "7696134029430590741",
+          "platform_post_url": "https://www.tiktok.com/@tiger182725/video/7696134029430590741",
+          "published_at": "2026-10-13T12:50:46.252Z",
+          "outcome": "published",
+          "post_id_was": "6ace291c6d4354144a6b74a0"
+        },
+        {
+          "segment_no": 2,
+          "post_id": "6ace30ac9d89295eb8fe1ced",
+          "platform_post_id": "7696142303173397766",
+          "platform_post_url": "https://www.tiktok.com/@tiger182725/video/7696142303173397766",
+          "published_at": "2026-10-13T13:23:20.991Z",
+          "outcome": "published",
+          "post_id_was": "6ace30ac9d89295eb8fe1cee"
+        },
+        {
+          "segment_no": 2,
+          "post_id": "6ace2c3c764a2ea88f9dbdd2",
+          "platform_post_id": "7696137479925009672",
+          "platform_post_url": "https://www.tiktok.com/@tiger182725/video/7696137479925009672",
+          "published_at": "2026-10-13T13:04:11.404Z",
+          "outcome": "published",
+          "post_id_was": "6ace2c3c764a2ea88f9dbdd3"
+        },
+        {
+          "segment_no": 3,
+          "post_id": "6ace30e71f7d9096a1cf5831",
+          "platform_post_id": "7696142622926179591",
+          "platform_post_url": "https://www.tiktok.com/@tiger182725/video/7696142622926179591",
+          "published_at": "2026-10-13T13:24:08.599Z",
+          "outcome": "published",
+          "post_id_was": "6ace30e71f7d9096a1cf5832"
+        },
+        {
+          "segment_no": 3,
+          "post_id": "6ace2d3e45cebaf4ee7e7eba",
+          "platform_post_id": "7696138412352408884",
+          "platform_post_url": "https://www.tiktok.com/@tiger182725/video/7696138412352408884",
+          "published_at": "2026-10-13T13:08:37.807Z",
+          "outcome": "published",
+          "post_id_was": "6ace2d3e45cebaf4ee7e7ebb"
+        }
+      ],
+      "privacy_level": "PUBLIC_TO_EVERYONE",
+      "note": "2026-10-13 틱톡 3분할 발행 — 마스터 지시(2026-10-13)로 이후 정기 발행은 합본 1편으로 전환",
+      "recorded_at": "2026-10-15T06:28:00+09:00",
+      "backfill": {
+        "at": "2026-10-16T00:06:41+09:00",
+        "by": "Genspark Super Agent — 원장 소급 복구(4번 작업)",
+        "version": "1.0.0",
+        "source": "zernio.list_posts",
+        "corrected_segments": 6,
+        "flat_filled": 0,
+        "note": "정본(_id·platformPostUrl·publishedAt)으로 소급 복구. 원값은 *_was 에 보존."
+      },
+      "published_at_source": "platform"
+    },
+    "targets": {
+      "youtube": {
+        "status": "pending",
+        "attempts": []
+      },
+      "threads": {
+        "status": "pending",
+        "attempts": []
+      }
+    }
+  },
+  "ep87": {
+    "title": "물러서지 않는 두 전선",
+    "type": "BATTLE",
+    "final": "/tmp/verify-main/gen/data/out/ep87_final_voiced.mp4",
+    "qc": {
+      "G1": true,
+      "G2": true,
+      "G3": {
+        "w": 720,
+        "h": 1280,
+        "duration": 60.866667,
+        "audio": 1
+      },
+      "G4": true
+    },
+    "channel": "instagram",
+    "status": "published",
+    "version": "2.7.1",
+    "require_audible_audio": true,
+    "audio_check": {
+      "audible": true,
+      "mean_volume_db": -27.6,
+      "max_volume_db": -15.4
+    },
+    "approval": {
+      "status": "APPROVED",
+      "requested_at": "2026-09-26T01:35:55+09:00",
+      "chat_id": "-1003587684034",
+      "message_id": 999,
+      "media_url": "https://www.genspark.ai/api/files/s/DuA8mq1n?token=arhcgAB0336-PZBShdhulA",
+      "video_sent": true,
+      "decided_at": "2026-09-26T01:39:59+09:00",
+      "decided_by": "EDTINVESTMENT",
+      "callback_id": "4014742977606651824"
+    },
+    "post_id": "6ab6ad110908be0a3604b286",
+    "platform_post_url": null,
+    "corrected_media": "aidrive:/hero-shorts/ep87/ep87_final_voiced_v2.7.3.mp4 (2026-09-26 02:14 승인 재더빙, 스펙트럼 검증 통과)",
+    "republish_after": "Zernio 24h 중복 가드 만료 후 — 2026-09-27 01:49 KST 이후 러너2 재실행",
+    "republish_post_id": "6ab6ad110908be0a3604b286",
+    "note": "v2.7.3 치유본 발행 (2026-09-26) — 구 릴스(Ddt7a-7G_SI, 삐 음성) 마스터 삭제 완료 확인(02:36 KST)",
+    "tiktok": {
+      "status": "published",
+      "mode": "combined",
+      "segment_count": 1,
+      "segments": [
+        {
+          "segment_no": null,
+          "post_id": "6acfa1cb9310ba390d4a1e8a",
+          "platform_post_id": "7696548206833929480",
+          "platform_post_url": "https://www.tiktok.com/@tiger182725/video/7696548206833929480",
+          "published_at": "2026-10-14T15:38:04.402Z",
+          "outcome": "published",
+          "post_id_was": "6acfa1cb9310ba390d4a1e8b"
+        }
+      ],
+      "privacy_level": "PUBLIC_TO_EVERYONE",
+      "split_history": {
+        "mode": "split",
+        "segment_count": 3,
+        "segments": [
+          {
+            "segment_no": 1,
+            "post_id": "6ace331b2269d18e3fac481c",
+            "platform_post_id": "7696145065869151509",
+            "platform_post_url": "https://www.tiktok.com/@tiger182725/video/7696145065869151509",
+            "published_at": "2026-10-13T13:33:35.736Z",
+            "outcome": "published",
+            "post_id_was": "6ace331b2269d18e3fac481d"
+          },
+          {
+            "segment_no": 2,
+            "post_id": "6ace334da74bf26b8998d513",
+            "platform_post_id": "7696149363302747400",
+            "platform_post_url": "https://www.tiktok.com/@tiger182725/video/7696149363302747400",
+            "published_at": "2026-10-13T13:50:20.520Z",
+            "outcome": "published",
+            "post_id_was": "6ace334da74bf26b8998d514"
+          },
+          {
+            "segment_no": 3,
+            "post_id": "6ace36f9fe36289e505eebfe",
+            "platform_post_id": "7696149294969097493",
+            "platform_post_url": "https://www.tiktok.com/@tiger182725/video/7696149294969097493",
+            "published_at": "2026-10-13T13:50:02.948Z",
+            "outcome": "published",
+            "post_id_was": "6ace36f9fe36289e505eebff"
+          }
+        ],
+        "note": "2026-10-13 3분할 선발행 → 2026-10-14 합본 재발행(중복 회차)"
+      },
+      "recorded_at": "2026-10-15T06:28:00+09:00",
+      "post_id": "6acfa1cb9310ba390d4a1e8a",
+      "platform_post_id": "7696548206833929480",
+      "platform_post_url": "https://www.tiktok.com/@tiger182725/video/7696548206833929480",
+      "post_url": "https://www.tiktok.com/@tiger182725/video/7696548206833929480",
+      "published_at": "2026-10-14T15:38:04.402Z",
+      "backfill": {
+        "at": "2026-10-16T00:06:41+09:00",
+        "by": "Genspark Super Agent — 원장 소급 복구(4번 작업)",
+        "version": "1.0.0",
+        "source": "zernio.list_posts",
+        "corrected_segments": 4,
+        "flat_filled": 5,
+        "note": "정본(_id·platformPostUrl·publishedAt)으로 소급 복구. 원값은 *_was 에 보존."
+      },
+      "published_at_source": "platform"
+    },
+    "combined": {
+      "title": "물러서지 않는 두 전선",
+      "duration_sec": 60.859,
+      "media_url": "https://www.genspark.ai/api/files/s/qq1CAoOZ",
+      "aidrive_path": "/hero-shorts/ep87/ep87_final_voiced_v2.7.3.mp4",
+      "aidrive_note": "보관본은 v2.7.3 치유본(60.867s) — 합본 발행본(60.859s)과 0.008s 차이, 재발행 시 재검증 필요",
+      "recorded_at": "2026-10-15T06:28:00+09:00"
+    },
+    "targets": {
+      "youtube": {
+        "status": "pending",
+        "attempts": []
+      },
+      "threads": {
+        "status": "pending",
+        "attempts": []
+      }
+    }
+  },
+  "_ledger": {
+    "rebuilt_at": "2026-10-15T06:28:00+09:00",
+    "rebuilt_by": "Genspark Super Agent — 러너3 라이브 전 정합(2026-10-15 마스터 승인)",
+    "reason": "AI Drive 미러 정본(779B, 2026-09-24)이 ep86 만 보유 — ep87 및 틱톡 발행 이력 소실 상태였음. Zernio list_posts 실조회로 복원.",
+    "tiktok_guard": "ep86/ep87 을 tiktok.status=published 로 기록 — 러너3 중복 발행 차단"
+  },
+  "ep88": {
+    "title": "물러서지 않는 두 전선, 그 다음날",
+    "type": "AFTERMATH",
+    "final": "/home/user/workspace/investment-os/gen/data/out/ep88_final_voiced.mp4",
+    "qc": {
+      "G1": true,
+      "G2": true,
+      "G3": {
+        "w": 720,
+        "h": 1280,
+        "duration": 30.433008,
+        "audio": 1
+      },
+      "G4": true
+    },
+    "channel": "instagram",
+    "status": "QC_PASSED_READY",
+    "version": "2.8.0",
+    "require_audible_audio": true,
+    "audio_check": {
+      "audible": true,
+      "mean_volume_db": -27.5,
+      "max_volume_db": -9.5
+    },
+    "combined": {
+      "title": "Ep88",
+      "duration_sec": 30.433,
+      "media_url": "https://media.zernio.com/temp/1792282244159_a1pxcpme_ep88_final_voiced.mp4",
+      "aidrive_path": "/hero-shorts/media/ep88_final_voiced.mp4",
+      "video_path": "/home/user/workspace/investment-os/gen/data/out/ep88_final_voiced.mp4",
+      "recorded_at": "2026-10-15T08:06:12+09:00",
+      "media_url_refreshed_at": "2026-10-15T10:25:00+09:00",
+      "media_url_source": "zernio_ingested",
+      "media_url_prev": "https://www.genspark.ai/api/files/s/ioJNCDQU",
+      "media_staged": {
+        "filename": "ep88_final_voiced.mp4",
+        "content_type": "video/mp4",
+        "size_bytes": 9455069,
+        "sha256": "5eb13aa5d5552059b05cc02b8d01e68df8193ee9c539340a5c40273033412d09",
+        "key": "temp/1792282244159_a1pxcpme_ep88_final_voiced.mp4",
+        "etag": "\"7f72d8a29ed0364fa29058938c4fdfd8\"",
+        "at": "2026-10-18T00:10:45Z"
+      },
+      "size_bytes": 9455069
+    },
+    "approval": {
+      "status": "APPROVED",
+      "requested_at": "2026-10-15T08:06:10+09:00",
+      "chat_id": "-1003587684034",
+      "message_id": 1175,
+      "media_url": "https://www.genspark.ai/api/files/s/X4xz2ACF?token=atAlkInSEH1mzAlLuw6D0g",
+      "video_sent": true,
+      "decided_at": "2026-10-15T09:14:20+09:00",
+      "decided_by": "EDTINVESTMENT",
+      "callback_id": "4014742978427483627"
+    },
+    "tiktok": {
+      "status": "published",
+      "post_id": "6ad02e8459a0b5ccb84a4ba5",
+      "platform_post_id": "7696702914986773780",
+      "post_url": "https://www.tiktok.com/@tiger182725/video/7696702914986773780",
+      "platform_post_url": "https://www.tiktok.com/@tiger182725/video/7696702914986773780",
+      "published_at": "2026-10-15T01:38:23.101Z",
+      "recorded_at": "2026-10-15T12:44:43.716556+00:00",
+      "published_at_source": "zernio_platform",
+      "recovered_by": "post_url",
+      "mode": "combined",
+      "segment_count": 1,
+      "segments": [
+        {
+          "segment_no": 1,
+          "post_id": "6ad02e8459a0b5ccb84a4ba5",
+          "platform_post_id": "7696702914986773780",
+          "platform_post_url": "https://www.tiktok.com/@tiger182725/video/7696702914986773780",
+          "published_at": "2026-10-15T01:38:23.101Z",
+          "outcome": "published"
+        }
+      ],
+      "privacy_level": "PUBLIC_TO_EVERYONE"
+    },
+    "title_source": "arc_state_v2_15_Ep88.json (AI Drive /investment_comic_2.0/docs)",
+    "title_corrected_at": "2026-10-18T08:40:29+0900",
+    "targets": {
+      "youtube": {
+        "status": "published",
+        "post_id": "6ad4086017599484b5baf369",
+        "platform_post_url": "https://www.youtube.com/watch?v=SR75FEKH6eo",
+        "published_at": "2026-10-17T23:44:35Z",
+        "published_at_source": "platform",
+        "recorded_at": "2026-10-17T23:44:35Z",
+        "attempts": [
+          {
+            "at": "2026-10-17T23:44:35Z",
+            "outcome": "published",
+            "note": null
+          }
+        ]
+      },
+      "threads": {
+        "status": "failed",
+        "post_id": "6ad40e86d4d8e05fca81a3eb",
+        "recorded_at": "2026-10-18T00:11:41Z",
+        "error": "Threads: publish failed (userId video): Meta is_transient code 2 — retry round (accepted 04:26:55Z, post scheduled) auto-retries exhausted; cumulative 9 consecutive transient rejections across 2 posts",
+        "attempts": [
+          {
+            "at": "2026-10-17T23:56:04Z",
+            "outcome": "pending",
+            "note": "HTTP 207"
+          },
+          {
+            "at": "2026-10-18T00:02:47Z",
+            "outcome": "failed",
+            "note": null
+          },
+          {
+            "at": "2026-10-18T00:11:41Z",
+            "outcome": "pending",
+            "note": "HTTP 207"
+          },
+          {
+            "at": "2026-10-18T04:26:55Z",
+            "outcome": "pending",
+            "note": "retry endpoint accepted (HTTP 207), post.status=scheduled — Zernio auto-retry queued; account health healthy/canPost=True; runs 2-3 rejected 409 (no-op)"
+          },
+          {
+            "at": "2026-10-18T05:08:26Z",
+            "outcome": "failed",
+            "note": "retry-endpoint round exhausted (3 auto-retries, all Meta is_transient code 2); runs 39097485992/39099521663 GET observed publishing->failed; no platformPostUrl"
+          }
+        ]
+      }
+    }
+  },
+  "_schema": 2
+}

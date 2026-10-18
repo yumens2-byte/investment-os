@@ -1,0 +1,241 @@
+name: "🤖 Hero Shorts Runner2 — 승인 회차 정기 발행(무인)"
+# 설계서: hero_shorts_runner2_automation_design_2026-10-18.md
+# 게이트: A-G0 헬스 → A-G1 승인(APPROVED만) → A-G2 발행게이트 → A-G3 시도<3 → A-G4 run당 1회차·일4건 → A-G5 207=pending
+# 안전 스위치: cron run은 repo 변수 RUNNER2_ENABLED=1 이 있을 때만 본문을 수행한다(기본 off).
+#   첫 실발행은 마스터 입회 하에서만 — 스위치를 켜는 행위 자체가 마스터 승인이다.
+# 원장: state/publish_state.json (추적 파일 — watch 커밋 선례와 동일한 정본 관리)
+on:
+  schedule:
+    - cron: '23 */2 * * *'   # KST 08:23·10:23·…·06:23 — watch(*/30)와 시각 분리
+  workflow_dispatch:
+    inputs:
+      ep:
+        description: "강제 회차(비우면 선별기 결정)"
+        required: false
+        default: ""
+      shadow:
+        description: "true=전송 0회 판정만(수동 run 기본 true)"
+        required: false
+        default: "true"
+      release_tag:
+        description: "미디어 릴리즈 태그(실발행 시 — 비우면 approval.media_url 경로)"
+        required: false
+        default: ""
+      media_name:
+        description: "릴리즈 미디어 파일명"
+        required: false
+        default: ""
+      media_sha256:
+        description: "릴리즈 미디어 sha256"
+        required: false
+        default: ""
+
+permissions:
+  contents: write
+
+concurrency:
+  group: zernio-runner2
+  cancel-in-progress: false
+
+jobs:
+  runner2:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      HERO_PUBLISH_STATE: state/publish_state.json
+    steps:
+      - uses: actions/checkout@v4
+
+      - id: mode
+        run: |
+          if [ "${{ github.event_name }}" = "schedule" ]; then
+            if [ "${{ vars.RUNNER2_ENABLED }}" = "1" ]; then
+              echo "run=true" >> "$GITHUB_OUTPUT"
+              echo "shadow=false" >> "$GITHUB_OUTPUT"
+              echo "MODE=scheduled-real"
+            else
+              echo "run=false" >> "$GITHUB_OUTPUT"
+              echo "RUNNER2_DISABLED — cron 스킵(마스터 스위치 미승인)"
+            fi
+          else
+            echo "run=true" >> "$GITHUB_OUTPUT"
+            echo "shadow=${{ github.event.inputs.shadow || 'true' }}" >> "$GITHUB_OUTPUT"
+            echo "MODE=manual"
+          fi
+
+      - name: Sync (rebase — 커밋 충돌 방지)
+        if: ${{ steps.mode.outputs.run == 'true' }}
+        run: git pull --rebase origin main || echo "REBASE_SKIPPED"
+
+      - id: approvals
+        name: "1) 승인 반영 — resolve_approvals (텔레그램 대조, Zernio 호출 0회)"
+        if: ${{ steps.mode.outputs.run == 'true' }}
+        env:
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+        run: |
+          set -euo pipefail
+          python3 -m gen.hero_shorts.pipeline resolve_approvals --lookback-hours 36 \
+            || echo "RESOLVE_WARN=$? — 무응답/대상 없음 가능, fail-closed 유지"
+
+      - id: select
+        name: "2) 선별 — 게이트 A-G1/G3/G4 (오프라인)"
+        if: ${{ steps.mode.outputs.run == 'true' }}
+        env:
+          SELECT_EPS: ${{ github.event.inputs.ep }}
+        run: |
+          set -euo pipefail
+          python3 gen/hero_shorts/monitor/publish_selector.py
+          N=$(python3 -c "import json;print(len(json.load(open('selection.json'))['candidates']))")
+          echo "candidates=$N" >> "$GITHUB_OUTPUT"
+          if [ "$N" != "0" ]; then
+            EP=$(python3 -c "import json;print(json.load(open('selection.json'))['candidates'][0]['ep'])")
+            echo "EP=$EP" >> "$GITHUB_OUTPUT"
+          fi
+          echo "SELECT_CANDIDATES=$N"
+
+      - id: health
+        name: "3) 게이트 A-G0 — 계정 헬스 (GET 1회)"
+        if: ${{ steps.mode.outputs.run == 'true' && steps.select.outputs.candidates != '0' }}
+        env:
+          ZERNIO_API_KEY: ${{ secrets.ZERNIO_API_KEY }}
+        run: |
+          set -euo pipefail
+          code=$(curl -sS -o health.json -w '%{http_code}' \
+            -H "Authorization: Bearer $ZERNIO_API_KEY" \
+            "https://zernio.com/api/v1/accounts/health")
+          echo "HEALTH http=${code}"
+          python3 - <<'PY'
+          import json, sys
+          d = json.load(open("health.json"))
+          t = next((a for a in d.get("accounts", []) if a.get("platform") == "threads"), {})
+          ok = t.get("canPost") is True and t.get("needsReconnect") is not True
+          print(f"A-G0 canPost={t.get('canPost')} status={t.get('status')}")
+          sys.exit(0 if ok else 41)
+          PY
+
+      - id: gates
+        name: "4) 게이트 A-G2 — 발행 게이트 전건 (dry-run, 전송 0회)"
+        if: ${{ steps.mode.outputs.run == 'true' && steps.select.outputs.candidates != '0' }}
+        run: |
+          set -euo pipefail
+          python3 -m gen.hero_shorts.publish_targets.runner --ledger "$HERO_PUBLISH_STATE" \
+            --platforms=threads dry-run --eps "${{ steps.select.outputs.EP }}" > dry2.json
+          python3 - <<'PY'
+          import json, sys
+          d = json.load(open("dry2.json")); d = d[0] if isinstance(d, list) else d
+          g = d["gates"]["threads"]
+          print(f"A-G2 gate ok={g['ok']} failed={g.get('failed')}")
+          sys.exit(0 if g["ok"] else 42)
+          PY
+
+      - id: shadow
+        name: "5) SHADOW — 실전송 없이 판정 보고 (여기서 종료)"
+        if: ${{ steps.mode.outputs.run == 'true' && steps.mode.outputs.shadow == 'true' && steps.select.outputs.candidates != '0' }}
+        env:
+          BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          CHAT_ID: ${{ secrets.TELEGRAM_PAID_CHANNEL_ID }}
+        run: |
+          set -euo pipefail
+          MSG=$(python3 - <<'PY'
+          import json
+          d = json.load(open("selection.json"))
+          c = d["candidates"]
+          body = "; ".join(f"{x['ep']}({','.join(x['platforms'])})" for x in c) or "없음(전체 스킵)"
+          print(f"🤖 [Runner2 SHADOW] 발행 대상: {body} — 실전송 0회")
+          PY
+          )
+          curl -s -X POST "https://api.telegram.org/bot${BOT_TOKEN}/sendMessage" \
+            -d "chat_id=${CHAT_ID}" --data-urlencode "text=${MSG}" || true
+          echo "SHADOW_DONE — 실전송 0회"
+
+      - id: media
+        name: "6) 미디어 확보 (실발행 — 릴리즈 asset 또는 approval.media_url)"
+        if: ${{ steps.mode.outputs.run == 'true' && steps.mode.outputs.shadow == 'false' && steps.select.outputs.candidates != '0' }}
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ github.event.inputs.release_tag }}
+          MEDIA_IN: ${{ github.event.inputs.media_name }}
+          MSHA: ${{ github.event.inputs.media_sha256 }}
+        run: |
+          set -euo pipefail
+          if [ -n "$TAG" ]; then
+            gh release download "$TAG" --repo "$GITHUB_REPOSITORY" --pattern "$MEDIA_IN"
+            [ "$(sha256sum "$MEDIA_IN" | awk '{print $1}')" = "$MSHA" ] || { echo MEDIA_SHA_MISMATCH; exit 63; }
+            OUT="$MEDIA_IN"
+          else
+            URL=$(python3 -c "import json,os;d=json.load(open(os.environ['HERO_PUBLISH_STATE']));ep=os.environ['EP'];a=d[ep].get('approval') or {};c=d[ep].get('combined') or {};print(a.get('media_url') or c.get('media_url') or '')")
+            [ -n "$URL" ] || { echo "MEDIA_SOURCE_MISSING — fail-closed"; exit 43; }
+            curl -sSL --fail -o media.bin "$URL"
+            ct=$(file -b --mime-type media.bin); echo "CONTENT_TYPE=$ct"
+            case "$ct" in video/*) :;; *) echo "MEDIA_NOT_VIDEO fail-closed ct=$ct"; exit 43;; esac
+            OUT=media.bin
+          fi
+          echo "MEDIA=$OUT" >> "$GITHUB_OUTPUT"
+
+      - name: "7) 스테이징 (실발행 — presign+PUT 2회)"
+        if: ${{ steps.mode.outputs.run == 'true' && steps.mode.outputs.shadow == 'false' && steps.select.outputs.candidates != '0' }}
+        env:
+          ZERNIO_API_KEY: ${{ secrets.ZERNIO_API_KEY }}
+          MEDIA_FILE: ${{ steps.media.outputs.MEDIA }}
+        run: |
+          set -euo pipefail
+          python3 -m gen.hero_shorts.publish_targets.runner --ledger "$HERO_PUBLISH_STATE" \
+            stage --ep "${{ steps.select.outputs.EP }}" --file "$MEDIA_FILE" --write
+
+      - name: "8) 발행 (실발행 — POST 1회) + 원장 기록"
+        if: ${{ steps.mode.outputs.run == 'true' && steps.mode.outputs.shadow == 'false' && steps.select.outputs.candidates != '0' }}
+        env:
+          ZERNIO_API_KEY: ${{ secrets.ZERNIO_API_KEY }}
+          HERO_THREADS_ACCOUNT_ID: ${{ secrets.HERO_THREADS_ACCOUNT_ID }}
+        run: |
+          set -euo pipefail
+          python3 -m gen.hero_shorts.publish_targets.runner --ledger "$HERO_PUBLISH_STATE" \
+            --platforms=threads publish --ep "${{ steps.select.outputs.EP }}" --apply --write
+
+      - name: "9) 감시 대상 등록 + 상태 커밋"
+        if: ${{ steps.mode.outputs.run == 'true' && steps.mode.outputs.shadow == 'false' && steps.select.outputs.candidates != '0' }}
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          EP: ${{ steps.select.outputs.EP }}
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import json, os, pathlib
+          d = json.load(open(os.environ["HERO_PUBLISH_STATE"]))
+          ep = os.environ["EP"]
+          pid = (d[ep].get("targets", {}).get("threads", {}) or {}).get("post_id") or ""
+          tf = pathlib.Path("gen/hero_shorts/monitor/zernio_watch_targets.json")
+          t = json.loads(tf.read_text(encoding="utf-8"))
+          if pid and not any(p.get("post_id") == pid for p in t["posts"]):
+              t["posts"].append({"post_id": pid, "label": ep, "enabled": True})
+              tf.write_text(json.dumps(t, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+              print(f"WATCH_TARGET_ADDED {ep} {pid}")
+          else:
+              print("WATCH_TARGET_NOOP")
+          PY
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add state/publish_state.json gen/hero_shorts/monitor/zernio_watch_targets.json
+          git diff --cached --quiet && echo "STATE_NO_CHANGE" || {
+            git commit -q -m "publish: runner2 automated episode publish (run ${GITHUB_RUN_ID})"
+            git push "https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git" main
+          }
+
+      - name: Upload ledger artifact
+        if: ${{ always() && steps.mode.outputs.run == 'true' }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: runner2-ledger
+          path: state/publish_state.json
+          if-no-files-found: error
+
+      - name: "10) 텔레그램 보고 (실발행)"
+        if: ${{ steps.mode.outputs.run == 'true' && steps.mode.outputs.shadow == 'false' && steps.select.outputs.candidates != '0' }}
+        env:
+          BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          CHAT_ID: ${{ secrets.TELEGRAM_PAID_CHANNEL_ID }}
+        run: |
+          set -euo pipefail
+          MSG="🤖 [Runner2] 발행 run 완료 — EP=${{ steps.select.outputs.EP }} · 로그·artifact 확인 요망"
+          curl -s -X POST "https://api.telegram.org/bot${BOT_TOKEN}/sendMessage" \
+            -d "chat_id=${CHAT_ID}" --data-urlencode "text=${MSG}" || true
