@@ -93,6 +93,8 @@ def main() -> int:
     poll_ok = True
 
     for tgt in targets.get("posts", []):
+        if tgt.get("enabled", True) is False or not tgt.get("post_id"):
+            continue                    # 대기 슬롯 — 폴링 0회
         pid = tgt["post_id"]
         label = tgt.get("label") or pid
         entry_status, post_status, url, raw_err = poll_post(pid, api_key)

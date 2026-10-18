@@ -76,3 +76,26 @@ def test_published_transition_alerts_with_url(monkeypatch, tmp_path):
     assert "https://www.threads.net/@x/post/1" in alerts
     state = json.loads(mod.STATE_PATH.read_text(encoding="utf-8"))
     assert state["posts"]["AAA"]["entry_status"] == "published"
+
+
+def test_disabled_target_is_never_polled(monkeypatch, tmp_path):
+    mod = _load_module(monkeypatch, tmp_path, POST_PENDING)
+    mod.TARGETS_PATH.write_text(json.dumps({"posts": [
+        {"post_id": "AAA", "label": "활성"},
+        {"post_id": "", "label": "ep89 대기", "enabled": False},
+        {"post_id": "BBB", "label": "id 누락 슬롯"},
+    ]}), encoding="utf-8")
+    calls = []
+
+    def spy(path, api_key):
+        calls.append(path)
+        if path.startswith("/posts/"):
+            return POST_PENDING, 200
+        return HEALTH_OK, 200
+
+    monkeypatch.setattr(mod, "get_json", spy)
+    assert mod.main() == 0
+    polled = [c for c in calls if c.startswith("/posts/")]
+    assert polled == ["/posts/AAA"], f"비활성 슬롯이 폴링됨: {polled}"
+    state = json.loads(mod.STATE_PATH.read_text(encoding="utf-8"))
+    assert set(state["posts"]) == {"AAA"}
