@@ -20,6 +20,7 @@ concurrency:
 jobs:
   get-posts:
     runs-on: ubuntu-latest
+    timeout-minutes: 5
     steps:
       - uses: actions/checkout@v4
 
@@ -40,9 +41,13 @@ jobs:
           def summ(p):
               if not isinstance(p, dict):
                   return p
-              keys = ("id", "status", "createdAt", "created_at", "scheduledAt",
+              keys = ("id", "_id", "status", "createdAt", "created_at", "scheduledAt",
                       "caption", "title", "platformPostUrl")
-              return {k: p.get(k) for k in keys if p.get(k) not in (None, "")}
+              pid = p.get("id") or p.get("_id") or ""
+              out = {k: p.get(k) for k in keys if p.get(k) not in (None, "")}
+              if pid and "id" not in out:
+                  out["id"] = pid
+              return out
           lst = json.load(open("list.json"))
           posts = lst if isinstance(lst, list) else (lst.get("posts") or lst.get("data") or [])
           print(f"LIST_COUNT={len(posts)}")
