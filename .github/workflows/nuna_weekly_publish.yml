@@ -1,0 +1,74 @@
+# ─────────────────────────────────────────────────────────────────────────────
+# nuna_weekly_publish.yml — NUNA 주간 뉴스 쇼츠 · 발행 워크플로 (v1.0.0)
+#   설계서 3·8·10·15장 (2026-10-19)
+#   cron UTC "12 23 * * 3" = 목 08:12 KST → Zernio scheduledFor = max(08:30, 알림+60분)
+#   Telegram [보류] 콜백은 NUNA_TELEGRAM_ADMIN_IDS 허용 목록만 인정 (S-04)
+#   timeout 45분 = 예약(08:30)+5분까지 대기 후 검증 포함
+#   fal·Claude·Gemini 키는 이 워크플로에 주입하지 않는다 (15.2 최소 권한)
+# ─────────────────────────────────────────────────────────────────────────────
+name: nuna-weekly-publish
+
+"on":
+  schedule:
+    - cron: "12 23 * * 3"
+  workflow_dispatch:
+    inputs:
+      step:
+        description: "실행 단계"
+        type: choice
+        options: [publish, verify]
+        default: publish
+      date:
+        description: "기준일 KST (YYYY-MM-DD, 비우면 오늘)"
+        type: string
+        default: ""
+      dry_run:
+        description: "true = Zernio POST 없음"
+        type: choice
+        options: ["true", "false"]
+        default: "true"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: nuna-weekly
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    if: github.event_name == 'workflow_dispatch' || vars.NUNA_ENABLED == '1'
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
+        with:
+          python-version: "3.11"
+      - name: 의존성 설치 (secret 주입 없음)
+        run: pip install -r gen/nuna_weekly/requirements.txt
+      - name: 발행 실행
+        env:
+          DRY_RUN: ${{ github.event.inputs.dry_run || secrets.DRY_RUN }}
+          NUNA_ENABLED: ${{ vars.NUNA_ENABLED }}
+          NUNA_DURATION_SEC: ${{ vars.NUNA_DURATION_SEC }}
+          NUNA_FB_CUT: ${{ vars.NUNA_FB_CUT }}
+          GH_RUN_ID: ${{ github.run_id }}
+          IN_STEP: ${{ github.event.inputs.step || 'publish' }}
+          IN_DATE: ${{ github.event.inputs.date }}
+          IN_EVENT: ${{ github.event_name }}
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+          ZERNIO_API_KEY: ${{ secrets.ZERNIO_API_KEY }}
+          ZERNIO_API_SUB_KEY: ${{ secrets.ZERNIO_API_SUB_KEY }}
+          NUNA_INSTAGRAM_ACCOUNT_ID: ${{ secrets.NUNA_INSTAGRAM_ACCOUNT_ID }}
+          NUNA_THREADS_ACCOUNT_ID: ${{ secrets.NUNA_THREADS_ACCOUNT_ID }}
+          NUNA_YOUTUBE_ACCOUNT_ID: ${{ secrets.NUNA_YOUTUBE_ACCOUNT_ID }}
+          NUNA_FACEBOOK_ACCOUNT_ID: ${{ secrets.NUNA_FACEBOOK_ACCOUNT_ID }}
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_PAID_CHANNEL_ID: ${{ secrets.TELEGRAM_PAID_CHANNEL_ID }}
+          NUNA_TELEGRAM_ADMIN_IDS: ${{ secrets.NUNA_TELEGRAM_ADMIN_IDS }}
+        run: |
+          ARGS=(--step "$IN_STEP" --date "$IN_DATE")
+          if [ "$IN_EVENT" = "schedule" ]; then ARGS+=(--scheduled); fi
+          python -m gen.nuna_weekly publish "${ARGS[@]}"

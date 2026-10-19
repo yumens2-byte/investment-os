@@ -1,0 +1,87 @@
+# ─────────────────────────────────────────────────────────────────────────────
+# nuna_weekly_gen.yml — NUNA 주간 미국시장 뉴스 쇼츠 · 생성 워크플로 (v1.0.0)
+#   설계서: "NUNA 주간 뉴스 쇼츠 상세설계서" 3·10·15장 (2026-10-19)
+#   cron 은 UTC 기준: "47 21 * * 3" = 목 06:47 KST
+#   보안(15장): permissions 최소, secret 은 실행 step 에만, 아티팩트는 QC JSON 만(S-02)
+#   운영 스위치: vars.NUNA_ENABLED == '1' 일 때만 schedule 실행 진행
+#   DRY_RUN: 기존 규약 (main.yml:188) — inputs.dry_run || secrets.DRY_RUN
+# ─────────────────────────────────────────────────────────────────────────────
+name: nuna-weekly-gen
+
+"on":
+  schedule:
+    - cron: "47 21 * * 3"
+  workflow_dispatch:
+    inputs:
+      step:
+        description: "실행 단계"
+        type: choice
+        options: [run, preflight, collect, script, tts, images, clips, assemble, qc, stage, notify, poc]
+        default: run
+      date:
+        description: "기준일 KST (YYYY-MM-DD, 비우면 오늘)"
+        type: string
+        default: ""
+      dry_run:
+        description: "true = 유료 호출·발행 없음(dummy)"
+        type: choice
+        options: ["true", "false"]
+        default: "true"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: nuna-weekly
+  cancel-in-progress: false
+
+jobs:
+  gen:
+    if: github.event_name == 'workflow_dispatch' || vars.NUNA_ENABLED == '1'
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
+        with:
+          python-version: "3.11"
+      - name: 시스템 패키지 (ffmpeg, 한글 폰트)
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq ffmpeg fonts-noto-cjk
+      - name: 의존성 설치 (secret 주입 없음)
+        run: pip install -r gen/nuna_weekly/requirements.txt
+      - name: 생성 실행
+        env:
+          DRY_RUN: ${{ github.event.inputs.dry_run || secrets.DRY_RUN }}
+          FORCE_RUN: ${{ secrets.FORCE_RUN || 'false' }}
+          NUNA_ENABLED: ${{ vars.NUNA_ENABLED }}
+          NUNA_DURATION_SEC: ${{ vars.NUNA_DURATION_SEC }}
+          NUNA_FB_CUT: ${{ vars.NUNA_FB_CUT }}
+          NUNA_MARKET_SOURCE: ${{ vars.NUNA_MARKET_SOURCE }}
+          NUNA_TTS_VOICE: ${{ vars.NUNA_TTS_VOICE }}
+          NUNA_REF_IMAGE_URLS: ${{ vars.NUNA_REF_IMAGE_URLS }}
+          GH_RUN_ID: ${{ github.run_id }}
+          IN_STEP: ${{ github.event.inputs.step || 'run' }}
+          IN_DATE: ${{ github.event.inputs.date }}
+          IN_EVENT: ${{ github.event_name }}
+          FAL_AI_KEY: ${{ secrets.FAL_AI_KEY }}
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          GEMINI_API_SUB_PAY_KEY: ${{ secrets.GEMINI_API_SUB_PAY_KEY }}
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+          ZERNIO_API_KEY: ${{ secrets.ZERNIO_API_KEY }}
+          ZERNIO_API_SUB_KEY: ${{ secrets.ZERNIO_API_SUB_KEY }}
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_PAID_CHANNEL_ID: ${{ secrets.TELEGRAM_PAID_CHANNEL_ID }}
+          NUNA_TELEGRAM_ADMIN_IDS: ${{ secrets.NUNA_TELEGRAM_ADMIN_IDS }}
+        run: |
+          ARGS=(--step "$IN_STEP" --date "$IN_DATE")
+          if [ "$IN_EVENT" = "schedule" ]; then ARGS+=(--scheduled); fi
+          python -m gen.nuna_weekly gen "${ARGS[@]}"
+      - name: QC 결과 업로드 (영상·대본 제외 — 보안 S-02)
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: nuna-weekly-qc-${{ github.run_id }}
+          path: gen/data/nuna_out/*/qc/
+          retention-days: 7
+          if-no-files-found: ignore
