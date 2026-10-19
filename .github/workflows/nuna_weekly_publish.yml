@@ -6,7 +6,7 @@
 #   timeout 45분 = 예약(08:30)+5분까지 대기 후 검증 포함
 #   fal·Claude·Gemini 키는 이 워크플로에 주입하지 않는다 (15.2 최소 권한)
 # ─────────────────────────────────────────────────────────────────────────────
-name: nuna-weekly-publish
+name: 🎬 nuna-weekly-publish
 
 "on":
   schedule:
