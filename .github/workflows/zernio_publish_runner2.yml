@@ -242,7 +242,7 @@ jobs:
           PLATS=$(comm -12 <(tr ',' '\n' <<< "$WANT" | sort -u) <(tr ',' '\n' <<< "$ALLOWED" | sort -u) | paste -sd, -)
           [ -n "$PLATS" ] || { echo "PUBLISH_SKIPPED — 선별 허용 플랫폼 없음(pending 잠금 포함)"; exit 0; }
           python3 -m gen.hero_shorts.publish_targets.runner --ledger "$HERO_PUBLISH_STATE" \
-            --platforms=$PLATS publish --ep "${{ steps.select.outputs.EP }}" --apply --write
+            --platforms="$PLATS" publish --ep "${{ steps.select.outputs.EP }}" --apply --write
 
       - name: "9) 감시 대상 등록 + 상태 커밋"
         if: ${{ steps.mode.outputs.run == 'true' && steps.mode.outputs.shadow == 'false' && steps.select.outputs.candidates != '0' }}
@@ -268,10 +268,12 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add state/publish_state.json gen/hero_shorts/monitor/zernio_watch_targets.json
-          git diff --cached --quiet && echo "STATE_NO_CHANGE" || {
+          if git diff --cached --quiet; then
+            echo "STATE_NO_CHANGE"
+          else
             git commit -q -m "publish: runner2 automated episode publish (run ${GITHUB_RUN_ID})"
             git push "https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git" main
-          }
+          fi
 
       - name: Upload ledger artifact
         if: ${{ always() && steps.mode.outputs.run == 'true' }}
