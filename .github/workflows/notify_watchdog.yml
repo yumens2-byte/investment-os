@@ -46,6 +46,8 @@ name: "🐕‍🦺 Watchdog"
       - "📡 Zernio Publish Watch (30분 상태 폴링)"
       - "🤖 Hero Shorts Runner2 — 승인 회차 정기 발행(무인)"
       - "📡 Zernio Posts 정본 조회 (GET 읽기 전용)"
+      - "🎬 nuna-weekly-gen"
+      - "🎬 nuna-weekly-publish"
 
     types:
       - completed
