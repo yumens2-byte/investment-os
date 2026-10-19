@@ -6,7 +6,7 @@
 #   운영 스위치: vars.NUNA_ENABLED == '1' 일 때만 schedule 실행 진행
 #   DRY_RUN: 기존 규약 (main.yml:188) — inputs.dry_run || secrets.DRY_RUN
 # ─────────────────────────────────────────────────────────────────────────────
-name: nuna-weekly-gen
+name: 🎬 nuna-weekly-gen
 
 "on":
   schedule:
