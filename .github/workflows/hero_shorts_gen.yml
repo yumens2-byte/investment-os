@@ -45,8 +45,10 @@ jobs:
           STEP="${{ github.event.inputs.step }}"
           ONLY="${{ github.event.inputs.only }}"
           EP="${{ github.event.inputs.ep }}"
+          # shellcheck disable=SC2034  # 기존 입력 보존(현재 미사용) — 동작 변경 없음
           TITLE="${{ github.event.inputs.title }}"
           MEDIA_URL="${{ github.event.inputs.media_url }}"
+          # shellcheck disable=SC2034  # 기존 입력 보존(현재 미사용) — 동작 변경 없음
           DURATION="${{ github.event.inputs.duration }}"
           echo "▶ STEP=$STEP ONLY=$ONLY EP=$EP"
           if [ "$STEP" = "generate" ]; then
