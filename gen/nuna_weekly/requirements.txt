@@ -1,0 +1,9 @@
+# gen/nuna_weekly 전용 의존성 (v1.0.0) — 보안 S-10: 전부 == 고정
+# supabase-py 는 사용하지 않는다: supabase==2.10.0 ↔ google-genai>=2.25 의존성 충돌(2026-10-19 실측)
+#   → db.py 가 PostgREST REST 를 requests 로 직접 호출
+# google-genai: Gemini TTS Interactions API 요구 버전 >=2.25.0 (ai.google.dev speech-generation)
+anthropic==1.15.0
+google-genai==2.31.0
+requests==2.32.3
+Pillow==12.3.0
+pytest==9.1.1

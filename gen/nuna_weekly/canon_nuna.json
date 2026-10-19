@@ -1,0 +1,9 @@
+{
+  "name": "Iron Nuna",
+  "source": "설계서 17장, weekend/comic_novel.py:38",
+  "style": "clean Korean webtoon/anime illustration, crisp line art, soft cel shading, navy/silver/cyan palette",
+  "appearance": "confident Korean woman in her late 20s, financial news anchor, shoulder-length straight black bob, calm intelligent eyes, slight professional smile",
+  "outfit": "sleek silver \"ETF shield\" armor over navy business blazer and white shirt, segmented brushed-silver shoulder plates with subtle engraved rising chart lines, small round silver shield emblem on chest with abstract upward-trend glyph (no letters, no logo), translucent cyan data visor raised above forehead",
+  "forbidden": ["red-and-gold armor", "glowing chest reactor", "helmet", "text", "watermark", "logo"],
+  "negative_prompt": "red-and-gold armor, glowing chest reactor, helmet, text, letters, subtitles, watermark, logo, signature, blurry, low quality, deformed face, extra fingers, distorted hands, extra limbs"
+}

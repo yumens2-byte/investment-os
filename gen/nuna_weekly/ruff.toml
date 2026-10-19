@@ -1,0 +1,10 @@
+# gen/nuna_weekly 전용 ruff 설정 — 레포 루트에 ruff 설정이 없어 패키지 단위로 고정한다.
+target-version = "py311"
+line-length = 120
+
+[lint]
+select = ["E", "F", "W", "I", "B", "UP"]
+ignore = ["E501"]
+
+[lint.isort]
+known-first-party = ["gen", "config"]
