@@ -3,6 +3,7 @@
 Notion 「EDT 개발 표준 정본」의 STD 규약 중 yml·코드 텍스트만으로 판정되는 항목을 검사한다.
 기존 위반은 baseline 파일에 고정하고, baseline 에 없는 '오류'만 실패로 판정한다(STD-CI-04).
 검사기는 보고만 하고 코드를 고치지 않는다.
+검사 대상은 git 추적 파일이다(git ls-files). 새 파일은 git add 이후에 검사된다.
 
 사용
   python tools/std_check.py                       # baseline 비교, 신규 오류 있으면 exit 1
@@ -10,7 +11,12 @@ Notion 「EDT 개발 표준 정본」의 STD 규약 중 yml·코드 텍스트만
   python tools/std_check.py --write-baseline      # 현재 오류 전체를 baseline 으로 기록(마스터 승인 후에만)
 
 종료코드
-  0 = 신규 오류 없음 · 1 = 신규 오류 있음 · 2 = 실행 설정 오류(baseline 파일 손상 등)
+  0 = 신규 오류 없음 · 1 = 신규 오류 있음 · 2 = 실행 설정 오류(baseline 파일 없음·손상)
+
+변경 이력
+  1.0.1 (2026-10-21, DN D-A6) baseline 파일 없음 → 종료코드 2(STD-CHECK-C002). 등록 목록 없음 → C-ENV-03 경고 1건.
+        C-MODE-02 규약 표기 STD-MODE-03 → STD-MODE-06(오류 문구는 baseline 키 보존을 위해 그대로).
+  1.0.0 (2026-10-20) 최초 — 검사 14종.
 """
 from __future__ import annotations
 
@@ -23,7 +29,7 @@ import subprocess
 import sys
 from dataclasses import dataclass
 
-VERSION = "1.0.0"
+VERSION = "1.0.1"
 
 import yaml  # noqa: E402  (VERSION 상수 뒤 third-party, STD-CI-05)
 
@@ -170,10 +176,13 @@ def check_cron_minute(workflows) -> list[Finding]:
     return out
 
 
-def check_registered_names(workflows, registered: set[str] | None) -> list[Finding]:
+def check_registered_names(workflows, registered: set[str] | None,
+                           registered_rel: str = DEFAULT_REGISTERED) -> list[Finding]:
     """C-ENV-03 — yml 의 secrets/vars 이름이 등록 목록에 없음 (STD-CFG-02)."""
     if registered is None:
-        return []
+        # 목록 파일이 없으면 검사할 수 없다 — 조용히 넘기지 않고 경고로 남긴다(v1.0.1).
+        return [Finding("C-ENV-03", "STD-CFG-02", WARN, registered_rel, 0,
+                        "등록 목록 파일 없음 — 미등록 이름 검사 생략")]
     out = []
     for rel, text, _ in workflows:
         seen = set()
@@ -276,7 +285,7 @@ def check_python(root: pathlib.Path, py_files: list[pathlib.Path], entrypoints: 
         runtime = not (rel.startswith("tests/") or "/tests/" in rel)  # 테스트 픽스처는 런타임 규약 대상 아님
         for lineno, line in enumerate(text.splitlines(), 1):
             if runtime and "DRY_RUN" in line and _DRY_NEG.search(line):
-                out.append(Finding("C-MODE-02", "STD-MODE-03", ERROR, rel, lineno,
+                out.append(Finding("C-MODE-02", "STD-MODE-06", ERROR, rel, lineno,
                                    f"DRY_RUN 부정 판정 — 빈 값을 dry_run 으로 보는 이 모듈과 "
                                    f"'== \"true\"' 발행 계층이 엇갈림(08-11 고아 발행): {line.strip()}"))
         try:
@@ -353,7 +362,7 @@ def run_checks(root: pathlib.Path, registered_rel: str = DEFAULT_REGISTERED) -> 
     findings += check_mode_expressions(workflows)
     findings += check_cron_if(workflows)
     findings += check_cron_minute(workflows)
-    findings += check_registered_names(workflows, load_registered(root, registered_rel))
+    findings += check_registered_names(workflows, load_registered(root, registered_rel), registered_rel)
     findings += check_cache_keys(workflows)
     findings += check_font_packages(workflows)
     findings += check_python(root, py_files, entrypoints)
@@ -396,6 +405,11 @@ def main(argv: list[str] | None = None) -> int:
         print(f"[std_check] baseline 기록: {args.baseline} (오류 {sum(f.severity == ERROR for f in findings)}건)")
         return 0
 
+    if not baseline_path.is_file():
+        # 10-20 사고: .std/ 누락 시 기존 오류가 전부 '신규'로 보였다 — 설정 오류로 분리한다.
+        print(f"::error title=STD-CHECK-C002::baseline 파일 없음: {args.baseline} "
+              f"(최초 도입이면 마스터 승인 후 --write-baseline 으로 생성)")
+        return 2
     try:
         baseline = load_baseline(baseline_path)
     except (json.JSONDecodeError, OSError) as exc:

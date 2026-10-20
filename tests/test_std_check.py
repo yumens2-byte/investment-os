@@ -160,7 +160,33 @@ def test_unregistered_secret_name_i1_0823(tmp_path):
 def test_registered_check_skipped_without_file(tmp_path):
     wf = WF_HEAD + "jobs:\n  a:\n    runs-on: x\n    env: {K: '${{ secrets.ANY }}'}\n    steps: [{run: echo}]\n"
     root = _repo(tmp_path, {".github/workflows/a.yml": wf})
-    assert "C-ENV-03" not in _checks(root)
+    env03 = [f for f in sc.run_checks(root) if f.check == "C-ENV-03"]
+    assert env03 and all(f.severity == sc.WARN for f in env03)  # 목록이 없으면 경고만, 오류 아님
+
+
+# ── v1.0.1: 설정 파일 누락을 조용히 넘기지 않는다 ──────────────
+
+def test_missing_registered_file_warns_once(tmp_path):
+    root = _repo(tmp_path, {"a.py": "A = 1\n"})
+    env03 = [f for f in sc.run_checks(root) if f.check == "C-ENV-03"]
+    assert len(env03) == 1 and env03[0].severity == sc.WARN
+    assert env03[0].path == sc.DEFAULT_REGISTERED
+    custom = [f for f in sc.run_checks(root, 'cfg/names.txt') if f.check == 'C-ENV-03']
+    assert custom[0].path == 'cfg/names.txt'  # --registered 경로가 경고에 그대로 찍힌다
+
+
+def test_missing_baseline_is_config_error(tmp_path, capsys):
+    # 10-20 사고 재현: .std/ 가 반영되지 않으면 기존 오류가 전부 신규로 보였다
+    root = _repo(tmp_path, {"a.py": 'import os\nA = int(os.getenv("A", "1"))\n'})
+    assert sc.main(["--root", str(root)]) == 2
+    assert "STD-CHECK-C002" in capsys.readouterr().out
+
+
+def test_write_baseline_works_without_existing_file(tmp_path):
+    root = _repo(tmp_path, {"a.py": 'import os\nA = int(os.getenv("A", "1"))\n'})
+    assert sc.main(["--root", str(root), "--write-baseline"]) == 0
+    assert (root / sc.DEFAULT_BASELINE).is_file()
+    assert sc.main(["--root", str(root)]) == 0
 
 
 # ── C-SEC-01 ─────────────────────────────────────────────
