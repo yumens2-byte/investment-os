@@ -1,0 +1,32 @@
+{
+  "version": "1.0.0",
+  "note": "기존 위반 고정 목록 — 해당 파일 수정 시 함께 해소하고 이 목록에서 뺀다",
+  "errors": [
+    "C-CRON-01|.github/workflows/main.yml|schedule 비교 '0 11 * * 4' 가 on.schedule 에 없음 (해당 분기 무발화)",
+    "C-CRON-01|.github/workflows/main.yml|schedule 비교 '30 14 * * 1-5' 가 on.schedule 에 없음 (해당 분기 무발화)",
+    "C-CRON-01|.github/workflows/main.yml|schedule 비교 '30 20 * * 1-5' 가 on.schedule 에 없음 (해당 분기 무발화)",
+    "C-CRON-01|.github/workflows/viral_content.yml|schedule 비교 '0 9 * * 1-5' 가 on.schedule 에 없음 (해당 분기 무발화)",
+    "C-ENV-02|config/settings.py|float(환경변수) 직접 파싱: float(os.getenv('CORE_DATA_MAX_AGE_HOURS', '30'))",
+    "C-ENV-02|config/settings.py|float(환경변수) 직접 파싱: float(os.getenv('US10Y_CRISIS_THR', '4.8'))",
+    "C-ENV-02|config/settings.py|float(환경변수) 직접 파싱: float(os.getenv('X_THREAD_DELAY_BUDGET_SEC', '180'))",
+    "C-ENV-02|config/settings.py|float(환경변수) 직접 파싱: float(os.getenv('X_THREAD_DELAY_MAX_SEC', '34'))",
+    "C-ENV-02|config/settings.py|float(환경변수) 직접 파싱: float(os.getenv('X_THREAD_DELAY_MIN_SEC', '9'))",
+    "C-ENV-02|gen/hero_shorts/generator.py|float(환경변수) 직접 파싱: float(os.getenv('FAL_POLL_INTERVAL_SEC', '3'))",
+    "C-ENV-02|gen/hero_shorts/generator.py|int(환경변수) 직접 파싱: int(os.getenv('FAL_MAX_POLLS', '100'))",
+    "C-ENV-02|run_alert.py|int(환경변수) 직접 파싱: int(os.getenv('ALERT_GRACE_MINUTES', '12'))",
+    "C-MODE-01|.github/workflows/comic_daily.yml|이벤트 가드 없는 inputs 폴백: github.event.inputs.dry_run_override != '' && github.event.inputs.dry_run_override || vars.DRY_RUN",
+    "C-MODE-01|.github/workflows/comic_novel.yml|`&& 'false' ||` 형태: github.event_name == 'schedule' && 'false' || inputs.dry_run || 'false'",
+    "C-MODE-01|.github/workflows/comic_novel_fb.yml|`&& 'false' ||` 형태: github.event_name == 'schedule' && 'false' || (inputs.dry_run && 'true' || 'false')",
+    "C-MODE-01|.github/workflows/comic_weekly.yml|이벤트 가드 없는 inputs 폴백: github.event.inputs.dry_run_override != '' && github.event.inputs.dry_run_override || vars.DRY_RUN",
+    "C-MODE-01|.github/workflows/main.yml|이벤트 가드 없는 inputs 폴백: github.event.inputs.dry_run || secrets.DRY_RUN",
+    "C-MODE-01|.github/workflows/nuna_weekly_gen.yml|이벤트 가드 없는 inputs 폴백: github.event.inputs.dry_run || secrets.DRY_RUN",
+    "C-MODE-01|.github/workflows/nuna_weekly_publish.yml|이벤트 가드 없는 inputs 폴백: github.event.inputs.dry_run || secrets.DRY_RUN",
+    "C-MODE-01|.github/workflows/prediction_league.yml|이벤트 가드 없는 inputs 폴백: github.event.inputs.dry_run || secrets.DRY_RUN",
+    "C-MODE-02|comic/pipeline.py|DRY_RUN 부정 판정 — 빈 값을 dry_run 으로 보는 이 모듈과 '== \"true\"' 발행 계층이 엇갈림(08-11 고아 발행): dry_run = _dry_run_val != \"false\"  # \"false\"일 때만 실 발행, 나머지는 DRY_RUN",
+    "C-MODE-02|engines/viral_engine.py|DRY_RUN 부정 판정 — 빈 값을 dry_run 으로 보는 이 모듈과 '== \"true\"' 발행 계층이 엇갈림(08-11 고아 발행): return os.environ.get(\"DRY_RUN\", \"true\").lower() != \"false\"",
+    "C-MODE-02|gen/nuna_weekly/config.py|DRY_RUN 부정 판정 — 빈 값을 dry_run 으로 보는 이 모듈과 '== \"true\"' 발행 계층이 엇갈림(08-11 고아 발행): return _env(\"DRY_RUN\", \"true\").lower() != \"false\"",
+    "C-NEST-01|gen/hero_shorts/hero_shorts|같은 이름 폴더 중첩 — 실행 경로 밖 복제본일 수 있음",
+    "C-PY-01|etf_engine.py|파이썬 문법 오류(파싱 불가)",
+    "C-PY-01|json_builder.py|파이썬 문법 오류(파싱 불가)"
+  ]
+}
