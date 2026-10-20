@@ -4,7 +4,10 @@ engines/viral_weekly_report.py
 B안: 주간 딜레마 성적표 — viral_logs + viral_performance_metrics 기반
 "이번 주 가장 뜨거웠던 선택 Top3" X/TG 발행.
 
-VERSION = "1.0.0"
+VERSION = "1.0.1"
+
+v1.0.1 (2026-10-21, DN2026_0022):
+  - 호출되지 않던 _is_dry_run() 제거(STD-MODE-06 단일 파서).
 
 v1.0.0 (2026-08-10):
   - 신규. AI 호출 0회 / 신규 테이블 0개.
@@ -23,7 +26,7 @@ from typing import Any
 
 logger = logging.getLogger(__name__)
 
-VERSION = "1.0.0"
+VERSION = "1.0.1"
 
 KST = timezone(timedelta(hours=9))
 
@@ -52,15 +55,6 @@ def _get_client():
     """Supabase 클라이언트 (마스터 패턴 — 지연 import)."""
     from db.supabase_client import get_client
     return get_client()
-
-
-def _is_dry_run() -> bool:
-    """settings.DRY_RUN(발행 계층)과 동일 규칙 — 발행/DB저장 판정 불일치 방지.
-
-    주의: != "false" 규칙 사용 금지. env가 빈 문자열이면 x_publisher는
-    실발행하는데 DB 저장만 skip되어 정산 불가 고아 트윗이 발생한다.
-    """
-    return os.environ.get("DRY_RUN", "true").lower() == "true"
 
 
 def _force_run() -> bool:

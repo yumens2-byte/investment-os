@@ -1,10 +1,13 @@
 """
-Investment OS — Settings (v1.6.0)
+Investment OS — Settings (v1.7.0)
 모든 상수와 설정을 중앙 관리한다.
 v1.5.0 변경: Reddit(유료화) 제거 → 다중 RSS 소스로 대체
 v1.6.0 변경 (2026-10-05, FB-1): 발행 채널 선택(PUBLISH_CHANNEL·channel_allows) +
        Facebook 페이지 발행 설정(FACE_*) 추가
+v1.7.0 변경 (2026-10-21, DN2026_0022): DRY_RUN 단일 파서(parse_dry_run·is_dry_run, STD-MODE-06).
+       빈 값·자리표시자는 dry_run, 'false'일 때만 실발행, 그 외 값은 dry_run + WARNING
 """
+import logging
 import os
 from pathlib import Path
 from dotenv import load_dotenv
@@ -22,7 +25,32 @@ X_ACCESS_TOKEN = os.getenv("X_ACCESS_TOKEN", "")
 X_ACCESS_TOKEN_SECRET = os.getenv("X_ACCESS_TOKEN_SECRET", "")
 
 # ─── 운영 모드 ────────────────────────────────────────────
-DRY_RUN = os.getenv("DRY_RUN", "true").lower() == "true"
+# STD-MODE-06 (DN2026_0022): DRY_RUN 판정은 이 파일 한 곳에서만 한다.
+# 다른 모듈은 DRY_RUN 상수(프로세스 시작 시점) 또는 is_dry_run()(호출 시점)을 import한다.
+_DRY_RUN_PLACEHOLDERS = frozenset({"", "-", "—", "none"})
+_DRY_RUN_WARNED: set[str] = set()  # 같은 비표준 값은 프로세스당 한 번만 경고
+
+
+def parse_dry_run(raw: str | None) -> bool:
+    """DRY_RUN 단일 파서. 'false'일 때만 실발행(False), 나머지는 dry_run(True)."""
+    if raw is None:
+        return True
+    value = raw.strip().lower()
+    if value == "false":
+        return False
+    if value != "true" and value not in _DRY_RUN_PLACEHOLDERS and raw not in _DRY_RUN_WARNED:
+        _DRY_RUN_WARNED.add(raw)
+        logging.getLogger(__name__).warning(
+            "DRY_RUN=%r 은 표준값(true/false)이 아님 → dry_run 처리", raw)
+    return True
+
+
+def is_dry_run() -> bool:
+    """호출 시점 env로 판정한다(테스트의 monkeypatch.setenv 반영)."""
+    return parse_dry_run(os.getenv("DRY_RUN"))
+
+
+DRY_RUN = is_dry_run()  # 기존 import 호환 — 프로세스 시작 시점 값
 LOG_LEVEL = os.getenv("LOG_LEVEL", "INFO")
 
 # ─── FRESHNESS GUARD (2026-08-12, CACHE-FREEZE 보완) ──────

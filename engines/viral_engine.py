@@ -3,8 +3,11 @@ engines/viral_engine.py (C-6 / C-18 / C-19 / C-20 통합)
 ===================================================
 바이럴 콘텐츠 통합 엔진.
 
-VERSION = "1.7.0"
+VERSION = "1.7.1"
 
+
+v1.7.1 (2026-10-21, DN2026_0022):
+  - _is_dry_run()을 config.settings.is_dry_run()에 위임(STD-MODE-06). 빈 값·기타 값에서 발행 계층과 판정 일치.
 
 v1.7.0 (2026-04-26):
   - [신규] 타깃 세그먼트 5종 (S1~S5) — config/viral_targeting.yml 외부화
@@ -214,7 +217,10 @@ def _is_korean(text: str) -> bool:
 
 
 def _is_dry_run() -> bool:
-    return os.environ.get("DRY_RUN", "true").lower() != "false"
+    """DRY_RUN 판정은 config.settings 단일 파서에 위임한다(STD-MODE-06, DN2026_0022)."""
+    from config.settings import is_dry_run
+
+    return is_dry_run()
 
 
 def _today_hash() -> int:

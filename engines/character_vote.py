@@ -3,7 +3,10 @@ engines/character_vote.py
 ================================
 A안: C-19 캐릭터 투표 재활성화 + C-7 소설 연동 루프.
 
-VERSION = "1.0.0"
+VERSION = "1.0.1"
+
+v1.0.1 (2026-10-21, DN2026_0022):
+  - _is_dry_run()을 config.settings.is_dry_run()에 위임(STD-MODE-06).
 
 v1.0.0 (2026-08-10):
   - 신규. 기존 viral_engine._generate_character_vote()의 후보 선정 로직 이식.
@@ -18,14 +21,13 @@ v1.0.0 (2026-08-10):
 from __future__ import annotations
 
 import logging
-import os
 import random
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
 logger = logging.getLogger(__name__)
 
-VERSION = "1.0.0"
+VERSION = "1.0.1"
 
 KST = timezone(timedelta(hours=9))
 
@@ -75,12 +77,13 @@ def _get_client():
 
 
 def _is_dry_run() -> bool:
-    """settings.DRY_RUN(발행 계층)과 동일 규칙 — 발행/DB저장 판정 불일치 방지.
+    """DRY_RUN 판정은 config.settings 단일 파서에 위임한다(STD-MODE-06, DN2026_0022).
 
-    주의: != "false" 규칙 사용 금지. env가 빈 문자열이면 x_publisher는
-    실발행하는데 DB 저장만 skip되어 정산 불가 고아 트윗이 발생한다.
+    발행 계층(x_publisher)과 같은 규칙이어야 발행/DB저장 판정이 엇갈리지 않는다.
     """
-    return os.environ.get("DRY_RUN", "true").lower() == "true"
+    from config.settings import is_dry_run
+
+    return is_dry_run()
 
 
 def _is_valid_tweet_id(tweet_id: Any) -> bool:
