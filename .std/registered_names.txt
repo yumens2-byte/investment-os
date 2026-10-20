@@ -1,0 +1,57 @@
+# std_check C-ENV-03 등록 이름 목록 (STD-CFG-02) — 이름만 적는다. 값은 절대 적지 않는다(STD-GOV-07).
+# 초기값: 2026-10-20 워크플로가 참조하는 이름을 그대로 옮긴 것이다(ea4c8ff 기준).
+# 마스터 확인 필요: GitHub Settings → Secrets and variables → Actions 화면의 실제 등록 목록과 대조해
+#   등록되지 않은 이름은 지우고(그러면 C-ENV-03 오류로 드러남), 새 이름은 등록과 동시에 여기에 추가한다.
+secrets.ANTHROPIC_API_KEY
+secrets.DRY_RUN
+secrets.EDT_SNAPSHOT_PAGE_ID
+secrets.FACE_PAGE_ID
+secrets.FACE_PAGE_TOKEN
+secrets.FAL_AI_KEY
+secrets.FORCE_RUN
+secrets.FRED_API_KEY
+secrets.GEMINI_API_KEY
+secrets.GEMINI_API_SUB_KEY
+secrets.GEMINI_API_SUB_PAY_KEY
+secrets.GEMINI_API_SUB_SUB_KEY
+secrets.HERO_ALERT_EMAIL
+secrets.HERO_FROM_ACCOUNT
+secrets.HERO_THREADS_ACCOUNT_ID
+secrets.HERO_YOUTUBE_ACCOUNT_ID
+secrets.HERO_ZERNIO_ACCOUNT_ID
+secrets.LUNAR_CRUSH_API_KEY
+secrets.MULTILINGUAL_ENABLED
+secrets.NOTION_API_KEY
+secrets.NOTION_API_TOKEN
+secrets.NOTION_TOKEN
+secrets.NUNA_FACEBOOK_ACCOUNT_ID
+secrets.NUNA_INSTAGRAM_ACCOUNT_ID
+secrets.NUNA_TELEGRAM_ADMIN_IDS
+secrets.NUNA_THREADS_ACCOUNT_ID
+secrets.NUNA_YOUTUBE_ACCOUNT_ID
+secrets.OPENAI_API_KEY
+secrets.SUPABASE_KEY
+secrets.SUPABASE_SERVICE_ROLE_KEY
+secrets.SUPABASE_URL
+secrets.TELEGRAM_BOT_TOKEN
+secrets.TELEGRAM_FREE_CHANNEL_ID
+secrets.TELEGRAM_PAID_CHANNEL_ID
+secrets.X_ACCESS_TOKEN
+secrets.X_ACCESS_TOKEN_SECRET
+secrets.X_API_KEY
+secrets.X_API_SECRET
+secrets.YOUTUBE_CHANNELS
+secrets.ZERNIO_API_KEY
+secrets.ZERNIO_API_SUB_KEY
+vars.DRY_RUN
+vars.FACE_ENABLED
+vars.FACE_NOVEL_ENABLED
+vars.FACE_SESSIONS
+vars.NUNA_DURATION_SEC
+vars.NUNA_ENABLED
+vars.NUNA_FB_CUT
+vars.NUNA_MARKET_SOURCE
+vars.NUNA_REF_IMAGE_URLS
+vars.NUNA_TTS_VOICE
+vars.RUNNER2_ENABLED
+vars.VIRAL_AUTO_DELETE
