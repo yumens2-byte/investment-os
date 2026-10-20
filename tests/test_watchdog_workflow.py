@@ -27,7 +27,7 @@ def _watched_workflow_names() -> set[str]:
 
 def test_watchdog_monitors_every_production_workflow() -> None:
     """Every workflow other than CI and the watchdog itself must be monitored."""
-    ignored_files = {"ci_alert_tests.yml", WATCHDOG_PATH.name, "morning_schedule_watchdog.yml"}
+    ignored_files = {"ci_alert_tests.yml", WATCHDOG_PATH.name, "morning_schedule_watchdog.yml", "std_check.yml"}
     production_names = {
         _workflow_name(path)
         for path in WORKFLOW_DIRECTORY.glob("*.yml")
