@@ -23,7 +23,6 @@
     "C-MODE-01|.github/workflows/nuna_weekly_publish.yml|이벤트 가드 없는 inputs 폴백: github.event.inputs.dry_run || secrets.DRY_RUN",
     "C-MODE-01|.github/workflows/prediction_league.yml|이벤트 가드 없는 inputs 폴백: github.event.inputs.dry_run || secrets.DRY_RUN",
     "C-MODE-02|comic/pipeline.py|DRY_RUN 부정 판정 — 빈 값을 dry_run 으로 보는 이 모듈과 '== \"true\"' 발행 계층이 엇갈림(08-11 고아 발행): dry_run = _dry_run_val != \"false\"  # \"false\"일 때만 실 발행, 나머지는 DRY_RUN",
-    "C-MODE-02|engines/viral_engine.py|DRY_RUN 부정 판정 — 빈 값을 dry_run 으로 보는 이 모듈과 '== \"true\"' 발행 계층이 엇갈림(08-11 고아 발행): return os.environ.get(\"DRY_RUN\", \"true\").lower() != \"false\"",
     "C-MODE-02|gen/nuna_weekly/config.py|DRY_RUN 부정 판정 — 빈 값을 dry_run 으로 보는 이 모듈과 '== \"true\"' 발행 계층이 엇갈림(08-11 고아 발행): return _env(\"DRY_RUN\", \"true\").lower() != \"false\"",
     "C-NEST-01|gen/hero_shorts/hero_shorts|같은 이름 폴더 중첩 — 실행 경로 밖 복제본일 수 있음",
     "C-PY-01|etf_engine.py|파이썬 문법 오류(파싱 불가)",
