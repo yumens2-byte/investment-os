@@ -67,13 +67,20 @@ class Ctx:
         self.run_date = run_date
         self.dry = dry
         self.store = store if store is not None else db.make_store(dry)
-        self.backends = backends if backends is not None else make_backends(dry)
+        self._backends = backends
         self._zernio = zernio_clients
         self._telegram = telegram
         self.gate = calendar_gate.evaluate(run_date)
         self.episode_id = self.gate.episode_id
         self.out = config.out_dir(self.episode_id)
         self._budget = None
+
+    @property
+    def backends(self):
+        # 발행 워크플로에는 생성 API 키가 없다. 생성 단계에서만 초기화한다.
+        if self._backends is None:
+            self._backends = make_backends(self.dry)
+        return self._backends
 
     @property
     def budget(self) -> budget_mod.Budget:
@@ -286,6 +293,17 @@ def run_gen(ctx: Ctx, only: str | None = None) -> int:
     if status in DONE_GEN or status in ("SKIPPED", "FAILED"):
         log.info("[NunaWeekly:pipeline] 이미 %s — 생성 단계 없음", status)
         return 0
+    if status in ("ASSEMBLED", "QC_PASSED"):
+        assets = dict(ctx.episode().get("assets_json") or {})
+        videos = assets.get("videos") or {}
+        if not videos or any(not Path(p).is_file() for p in videos.values()):
+            if only:
+                raise PipelineError("새 러너에 영상 없음 — step=run 으로 재조립·QC 후 재개 필요")
+            assets.pop("videos", None)
+            if not ctx.store.transition(ctx.episode_id, [status], "CLIPPED",
+                                        {"assets_json": assets, "qc_json": None}):
+                raise PipelineError("재조립 상태 전이 경합")
+            log.info("새 러너에 영상 없음 — 원격 이미지·클립 복원 후 재조립·QC 재실행")
     for step, before, after in GEN_STEPS:
         if only and step != only:
             continue
@@ -328,27 +346,35 @@ def run_publish(ctx: Ctx, step: str = "publish", sleep=time.sleep) -> int:
     log.info("[NunaWeekly:pipeline] v%s 발행 시작 · %s · step=%s · dry=%s", VERSION, ctx.episode_id, step, ctx.dry)
     ep = ctx.store.get_episode(ctx.episode_id)
     if not ep:
-        log.info("원장에 회차 없음 — 발행 대상 없음")
-        return 0
+        log.error("원장에 회차 없음 — 생성 성공 및 DRY_RUN=false 원장 적재 확인 필요")
+        return 1
     status = ep["status"]
     if step == "verify":
         return _verify(ctx, sleep)
-    if status in ("SCHEDULED", "PUBLISHED", "PARTIAL", "HELD", "SKIPPED"):
+    if status in ("PUBLISHED", "HELD", "SKIPPED"):
         log.info("[NunaWeekly:pipeline] 이미 %s — 발행 단계 없음", status)
         return 0
-    if status != "NOTIFIED":
+    retry = status in ("SCHEDULED", "PARTIAL", "FAILED") and bool(ep.get("notified_at"))
+    if status != "NOTIFIED" and not retry:
         msg = f"[NUNA] {ctx.episode_id} 발행 보류 — 생성 미완료(상태 {status}). 생성 완료 후 발행 워크플로 수동 실행"
         log.warning(msg)
         _report(ctx, msg)
-        return 0
+        return 1
     tg = ctx.telegram()
     if tg is not None and not ctx.dry:
         hold = tg.poll_hold(ctx.episode_id)
         if hold:
+            if retry:
+                raise PipelineError("이미 예약된 회차 보류는 Zernio 예약 취소 후 처리 필요")
             ctx.store.transition(ctx.episode_id, ["NOTIFIED"], "HELD", {"hold_at": hold["at"], "hold_by": hold["by"]})
             _report(ctx, f"[NUNA] {ctx.episode_id} 보류 처리됨 — 발행하지 않음")
             return 0
     notified_at = datetime.fromisoformat(ep["notified_at"]) if ep.get("notified_at") else None
+    sched = publish_mod.scheduled_for(ctx.gate.publish_date, notified_at)
+    existing = {t["platform"]: t.get("status") for t in ctx.store.list_targets(ctx.episode_id)}
+    unsent = [p for p in config.PLATFORMS if existing.get(p) not in publish_mod.DONE_STATES]
+    if not ctx.dry and unsent and sched <= datetime.now(config.KST):
+        raise PipelineError("예약 시각 경과 — 과거 회차 자동 재발행 차단. 예약·채널 원장 확인 필요")
     media = ep.get("media_json") or {}
     fb_variant = "fb_cut" if "fb_cut" in media else "main"
     results = publish_mod.publish(ctx.episode_id, ctx.store, ctx.zernio(), Script.from_dict(ep["script_json"]),
@@ -358,11 +384,11 @@ def run_publish(ctx: Ctx, step: str = "publish", sleep=time.sleep) -> int:
     if ctx.dry:
         _report(ctx, f"[NUNA] {ctx.episode_id} DRY_RUN 발행 점검 완료: {summary}")
         return 0
-    sched = publish_mod.scheduled_for(ctx.gate.publish_date, notified_at)
     ok = any(s in ("scheduled", "published") for s in summary.values())
-    ctx.store.transition(ctx.episode_id, ["NOTIFIED"], "SCHEDULED" if ok else "FAILED",
+    if not ctx.store.transition(ctx.episode_id, [status], "SCHEDULED" if ok else "FAILED",
                          {"scheduled_for": sched.isoformat(),
-                          "last_error": None if ok else secret_env.redact(json.dumps(summary, ensure_ascii=False), 500)})
+                          "last_error": None if ok else secret_env.redact(json.dumps(summary, ensure_ascii=False), 500)}):
+        raise PipelineError("발행 상태 전이 실패 — 원장 확인 필요")
     _report(ctx, f"[NUNA] {ctx.episode_id} 예약 {sched.strftime('%m/%d %H:%M')} KST · {summary}")
     if not ok:
         return 1
@@ -419,15 +445,23 @@ def main(argv: list[str] | None = None) -> int:
         log.info("[NunaWeekly:pipeline] NUNA_ENABLED != 1 — schedule 실행 종료")
         return 0
     try:
-        ctx = Ctx(_parse_date(a.date), config.dry_run())
+        run_date = _parse_date(a.date)
+        allowed = ({"run", "preflight", "poc"} | {s[0] for s in GEN_STEPS}
+                   if a.command == "gen" else {"publish", "verify"})
+        if a.step and a.step not in allowed:
+            raise PipelineError(f"{a.command} 단계 허용값 아님: {a.step}")
+        if a.command == "gen" and a.step == "preflight":
+            gate = calendar_gate.evaluate(run_date)
+            log.info("[NunaWeekly:pipeline] preflight: %s ok=%s days=%s holidays=%s reason=%s",
+                     gate.episode_id, gate.ok, gate.us_days, gate.holidays, gate.skip_reason)
+            if gate.ok:
+                collect.require_closed_sessions(gate, datetime.now(config.KST))
+            return 0
+        ctx = Ctx(run_date, config.dry_run())
         if a.command == "gen":
             step = a.step or "run"
             if step == "poc":
                 raise PipelineError("poc 단계는 PoC 승인 후 별도 구현 예정(설계서 11장)")
-            if step == "preflight":
-                log.info("[NunaWeekly:pipeline] preflight: %s ok=%s days=%s holidays=%s reason=%s",
-                         ctx.episode_id, ctx.gate.ok, ctx.gate.us_days, ctx.gate.holidays, ctx.gate.skip_reason)
-                return 0
             return run_gen(ctx, None if step == "run" else step)
         return run_publish(ctx, a.step or "publish")
     except Exception as e:

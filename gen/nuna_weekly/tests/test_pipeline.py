@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import json
 import subprocess
-from datetime import date
+from datetime import date, datetime
 
 import pytest
 
@@ -45,6 +45,13 @@ class _NoTelegram:
 
 @pytest.fixture()
 def env(monkeypatch, tmp_path):
+    class Clock(datetime):
+        @classmethod
+        def now(cls, tz=None):
+            fixed = datetime(2026, 10, 22, 6, 50, tzinfo=config.KST)
+            return fixed.astimezone(tz) if tz else fixed.replace(tzinfo=None)
+
+    monkeypatch.setattr(pipeline, "datetime", Clock)
     monkeypatch.setenv("NUNA_MARKET_SOURCE", "supabase")
     monkeypatch.setenv("NUNA_DURATION_SEC", "60")
     monkeypatch.setattr(config, "OUT_ROOT", tmp_path / "out")
