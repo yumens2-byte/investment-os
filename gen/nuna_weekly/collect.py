@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import json
 import logging
+import math
 import time
 from collections.abc import Callable
 from datetime import date, datetime, timedelta
@@ -54,6 +55,24 @@ class CollectError(RuntimeError):
     """필수 사실 수집 실패 — fail-closed."""
 
 
+def require_closed_sessions(gate: GateResult, now: datetime) -> None:
+    """월~수 전체가 끝나기 전에는 주간 확정 종가를 조회하지 않는다.
+
+    정규장 16:00 NY를 보수적 기준으로 사용한다(조기 폐장도 이 시각 이후 허용).
+    --date는 회차 선택일 뿐, 실제 수집 시각을 과거나 미래로 바꾸지 않는다.
+    """
+    if now.tzinfo is None:
+        raise CollectError("수집 시각에는 시간대가 필요합니다")
+    if gate.us_days:
+        last = max(gate.us_days)
+        ready = datetime(last.year, last.month, last.day, 16, tzinfo=config.NY)
+        if now < ready:
+            raise CollectError(
+                f"MARKET_NOT_READY: 월~수 미국장 종료 전 · 수집 가능 시각 "
+                f"{ready.astimezone(config.KST).isoformat()} 이후 · "
+                "목요일 생성 또는 완료된 과거 주차 --date 사용")
+
+
 # --------------------------------------------------------------------------- #
 # direct — Yahoo v8 chart
 # --------------------------------------------------------------------------- #
@@ -74,7 +93,10 @@ def _parse_chart(key: str, body: Any) -> list[tuple[date, float]]:
         for ts, c in zip(stamps, closes, strict=True):
             if c is None:
                 continue
-            bars[datetime.fromtimestamp(int(ts), tz).date()] = float(c)
+            value = float(c)
+            if not math.isfinite(value):
+                raise ValueError
+            bars[datetime.fromtimestamp(int(ts), tz).date()] = value
     except Exception:
         raise CollectError(f"Yahoo 응답 형식 오류: {key}({config.TICKERS[key]})") from None
     return sorted(bars.items())
@@ -173,7 +195,8 @@ def _collect_direct(gate: GateResult, days: list[DayFacts], session,
 # --------------------------------------------------------------------------- #
 def _num(v: Any) -> float | None:
     try:
-        return None if v is None else round(float(v), 2)
+        value = float(v) if v is not None else None
+        return round(value, 2) if value is not None and math.isfinite(value) else None
     except (TypeError, ValueError):
         return None
 
@@ -252,6 +275,8 @@ def _collect_news(gate: GateResult, store) -> tuple[list[dict[str, str]], list[s
 def build_facts(gate: GateResult, store, session=None, now_kst: datetime | None = None,
                 sleep: Callable[[float], None] = time.sleep) -> Facts:
     log.info("[NunaWeekly:collect] v%s 시작 · %s", VERSION, gate.episode_id)
+    now = now_kst or datetime.now(config.KST)
+    require_closed_sessions(gate, now)
     mode = config.market_source()
     trading = {d.isoformat() for d in gate.us_days}
     days = [DayFacts(us_date=d.isoformat(), closed=d.isoformat() not in trading,
@@ -274,7 +299,7 @@ def build_facts(gate: GateResult, store, session=None, now_kst: datetime | None 
     except (TypeError, ValueError):
         fear_greed = None
 
-    now = (now_kst or datetime.now(config.KST)).astimezone(config.KST)
+    now = now.astimezone(config.KST)
     facts = Facts(
         episode_id=gate.episode_id, source=mode, fetched_at=now.isoformat(timespec="seconds"), days=days,
         week_sp500_chg=week_sp, week_nasdaq_chg=week_nq,
