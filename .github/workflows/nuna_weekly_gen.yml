@@ -67,12 +67,11 @@ jobs:
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
           GEMINI_API_SUB_PAY_KEY: ${{ secrets.GEMINI_API_SUB_PAY_KEY }}
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
-          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+          SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
           ZERNIO_API_KEY: ${{ secrets.ZERNIO_API_KEY }}
           ZERNIO_API_SUB_KEY: ${{ secrets.ZERNIO_API_SUB_KEY }}
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_PAID_CHANNEL_ID: ${{ secrets.TELEGRAM_PAID_CHANNEL_ID }}
-          NUNA_TELEGRAM_ADMIN_IDS: ${{ secrets.NUNA_TELEGRAM_ADMIN_IDS }}
         run: |
           ARGS=(--step "$IN_STEP" --date "$IN_DATE")
           if [ "$IN_EVENT" = "schedule" ]; then ARGS+=(--scheduled); fi

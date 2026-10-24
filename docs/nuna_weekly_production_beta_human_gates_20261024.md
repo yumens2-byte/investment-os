@@ -22,16 +22,20 @@ Repository → Settings → Secrets and variables → Actions에서 확인한다
 | Variables | NUNA_FB_CUT | 0 |
 | Variables | NUNA_MARKET_SOURCE | direct |
 | Variables | NUNA_TTS_VOICE | Kore |
-| Secrets | SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY | 둘 다 필요. 최초 실패 로그의 SERVICE_ROLE_KEY가 비어 있었으므로 우선 확인 |
+| Secrets | SUPABASE_URL, SUPABASE_KEY | 기존 SUPABASE_KEY Secret을 사용한다. 2026-10-24 사용자 승인으로 참조 이름을 변경했다. |
 | Secrets | ANTHROPIC_API_KEY, GEMINI_API_SUB_PAY_KEY, FAL_AI_KEY | 실생성에 필요 |
 | Secrets | ZERNIO_API_KEY, ZERNIO_API_SUB_KEY | 생성 결과 스테이징과 예약에 필요 |
 | Secrets | NUNA_INSTAGRAM_ACCOUNT_ID, NUNA_THREADS_ACCOUNT_ID | main 키에 연결된 계정 |
 | Secrets | NUNA_YOUTUBE_ACCOUNT_ID, NUNA_FACEBOOK_ACCOUNT_ID | sub 키에 연결된 계정 |
 | Secrets | TELEGRAM_BOT_TOKEN, TELEGRAM_PAID_CHANNEL_ID | 생성 결과 검수 알림 |
-| Secrets | NUNA_TELEGRAM_ADMIN_IDS | 보류 권한 Telegram 사용자 ID 목록 |
+| 보류 권한 | TELEGRAM_PAID_CHANNEL_ID 기준 | 별도 관리자 ID Secret 없음. 해당 채널 관리자 조회로 검증하며, 조회 실패 시 발행 중단 |
 
 NUNA_ENABLED의 현재 값은 API로 확인하지 못했다. 자동 예약과 수동 검수를 분리하려면 베타 시작 전 0임을 확인한다.
 사전에 종료된 미국 월~수 거래일을 대상으로만 테스트한다.
+
+2026-10-24 추가 운영 변경: DB 키 참조는 SUPABASE_KEY로 통일했다. 보류 권한은 TELEGRAM_PAID_CHANNEL_ID의 실제 채널 관리자 조회로 확인한다.
+채널에서는 알림 봇과 보류할 사용자의 관리자 권한을 확인한다. 관리자 조회 실패 시 알림·발행을 중단한다.
+개인 대화 ID를 사용하는 경우에는 해당 대화의 상대 사용자만 보류할 수 있다. 별도 관리자 ID Secret은 필요하지 않다.
 
 ## 1. 오늘 테스트의 공통 입력
 

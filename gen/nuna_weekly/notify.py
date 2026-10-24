@@ -4,8 +4,8 @@ gen/nuna_weekly/notify.py — 텔레그램 알림·보류 버튼 (설계서 8장
 gen/hero_shorts/approval.py 의 Bot API 사용법(sendVideo multipart · sendMessage ·
 getUpdates allowed_updates=["callback_query"] · answerCallbackQuery · inline_keyboard)을 이식했다.
 
-S-04 — 보류 콜백은 NUNA_TELEGRAM_ADMIN_IDS(쉼표 구분 정수)에 든 사용자 id 만 수락한다.
-       관리자 ID 미설정이면 보류 버튼 자체를 붙이지 않는다(누구나 누르는 버튼 금지).
+S-04 — TELEGRAM_PAID_CHANNEL_ID로 지정한 채널의 실제 관리자만 보류할 수 있다.
+       getChat/getChatAdministrators로 확인하며 조회 실패 시 중단한다.
        거부 시도는 사용자 id 만 기록(이름·username 미기록).
 토큰은 URL(/bot<token>/)에 들어가므로 예외·로그는 반드시 secret_env.redact 를 거친다.
 """
@@ -32,19 +32,6 @@ class NotifyError(RuntimeError):
     """텔레그램 호출 실패 (메시지는 마스킹됨)."""
 
 
-def parse_admin_ids(raw: str | None) -> set[int]:
-    out: set[int] = set()
-    for tok in (raw or "").split(","):
-        tok = tok.strip()
-        if not tok:
-            continue
-        try:
-            out.add(int(tok))
-        except ValueError:
-            log.warning("[NunaWeekly:notify] NUNA_TELEGRAM_ADMIN_IDS 에 정수 아닌 항목 무시")
-    return out
-
-
 def hold_callback(episode_id: str) -> str:
     return f"{CB_PREFIX}{episode_id}"
 
@@ -61,7 +48,7 @@ def build_generated(episode_id: str, scheduled_at: datetime, admin_ids: set[int]
     if admin_ids:
         markup = {"inline_keyboard": [[{"text": "보류", "callback_data": hold_callback(episode_id)}]]}
     else:
-        caption += "\n보류 버튼 비활성: 관리자 ID 미설정"
+        caption += "\n보류 버튼 비활성: 채널 관리자 미확인"
     return {"caption": caption[:CAPTION_MAX], "reply_markup": markup}
 
 
@@ -75,8 +62,40 @@ class TelegramClient:
         self.timeout = timeout
         self._token = secret_env.require("TELEGRAM_BOT_TOKEN")
         self.chat_id = secret_env.require("TELEGRAM_PAID_CHANNEL_ID")
-        self.admin_ids = parse_admin_ids(secret_env.optional("NUNA_TELEGRAM_ADMIN_IDS"))
-        log.info("[NunaWeekly:notify] v%s 시작 — 관리자 %d명", VERSION, len(self.admin_ids))
+        self.admin_ids: set[int] = set()
+        self._chat: dict[str, Any] | None = None
+        log.info("[NunaWeekly:notify] v%s 시작 — 채널 기준 관리자 조회", VERSION)
+
+    def _resolve_admin_ids(self, refresh: bool = False) -> set[int]:
+        if self._chat is None:
+            chat = self._call("getChat", {"chat_id": self.chat_id})
+            if (not isinstance(chat, dict) or type(chat.get("id")) is not int
+                    or chat.get("type") not in ("private", "group", "supergroup", "channel")):
+                raise NotifyError("Telegram 대상 채팅 확인 실패 — 보류 권한 확인 불가")
+            self._chat = chat
+        if self.admin_ids and not refresh:
+            return self.admin_ids
+        if self._chat["type"] == "private":
+            # 개인 대화는 chat ID가 상대 사용자 ID와 같다. 그 사용자만 허용한다.
+            ids = {self._chat["id"]} if self._chat["id"] > 0 else set()
+        else:
+            rows = self._call("getChatAdministrators", {"chat_id": self._chat["id"]})
+            if not isinstance(rows, list):
+                raise NotifyError("Telegram 채널 관리자 응답 형식 오류")
+            ids = set()
+            for row in rows:
+                if not isinstance(row, dict) or row.get("status") not in ("creator", "administrator"):
+                    continue
+                user = row.get("user") or {}
+                if not isinstance(user, dict):
+                    continue
+                uid = user.get("id")
+                if type(uid) is int and uid > 0 and user.get("is_bot") is False:
+                    ids.add(uid)
+        if not ids:
+            raise NotifyError("Telegram 보류 권한 사용자 없음 — 채널 관리자·봇 권한 확인 필요")
+        self.admin_ids = ids
+        return ids
 
     def _call(self, method: str, params: dict[str, Any] | None = None,
               file_field: str | None = None, file_path: Path | None = None, timeout: int | None = None) -> Any:
@@ -104,7 +123,8 @@ class TelegramClient:
     # ── 생성 완료 알림 ──
     def notify_generated(self, episode_id: str, video_path: str | Path | None, scheduled_at: datetime,
                          dry: bool) -> dict[str, Any]:
-        plan = build_generated(episode_id, scheduled_at, self.admin_ids)
+        admins = self._resolve_admin_ids() if not dry else set()
+        plan = build_generated(episode_id, scheduled_at, admins)
         p = Path(video_path) if video_path else None
         use_video = bool(p and p.is_file() and p.stat().st_size <= config.TELEGRAM_VIDEO_MAX_BYTES)
         method = "sendVideo" if use_video else "sendMessage"
@@ -130,17 +150,28 @@ class TelegramClient:
 
     # ── 보류 콜백 폴링 ──
     def poll_hold(self, episode_id: str) -> dict[str, Any] | None:
+        admins = self._resolve_admin_ids(refresh=True)
         # offset 확정(ack)을 하지 않는다 — 같은 봇의 hero_shorts 승인 콜백(hs:*)까지 소비하기 때문.
         params: dict[str, Any] = {"timeout": POLL_TIMEOUT_SEC, "allowed_updates": ["callback_query"]}
         updates = self._call("getUpdates", params, timeout=POLL_TIMEOUT_SEC + 30) or []
+        if not isinstance(updates, list):
+            raise NotifyError("Telegram callback 응답 형식 오류")
         want = hold_callback(episode_id)
         accepted: dict[str, Any] | None = None
         for u in updates:
+            if not isinstance(u, dict):
+                continue
             cq = u.get("callback_query") or {}
+            if not isinstance(cq, dict):
+                continue
             if cq.get("data") != want:
                 continue
             from_id = (cq.get("from") or {}).get("id")
-            ok = isinstance(from_id, int) and from_id in self.admin_ids
+            message = cq.get("message") or {}
+            chat = message.get("chat") or {}
+            ok = (type(from_id) is int and from_id in admins
+                  and (cq.get("from") or {}).get("is_bot") is not True
+                  and type(chat.get("id")) is int and chat["id"] == self._chat["id"])
             try:
                 self._call("answerCallbackQuery", {"callback_query_id": cq.get("id"),
                                                    "text": "보류 접수" if ok else "권한 없음",

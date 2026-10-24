@@ -2,7 +2,7 @@
 # nuna_weekly_publish.yml — NUNA 주간 뉴스 쇼츠 · 발행 워크플로 (v1.0.0)
 #   설계서 3·8·10·15장 (2026-10-19)
 #   cron UTC "12 23 * * 3" = 목 08:12 KST → Zernio scheduledFor = max(08:30, 알림+62분)
-#   Telegram [보류] 콜백은 NUNA_TELEGRAM_ADMIN_IDS 허용 목록만 인정 (S-04)
+#   Telegram [보류] 콜백은 TELEGRAM_PAID_CHANNEL_ID의 채널 관리자만 인정 (S-04)
 #   timeout 90분 = 최대 60분 보류창 + 예약 후 검증 포함
 #   fal·Claude·Gemini 키는 이 워크플로에 주입하지 않는다 (15.2 최소 권한)
 # ─────────────────────────────────────────────────────────────────────────────
@@ -58,7 +58,7 @@ jobs:
           IN_DATE: ${{ github.event.inputs.date }}
           IN_EVENT: ${{ github.event_name }}
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
-          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+          SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
           ZERNIO_API_KEY: ${{ secrets.ZERNIO_API_KEY }}
           ZERNIO_API_SUB_KEY: ${{ secrets.ZERNIO_API_SUB_KEY }}
           NUNA_INSTAGRAM_ACCOUNT_ID: ${{ secrets.NUNA_INSTAGRAM_ACCOUNT_ID }}
@@ -67,7 +67,6 @@ jobs:
           NUNA_FACEBOOK_ACCOUNT_ID: ${{ secrets.NUNA_FACEBOOK_ACCOUNT_ID }}
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_PAID_CHANNEL_ID: ${{ secrets.TELEGRAM_PAID_CHANNEL_ID }}
-          NUNA_TELEGRAM_ADMIN_IDS: ${{ secrets.NUNA_TELEGRAM_ADMIN_IDS }}
         run: |
           ARGS=(--step "$IN_STEP" --date "$IN_DATE")
           if [ "$IN_EVENT" = "schedule" ]; then ARGS+=(--scheduled); fi

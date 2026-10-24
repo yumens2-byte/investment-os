@@ -5,7 +5,7 @@ supabase-py 를 쓰지 않는다: supabase==2.10.0 과 google-genai>=2.25 가 �
 (2026-10-19 pip 해석 실패 실측). PostgREST REST 를 requests 로 직접 호출한다.
 
 보안 (설계서 15장):
-    S-05 — 키는 SUPABASE_SERVICE_ROLE_KEY (RLS 우회 권한) — 이 모듈만 읽는다.
+    S-05 — 서버용 DB 키는 기존 SUPABASE_KEY Secret을 사용 — 이 모듈만 읽는다.
     S-06 — 테이블 허용 목록 밖 접근은 호출 전에 예외.
 
 테스트·DRY_RUN 용 MemoryStore 는 RestStore 와 동일한 의미(상한·조건부 전이)를 구현한다.
@@ -73,7 +73,7 @@ class RestStore:
         import requests
 
         self.base = (url or secret_env.require("SUPABASE_URL")).rstrip("/") + "/rest/v1"
-        self._key = key or secret_env.require("SUPABASE_SERVICE_ROLE_KEY")
+        self._key = key or secret_env.require("SUPABASE_KEY")
         secret_env.register(self._key)
         self.s = session or requests.Session()
         self.timeout = timeout
@@ -338,7 +338,7 @@ def make_store(dry: bool, memory_only: bool = False) -> Any:
         return MemoryStore()
     if dry:
         reader = None
-        if secret_env.optional("SUPABASE_URL") and secret_env.optional("SUPABASE_SERVICE_ROLE_KEY"):
+        if secret_env.optional("SUPABASE_URL") and secret_env.optional("SUPABASE_KEY"):
             reader = RestStore()
         return DryRunStore(reader)
     return RestStore()
