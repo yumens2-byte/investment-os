@@ -86,3 +86,16 @@ Ruff·actionlint 1.7.7(관련 YAML 3개)·git diff --check 통과. 실제 키의
 - 실제 데이터 쓰기·유료 생성·SNS 발행은 실행하지 않았다.
 
 증거: https://github.com/yumens2-byte/investment-os/actions/runs/40062697708/job/120779890530
+
+## 전용 Secret 복원 후 실검증 성공
+
+운영 코드 7d08d2b32e35de3dd3e8b4f24e1231497759f938에서 생성·발행·DB 점검 CI와 코드 모두 SUPABASE_SERVICE_ROLE_KEY를 사용하도록 복원했다.
+GitHub 원격 회귀 검사와 실제 키 읽기 검사가 모두 통과했다.
+- key_source: SUPABASE_SERVICE_ROLE_KEY
+- key_type: legacy_jwt
+- db_host: ccomoimhhttaklfadaos.supabase.co
+- readable_tables: daily_analysis, daily_news, daily_snapshots, nuna_cost_ledger, nuna_episodes, nuna_publish_targets, nuna_step_runs (7개)
+- 결과: DB_CHECK_PASSED. 기존 NUNA 테이블 조회 권한 거부는 해당 Secret으로 발생하지 않았다.
+- write_permission: not_tested. 실제 INSERT/UPDATE, 유료 생성·SNS 발행 성공까지 검증한 것은 아니다.
+
+증거: https://github.com/yumens2-byte/investment-os/actions/runs/40063148099/job/120781125647
