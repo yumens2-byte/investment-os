@@ -29,6 +29,7 @@ class _Charge:
         self.usd = est_usd
         self.units: float | None = None
         self.request_id: str | None = None
+        self.actual_known = False
 
     def actual(self, usd: float | None = None, units: float | None = None,
                request_id: str | None = None) -> None:
@@ -36,6 +37,7 @@ class _Charge:
             self.usd = float(usd)
         self.units = units
         self.request_id = request_id
+        self.actual_known = True
 
 
 class Budget:
@@ -69,8 +71,13 @@ class Budget:
         try:
             yield ch
         except Exception:
-            self.store.settle_cost(cid, "charged", usd=est_usd, fx_rate=self.fx)
-            log.warning("유료 호출 실패 — 과금 여부 불명, 예약액으로 확정: %s/%s $%.4f", step, provider, est_usd)
+            if ch.actual_known:
+                self.store.settle_cost(cid, "charged", usd=ch.usd, units=ch.units, fx_rate=self.fx,
+                                       request_id=ch.request_id)
+                log.warning("응답 처리 실패 — 확인된 사용량 정산: %s/%s $%.4f", step, provider, ch.usd)
+            else:
+                self.store.settle_cost(cid, "charged", usd=est_usd, fx_rate=self.fx)
+                log.warning("유료 호출 실패 — 과금 여부 불명, 예약액으로 확정: %s/%s $%.4f", step, provider, est_usd)
             raise
         self.store.settle_cost(cid, "charged", usd=ch.usd, units=ch.units, fx_rate=self.fx,
                                request_id=ch.request_id)

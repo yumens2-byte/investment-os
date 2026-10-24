@@ -29,6 +29,32 @@ class LLMError(RuntimeError):
     """LLM 응답을 JSON 대본으로 해석할 수 없음."""
 
 
+class LLMResponseError(LLMError):
+    """응답을 받은 뒤 발생한 오류. 본문 대신 정산·재시도 메타데이터만 보존."""
+
+    def __init__(self, message: str, result: LLMResult, retryable: bool) -> None:
+        super().__init__(message)
+        self.result = result
+        self.retryable = retryable
+
+
+def _object_schema(properties: dict[str, Any]) -> dict[str, Any]:
+    return {"type": "object", "properties": properties, "required": list(properties),
+            "additionalProperties": False}
+
+
+SCRIPT_SCHEMA = _object_schema({
+    "title": {"type": "string"},
+    "hashtags": {"type": "array", "items": {"type": "string"}},
+    "captions": _object_schema({p: {"type": "string"} for p in config.PLATFORMS}),
+    "segments": {"type": "array", "items": _object_schema({
+        **{k: {"type": "string"} for k in
+           ("seg_id", "narration", "card_title", "image_prompt", "clip_prompt")},
+        "card_lines": {"type": "array", "items": {"type": "string"}},
+    })},
+})
+
+
 def parse_json_text(text: str) -> dict[str, Any]:
     """``` 펜스 제거 후 JSON 객체 파싱. 실패 시 LLMError(본문 미노출)."""
     body = _FENCE_RE.sub("", text or "").strip()
@@ -50,22 +76,36 @@ class ClaudeBackend:
             import anthropic
 
             client = anthropic.Anthropic(api_key=secret_env.require("ANTHROPIC_API_KEY"),
-                                         timeout=60, max_retries=2)
+                                         timeout=90, max_retries=0)
         self.client = client
 
     def complete_json(self, system: str, user: str, max_tokens: int) -> LLMResult:
         model = config.script_model()
         try:
             resp = self.client.messages.create(model=model, max_tokens=max_tokens, system=system,
-                                               messages=[{"role": "user", "content": user}])
+                                               messages=[{"role": "user", "content": user}],
+                                               output_config={"format": {"type": "json_schema",
+                                                                         "schema": SCRIPT_SCHEMA}})
         except Exception as e:
             raise LLMError(secret_env.redact(f"Claude 호출 실패: {type(e).__name__}: {e}", 300)) from None
         text = "".join(getattr(b, "text", "") for b in (resp.content or [])
                        if getattr(b, "type", "text") == "text")
-        data = parse_json_text(text)
         usage = resp.usage
-        return LLMResult(data=data, input_tokens=int(usage.input_tokens), output_tokens=int(usage.output_tokens),
-                         model=model, request_id=getattr(resp, "id", None))
+        result = LLMResult(data={}, input_tokens=int(usage.input_tokens),
+                           output_tokens=int(usage.output_tokens), model=model,
+                           request_id=getattr(resp, "id", None))
+        reason = getattr(resp, "stop_reason", None)
+        log.info("Claude 응답: model=%s stop_reason=%s input_tokens=%d output_tokens=%d max_tokens=%d request_id=%s",
+                 model, reason, result.input_tokens, result.output_tokens, max_tokens, result.request_id)
+        if reason == "max_tokens":
+            raise LLMResponseError("LLM_OUTPUT_TRUNCATED: stop_reason=max_tokens", result, True)
+        if reason not in (None, "end_turn"):
+            raise LLMResponseError(f"LLM_STOP: stop_reason={reason}", result, False)
+        try:
+            result.data = parse_json_text(text)
+        except LLMError as exc:
+            raise LLMResponseError(str(exc), result, True) from None
+        return result
 
 
 # --------------------------------------------------------------------------- #

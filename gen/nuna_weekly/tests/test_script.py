@@ -9,7 +9,7 @@ import pytest
 
 from gen.nuna_weekly import config, script
 from gen.nuna_weekly.backends import LLMResult
-from gen.nuna_weekly.backends.llm import ClaudeBackend, DummyLLM, LLMError, parse_json_text
+from gen.nuna_weekly.backends.llm import ClaudeBackend, DummyLLM, LLMError, LLMResponseError, SCRIPT_SCHEMA, parse_json_text
 from gen.nuna_weekly.budget import Budget
 from gen.nuna_weekly.db import MemoryStore
 from gen.nuna_weekly.models import DayFacts, Facts
@@ -160,7 +160,8 @@ def test_claude_backend_parses_fenced_json(monkeypatch):
     assert res.data == {"title": "t"} and res.input_tokens == 11 and res.output_tokens == 22
     assert res.request_id == "msg_1" and res.model == "claude-test"
     assert msgs.kwargs == {"model": "claude-test", "max_tokens": 123, "system": "sys",
-                           "messages": [{"role": "user", "content": "usr"}]}
+                           "messages": [{"role": "user", "content": "usr"}],
+                           "output_config": {"format": {"type": "json_schema", "schema": SCRIPT_SCHEMA}}}
 
 
 def test_claude_backend_bad_json():
@@ -184,3 +185,98 @@ def test_dummy_tokens_and_missing_markers():
     user = script.build_user_prompt(make_facts(), config.segments(60), PUB)
     r = DummyLLM().complete_json("abcd", user, 10)
     assert r.input_tokens == (4 + len(user)) // 2 and r.output_tokens > 0
+
+
+class Responses:
+    def __init__(self, *responses):
+        self.responses = list(responses)
+        self.calls = []
+
+    def create(self, **kwargs):
+        self.calls.append(kwargs)
+        res = self.responses.pop(0)
+        if isinstance(res, Exception):
+            raise res
+        return res
+
+
+def response(text, reason="end_turn", output=100, request_id="req-pilot"):
+    return SimpleNamespace(id=request_id, stop_reason=reason,
+                           content=[SimpleNamespace(type="text", text=text)],
+                           usage=SimpleNamespace(input_tokens=1000, output_tokens=output))
+
+
+@pytest.mark.parametrize("reason,text", [("max_tokens", '{"title":"broken'),
+                                          ("end_turn", '{"title":"broken')])
+def test_response_error_is_settled_and_retried_once(reason, text, budget, caplog):
+    import json
+    facts, segs = make_facts(), config.segments(60)
+    messages = Responses(response(text, reason, 4000, "req-failed"),
+                         response(json.dumps(_good_data(facts, segs)), request_id="req-ok"))
+    backend = ClaudeBackend(client=SimpleNamespace(messages=messages))
+    result = script.generate(facts, segs, backend, budget, PUB)
+    assert result.attempts == 2
+    assert [x["max_tokens"] for x in messages.calls] == [8000, 12000]
+    costs = budget.store.costs
+    assert len(costs) == 2 and costs[0]["request_id"] == "req-failed"
+    assert costs[0]["units"] == 5000
+    assert costs[0]["usd"] == pytest.approx((1000 * 2 + 4000 * 10) / 1e6)
+    assert costs[1]["request_id"] == "req-ok"
+    assert text not in caplog.text
+
+
+@pytest.mark.parametrize("reason", ["refusal", "pause_turn", "stop_sequence"])
+def test_nonretryable_response_is_charged_once(reason, budget):
+    messages = Responses(response("private response", reason))
+    with pytest.raises(LLMResponseError, match="LLM_STOP"):
+        script.generate(make_facts(), config.segments(60),
+                        ClaudeBackend(client=SimpleNamespace(messages=messages)), budget, PUB)
+    assert len(messages.calls) == len(budget.store.costs) == 1
+    assert budget.store.costs[0]["request_id"] == "req-pilot"
+
+
+def test_second_bad_json_stops_after_two_calls(budget):
+    messages = Responses(response("invalid"), response("invalid"))
+    with pytest.raises(LLMResponseError):
+        script.generate(make_facts(), config.segments(60),
+                        ClaudeBackend(client=SimpleNamespace(messages=messages)), budget, PUB)
+    assert len(messages.calls) == len(budget.store.costs) == 2
+    assert all(c["state"] == "charged" for c in budget.store.costs)
+
+
+def test_transport_error_does_not_retry_unknown_payment(budget):
+    messages = Responses(TimeoutError("timeout"))
+    with pytest.raises(LLMError, match="Claude 호출 실패"):
+        script.generate(make_facts(), config.segments(60),
+                        ClaudeBackend(client=SimpleNamespace(messages=messages)), budget, PUB)
+    assert len(messages.calls) == len(budget.store.costs) == 1
+    assert budget.store.costs[0]["request_id"] is None
+    assert budget.store.costs[0]["usd"] == pytest.approx((8000 * 2 + 8000 * 10) / 1e6)
+
+
+def test_retry_must_reserve_budget_before_second_call(monkeypatch, budget):
+    from gen.nuna_weekly.db import BudgetExceeded
+    monkeypatch.setenv("NUNA_BUDGET_EPISODE_KRW", "140")
+    # 첫 요청 예약(134원)은 통과, 2차 예약(190원)은 남은 예산 초과.
+    monkeypatch.setattr(config, "budget_episode_krw", lambda: 140)
+    messages = Responses(response("invalid", output=4000))
+    with pytest.raises(BudgetExceeded):
+        script.generate(make_facts(), config.segments(60),
+                        ClaudeBackend(client=SimpleNamespace(messages=messages)), budget, PUB)
+    assert len(messages.calls) == 1
+
+
+def test_installed_sdk_accepts_structured_output():
+    import inspect
+    from anthropic.resources.messages import Messages
+    assert "output_config" in inspect.signature(Messages.create).parameters
+
+
+def test_sdk_does_not_hide_paid_retries(monkeypatch):
+    import anthropic
+    calls = []
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "test-key-not-live")
+    monkeypatch.setattr(anthropic, "Anthropic", lambda **kw: calls.append(kw) or object())
+    ClaudeBackend()
+    assert calls[0]["max_retries"] == 0
+    assert calls[0]["timeout"] == 90

@@ -341,7 +341,9 @@ def run_gen(ctx: Ctx, only: str | None = None) -> int:
             ctx.store.update_episode(ctx.episode_id, {"last_error": err})
             _step_log(ctx, step, "failed", started, err)
             log.error("[NunaWeekly:pipeline] ✖ %s", err)
-            _report(ctx, f"[NUNA] {ctx.episode_id} 생성 실패 — {err}\n재실행 시 '{step}' 단계부터 이어서 진행")
+            recovery = (f"'{step}' 유료 호출 결과·비용 대사 후 복구 필요(자동 재호출 차단)" if live_paid
+                        else f"재실행 시 '{step}' 단계부터 이어서 진행")
+            _report(ctx, f"[NUNA] {ctx.episode_id} 생성 실패 — {err}\n{recovery}")
             return 1
         fields["last_error"] = None
         if not ctx.store.transition(ctx.episode_id, [before], after, fields):

@@ -17,6 +17,7 @@ from typing import Any
 
 from . import config, policy
 from .models import Facts, Script, ScriptSegment
+from .backends.llm import LLMResponseError
 
 VERSION = "1.0.0"
 log = logging.getLogger("nuna_weekly.script")
@@ -25,7 +26,8 @@ FACTS_TAG = "facts"
 SEGMENTS_TAG = "segments"
 HEADLINES_TAG = "headlines"
 
-MAX_TOKENS = 4000
+MAX_TOKENS = 8000
+RETRY_MAX_TOKENS = 12000
 EST_IN_TOKENS = 8000
 EST_OUT_TOKENS = 2500
 HASHTAGS_MAX = 5
@@ -113,12 +115,20 @@ def _to_script(data: dict[str, Any], facts: Facts, segs: list[config.Segment], m
                   model=model, attempts=attempts)
 
 
-def _call(llm, budget, system: str, user: str):
+def _call(llm, budget, system: str, user: str, max_tokens: int = MAX_TOKENS):
     model = config.script_model()
-    est = EST_IN_TOKENS * config.PRICE_CLAUDE_IN_PER_MTOK / 1e6 + EST_OUT_TOKENS * config.PRICE_CLAUDE_OUT_PER_MTOK / 1e6
+    est = EST_IN_TOKENS * config.PRICE_CLAUDE_IN_PER_MTOK / 1e6 + max_tokens * config.PRICE_CLAUDE_OUT_PER_MTOK / 1e6
     with budget.charge(step="script", provider="anthropic", model=model,
-                       units=EST_IN_TOKENS + EST_OUT_TOKENS, unit="token", est_usd=est) as ch:
-        res = llm.complete_json(system, user, MAX_TOKENS)
+                       units=EST_IN_TOKENS + max_tokens, unit="token", est_usd=est) as ch:
+        try:
+            res = llm.complete_json(system, user, max_tokens)
+        except LLMResponseError as exc:
+            failed = exc.result
+            usd = (failed.input_tokens * config.PRICE_CLAUDE_IN_PER_MTOK
+                   + failed.output_tokens * config.PRICE_CLAUDE_OUT_PER_MTOK) / 1e6
+            ch.actual(usd=usd, units=failed.input_tokens + failed.output_tokens,
+                      request_id=failed.request_id)
+            raise
         usd = (res.input_tokens * config.PRICE_CLAUDE_IN_PER_MTOK
                + res.output_tokens * config.PRICE_CLAUDE_OUT_PER_MTOK) / 1e6
         ch.actual(usd=usd, units=res.input_tokens + res.output_tokens, request_id=res.request_id)
@@ -131,7 +141,15 @@ def generate(facts: Facts, segs: list[config.Segment], llm, budget, publish_date
     errors: list[str] = []
     for attempt in (1, 2):
         user = build_user_prompt(facts, segs, publish_date, errors if attempt == 2 else None)
-        res = _call(llm, budget, SYSTEM_PROMPT, user)
+        try:
+            res = _call(llm, budget, SYSTEM_PROMPT, user,
+                        MAX_TOKENS if attempt == 1 else RETRY_MAX_TOKENS)
+        except LLMResponseError as exc:
+            if not exc.retryable or attempt == 2:
+                raise
+            errors = [str(exc)]
+            log.warning("대본 응답 형식 오류 — 예산 게이트 경유 1회 재생성: %s", exc)
+            continue
         script = _to_script(res.data, facts, segs, res.model, attempt)
         errors = validate(script, facts, segs, publish_date)
         if not errors:
