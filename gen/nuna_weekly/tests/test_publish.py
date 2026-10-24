@@ -43,7 +43,7 @@ def clients(**kw):
 def test_scheduled_for():
     assert iso_kst(scheduled_for(PDATE, None)) == "2026-10-26T08:30:00+09:00"
     late = datetime(2026, 10, 26, 8, 0, tzinfo=config.KST)
-    assert iso_kst(scheduled_for(PDATE, late)) == "2026-10-26T09:00:00+09:00"
+    assert iso_kst(scheduled_for(PDATE, late)) == "2026-10-26T09:02:00+09:00"
     early = datetime(2026, 10, 25, 22, 0, tzinfo=config.KST)
     assert iso_kst(scheduled_for(PDATE, early)) == "2026-10-26T08:30:00+09:00"
 
@@ -118,7 +118,7 @@ def test_health_block_and_isolation():
     cl = {"main": DummyZernioClient("main", health=health), "sub": DummyZernioClient("sub", http_status=500)}
     res = publish(EP, st, cl, script(), MEDIA, ACCTS, None, PDATE, "main", dry=False)
     assert res["threads"].status == "blocked" and res["instagram"].status == "scheduled"
-    assert res["youtube"].status == "failed" and res["facebook"].status == "failed"
+    assert res["youtube"].status == "pending" and res["facebook"].status == "pending"
     keys = [c[1] for c in cl["main"].calls if c[0] == "create_post"]
     assert keys == [f"{EP}:main:instagram"]
 

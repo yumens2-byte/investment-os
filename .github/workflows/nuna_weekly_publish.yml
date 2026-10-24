@@ -1,9 +1,9 @@
 # ─────────────────────────────────────────────────────────────────────────────
 # nuna_weekly_publish.yml — NUNA 주간 뉴스 쇼츠 · 발행 워크플로 (v1.0.0)
 #   설계서 3·8·10·15장 (2026-10-19)
-#   cron UTC "12 23 * * 3" = 목 08:12 KST → Zernio scheduledFor = max(08:30, 알림+60분)
+#   cron UTC "12 23 * * 3" = 목 08:12 KST → Zernio scheduledFor = max(08:30, 알림+62분)
 #   Telegram [보류] 콜백은 NUNA_TELEGRAM_ADMIN_IDS 허용 목록만 인정 (S-04)
-#   timeout 45분 = 예약(08:30)+5분까지 대기 후 검증 포함
+#   timeout 90분 = 최대 60분 보류창 + 예약 후 검증 포함
 #   fal·Claude·Gemini 키는 이 워크플로에 주입하지 않는다 (15.2 최소 권한)
 # ─────────────────────────────────────────────────────────────────────────────
 name: 🎬 nuna-weekly-publish
@@ -39,7 +39,7 @@ jobs:
   publish:
     if: github.event_name == 'workflow_dispatch' || vars.NUNA_ENABLED == '1'
     runs-on: ubuntu-latest
-    timeout-minutes: 45
+    timeout-minutes: 90
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
       - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5

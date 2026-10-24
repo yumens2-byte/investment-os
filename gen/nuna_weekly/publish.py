@@ -48,7 +48,8 @@ def scheduled_for(publish_date: date, notified_at: datetime | None) -> datetime:
         return base
     n = notified_at if notified_at.tzinfo else notified_at.replace(tzinfo=config.KST)
     hold_end = (n + timedelta(minutes=config.HOLD_WINDOW_MIN)).astimezone(config.KST)
-    return max(base, hold_end)
+    # 보류창 종료 후 최종 콜백 확인 및 예약 API 호출 여유.
+    return max(base, hold_end + timedelta(minutes=2))
 
 
 def iso_kst(dt: datetime) -> str:
@@ -230,6 +231,16 @@ def publish(episode_id: str, store: Any, clients: dict[str, Any], script: Script
                 log.info("[NunaWeekly:publish] %s 이미 %s — 건너뜀", p, prev["status"])
                 results[p] = TargetResult(p, prev["status"], prev.get("zernio_post_id"),
                                           prev.get("platform_post_url"))
+            elif (prev.get("zernio_post_id") or
+                  (prev.get("status") == "pending" and int(prev.get("attempts") or 0) > 0)):
+                # 타임아웃/응답 후 DB 기록 중단은 생성 여부가 불명확하다.
+                # 계정 헬스·부분 플랫폼 구성이 달라져 새 키를 만들지 않는다.
+                results[p] = TargetResult(p, prev.get("status") or "pending", prev.get("zernio_post_id"),
+                                          error="RECONCILE_REQUIRED: 기존 요청 조회 후 처리")
+                log.warning("[NunaWeekly:publish] %s 기존 요청 대사 필요 — POST 차단", p)
+            elif int(prev.get("attempts") or 0) >= 5:
+                results[p] = TargetResult(p, "blocked", error="ATTEMPTS_EXHAUSTED")
+                log.warning("[NunaWeekly:publish] %s 재시도 상한 도달 — POST 차단", p)
             else:
                 todo.append(p)
         if not todo:
@@ -276,6 +287,11 @@ def publish(episode_id: str, store: Any, clients: dict[str, Any], script: Script
             red_req = redact_obj({"idempotency_key": header_key, "key_alias": alias, "body": body})
 
         # 3) POST
+        # 전송 전에 멱등 키와 전송 시도를 기록한다. DB 기록 실패 시 POST하지 않는다.
+        for p in send:
+            store.update_target(episode_id, p, {"idempotency_key": _row_idem(header_key, plats, p),
+                                                "request_json": red_req, "attempts": attempts[p] + 1,
+                                                "last_error": "SUBMISSION_STARTED"})
         try:
             http, resp = client.create_post(body, header_key)
         except Exception as e:  # 전송 결과 불명 — 원장엔 pending 유지(같은 키로 재시도 → 이중발행 방지)
@@ -287,12 +303,20 @@ def publish(episode_id: str, store: Any, clients: dict[str, Any], script: Script
             log.error("[NunaWeekly:publish] %s 전송 실패 — 다른 채널 계속: %s", send, err)
             continue
         decided = decompose(send, http, resp, scheduled=True)
+        if http >= 500 or http in (408, 409, 429):
+            for p in send:
+                if decided[p].status == "failed":
+                    decided[p].status = "pending"
+                    decided[p].error = f"RECONCILE_REQUIRED: HTTP {http} 결과 불명"
         red_resp = redact_obj({"http_status": http, "body": resp})
         for p in send:
             r = decided[p]
             if r.status == "published":
                 r.status = "scheduled"  # 예약 발행 직후 published 는 verify 에서 확정한다
                 r.platform_post_url = None
+            if r.status == "scheduled" and not r.zernio_post_id:
+                r.status = "pending"
+                r.error = "RECONCILE_REQUIRED: 예약 응답에 post ID 없음"
             fields: dict[str, Any] = {"status": r.status, "zernio_post_id": r.zernio_post_id,
                                       "attempts": attempts[p] + 1,
                                       "last_error": secret_env.redact(r.error, 500) if r.error else None,
@@ -315,7 +339,7 @@ def verify(episode_id: str, store: Any, clients: dict[str, Any], max_rounds: int
     for rnd in range(max(1, max_rounds)):
         rounds = rnd + 1
         rows = [t for t in store.list_targets(episode_id)
-                if t.get("status") == "scheduled" and t.get("zernio_post_id")]
+                if t.get("status") in ("scheduled", "pending", "failed") and t.get("zernio_post_id")]
         if not rows:
             break
         groups: dict[tuple[str, str], list[str]] = {}
@@ -344,11 +368,15 @@ def verify(episode_id: str, store: Any, clients: dict[str, Any], max_rounds: int
                     store.update_target(episode_id, p, {"status": "failed",
                                                         "last_error": secret_env.redact(r.error, 500)})
                     failed.append(p)
-        remaining = [t["platform"] for t in store.list_targets(episode_id) if t.get("status") == "scheduled"]
+                elif r.status == "scheduled":
+                    store.update_target(episode_id, p, {"status": "scheduled"})
+        remaining = [t["platform"] for t in store.list_targets(episode_id)
+                     if t.get("status") in ("scheduled", "pending")]
         if not remaining:
             break
         if rnd + 1 < max_rounds:
             sleep(interval_sec)
-    pending = [t["platform"] for t in store.list_targets(episode_id) if t.get("status") == "scheduled"]
+    pending = [t["platform"] for t in store.list_targets(episode_id)
+               if t.get("status") in ("scheduled", "pending")]
     log.info("[NunaWeekly:publish] verify 종료 — published=%s failed=%s pending=%s", published, failed, pending)
     return {"published": published, "failed": failed, "pending": pending, "rounds": rounds}

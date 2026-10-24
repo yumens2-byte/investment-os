@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import json
 import logging
+import math
 import time
 from collections.abc import Callable
 from datetime import date, datetime, timedelta
@@ -92,7 +93,10 @@ def _parse_chart(key: str, body: Any) -> list[tuple[date, float]]:
         for ts, c in zip(stamps, closes, strict=True):
             if c is None:
                 continue
-            bars[datetime.fromtimestamp(int(ts), tz).date()] = float(c)
+            value = float(c)
+            if not math.isfinite(value):
+                raise ValueError
+            bars[datetime.fromtimestamp(int(ts), tz).date()] = value
     except Exception:
         raise CollectError(f"Yahoo 응답 형식 오류: {key}({config.TICKERS[key]})") from None
     return sorted(bars.items())
@@ -191,7 +195,8 @@ def _collect_direct(gate: GateResult, days: list[DayFacts], session,
 # --------------------------------------------------------------------------- #
 def _num(v: Any) -> float | None:
     try:
-        return None if v is None else round(float(v), 2)
+        value = float(v) if v is not None else None
+        return round(value, 2) if value is not None and math.isfinite(value) else None
     except (TypeError, ValueError):
         return None
 

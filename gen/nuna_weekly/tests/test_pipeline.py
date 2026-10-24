@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import json
 import subprocess
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 
 import pytest
 
@@ -46,10 +46,16 @@ class _NoTelegram:
 @pytest.fixture()
 def env(monkeypatch, tmp_path):
     class Clock(datetime):
+        current = datetime(2026, 10, 22, 6, 50, tzinfo=config.KST)
+
         @classmethod
         def now(cls, tz=None):
-            fixed = datetime(2026, 10, 22, 6, 50, tzinfo=config.KST)
+            fixed = cls.current
             return fixed.astimezone(tz) if tz else fixed.replace(tzinfo=None)
+
+        @classmethod
+        def advance(cls, seconds):
+            cls.current += timedelta(seconds=seconds)
 
     monkeypatch.setattr(pipeline, "datetime", Clock)
     monkeypatch.setenv("NUNA_MARKET_SOURCE", "supabase")
@@ -86,7 +92,7 @@ def test_full_flow_dummy(env):
     assert pipeline.run_gen(ctx) == 0
 
     # 발행 → 예약 → 검증
-    assert pipeline.run_publish(ctx, "publish", sleep=lambda s: None) == 0
+    assert pipeline.run_publish(ctx, "publish", sleep=pipeline.datetime.advance) == 0
     ep = store.get_episode(ctx.episode_id)
     assert ep["status"] == "SCHEDULED"          # 예약까지 30분 초과 → 검증은 별도 dispatch
     assert ep["scheduled_for"].startswith("2026-10-22T08:30")

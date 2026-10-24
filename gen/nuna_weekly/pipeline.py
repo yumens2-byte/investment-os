@@ -52,6 +52,7 @@ GEN_STEPS: tuple[tuple[str, str, str], ...] = (
     ("notify", "STAGED", "NOTIFIED"),
 )
 DONE_GEN = ("NOTIFIED", "HELD", "SCHEDULED", "PUBLISHED", "PARTIAL")
+PAID_STEPS = frozenset({"script", "tts", "images", "clips"})
 
 
 class PipelineError(RuntimeError):
@@ -242,8 +243,11 @@ def _do_step(ctx: Ctx, step: str) -> dict[str, Any]:
         return {"assets_json": assets_json}
     if step == "qc":
         sc, facts = _script(ep), _facts(ep)
+        videos = assets_json.get("videos") or {}
+        if set(videos) != set(_variants()):
+            raise PipelineError("QC 대상 영상 누락/variant 불일치 — assemble 재수행 필요")
         reports = {}
-        for v, path in (assets_json.get("videos") or {}).items():
+        for v, path in videos.items():
             if not Path(path).is_file():
                 raise PipelineError(f"영상 파일 없음(재조립 필요): {v}")
             target = float(sum(s.seconds for s in assemble.select_segments(v, segs)))
@@ -255,6 +259,10 @@ def _do_step(ctx: Ctx, step: str) -> dict[str, Any]:
                 raise PipelineError(f"QC 실패 {v}: {failed}")
         return {"qc_json": reports}
     if step == "stage":
+        videos = assets_json.get("videos") or {}
+        reports = ep.get("qc_json") or {}
+        if set(videos) != set(_variants()) or any(not (reports.get(v) or {}).get("passed") for v in videos):
+            raise PipelineError("스테이징 전 영상·QC 통과 증빙 누락")
         media: dict[str, dict[str, str]] = {}
         zc = ctx.zernio()
         for v, path in (assets_json.get("videos") or {}).items():
@@ -290,6 +298,8 @@ def run_gen(ctx: Ctx, only: str | None = None) -> int:
         _report(ctx, f"[NUNA] {ctx.episode_id} 미발행: {ctx.gate.skip_reason}")
         return 0
     status = ctx.episode()["status"]
+    if ctx.episode().get("duration_target_sec", config.duration_sec()) != config.duration_sec():
+        raise PipelineError("기존 회차 길이와 NUNA_DURATION_SEC 불일치 — 생성 중 규격 변경 금지")
     if status in DONE_GEN or status in ("SKIPPED", "FAILED"):
         log.info("[NunaWeekly:pipeline] 이미 %s — 생성 단계 없음", status)
         return 0
@@ -312,7 +322,17 @@ def run_gen(ctx: Ctx, only: str | None = None) -> int:
             if only:
                 raise PipelineError(f"{step} 실행 불가 — 현재 상태 {cur}, 필요 {before}")
             continue
+        live_paid = (step in PAID_STEPS and not ctx.dry
+                     and (ctx._backends is None or not ctx._backends.is_dummy))
+        if live_paid:
+            previous = ctx.episode().get("last_error") or ""
+            if previous.startswith((f"{step}:", f"PAID_STEP_IN_PROGRESS:{step}")):
+                raise PipelineError(
+                    f"PAID_RECOVERY_REQUIRED: {step} 이전 호출 결과·비용 대사 필요 — 자동 재과금 차단")
+            # 새 러너에 로컬 pending 파일이 없어도 중단된 유료 작업을 재제출하지 않는다.
+            ctx.store.update_episode(ctx.episode_id, {"last_error": f"PAID_STEP_IN_PROGRESS:{step}"})
         started = time.time()
+        _step_log(ctx, step, "started", started)
         log.info("[NunaWeekly:pipeline] ▶ %s", step)
         try:
             fields = _do_step(ctx, step)
@@ -342,6 +362,24 @@ def _accounts(ctx: Ctx) -> dict[str, str]:
     return publish_mod.accounts_from_env()
 
 
+def _wait_hold(ctx: Ctx, tg, notified_at: datetime, sleep) -> dict[str, str] | None:
+    """60분 보류창이 닫힐 때까지 30초 이하 간격으로 확인한다(POST 이전).
+
+    폴링 HTTP 소요 시간도 실제 시각으로 반영한다. 최대 보류창은 60분이다.
+    """
+    hold = tg.poll_hold(ctx.episode_id)
+    end = notified_at + timedelta(minutes=config.HOLD_WINDOW_MIN)
+    remaining = (end - datetime.now(config.KST)).total_seconds()
+    if remaining > config.HOLD_WINDOW_MIN * 60 + 1:
+        raise PipelineError("notified_at이 미래 시각 — 원장 시각 확인 필요")
+    while not hold and remaining > 0:
+        interval = min(30.0, remaining)
+        sleep(interval)
+        hold = tg.poll_hold(ctx.episode_id)
+        remaining = (end - datetime.now(config.KST)).total_seconds()
+    return hold
+
+
 def run_publish(ctx: Ctx, step: str = "publish", sleep=time.sleep) -> int:
     log.info("[NunaWeekly:pipeline] v%s 발행 시작 · %s · step=%s · dry=%s", VERSION, ctx.episode_id, step, ctx.dry)
     ep = ctx.store.get_episode(ctx.episode_id)
@@ -360,16 +398,21 @@ def run_publish(ctx: Ctx, step: str = "publish", sleep=time.sleep) -> int:
         log.warning(msg)
         _report(ctx, msg)
         return 1
+    if not ep.get("notified_at"):
+        raise PipelineError("생성 알림 시각 없음 — 발행 전 원장 확인 필요")
+    notified_at = datetime.fromisoformat(ep["notified_at"])
+    if notified_at.tzinfo is None:
+        raise PipelineError("notified_at 시간대 없음")
     tg = ctx.telegram()
     if tg is not None and not ctx.dry:
-        hold = tg.poll_hold(ctx.episode_id)
+        hold = (_wait_hold(ctx, tg, notified_at, sleep) if status == "NOTIFIED"
+                else tg.poll_hold(ctx.episode_id))
         if hold:
             if retry:
                 raise PipelineError("이미 예약된 회차 보류는 Zernio 예약 취소 후 처리 필요")
             ctx.store.transition(ctx.episode_id, ["NOTIFIED"], "HELD", {"hold_at": hold["at"], "hold_by": hold["by"]})
             _report(ctx, f"[NUNA] {ctx.episode_id} 보류 처리됨 — 발행하지 않음")
             return 0
-    notified_at = datetime.fromisoformat(ep["notified_at"]) if ep.get("notified_at") else None
     sched = publish_mod.scheduled_for(ctx.gate.publish_date, notified_at)
     existing = {t["platform"]: t.get("status") for t in ctx.store.list_targets(ctx.episode_id)}
     unsent = [p for p in config.PLATFORMS if existing.get(p) not in publish_mod.DONE_STATES]
@@ -387,16 +430,20 @@ def run_publish(ctx: Ctx, step: str = "publish", sleep=time.sleep) -> int:
     ok = any(s in ("scheduled", "published") for s in summary.values())
     if not ctx.store.transition(ctx.episode_id, [status], "SCHEDULED" if ok else "FAILED",
                          {"scheduled_for": sched.isoformat(),
-                          "last_error": None if ok else secret_env.redact(json.dumps(summary, ensure_ascii=False), 500)}):
+                          "last_error": (None if all(s in ("scheduled", "published") for s in summary.values())
+                                         else secret_env.redact(json.dumps(summary, ensure_ascii=False), 500))}):
         raise PipelineError("발행 상태 전이 실패 — 원장 확인 필요")
     _report(ctx, f"[NUNA] {ctx.episode_id} 예약 {sched.strftime('%m/%d %H:%M')} KST · {summary}")
     if not ok:
         return 1
-    # 예약 시각 + 5분까지 대기 후 검증 (워크플로 timeout 45분 이내)
+    # 예약 시각 + 5분까지 대기 후 검증 (보류창 포함 워크플로 timeout 90분 이내)
     wait = (sched + timedelta(minutes=5) - datetime.now(config.KST)).total_seconds()
     if 0 < wait <= 30 * 60:
         log.info("[NunaWeekly:pipeline] 검증 대기 %.0f초", wait)
-        sleep(wait)
+        while wait > 0:
+            interval = min(30.0, wait)
+            sleep(interval)
+            wait -= interval
     elif wait > 30 * 60:
         log.info("[NunaWeekly:pipeline] 예약까지 30분 초과 — verify 는 수동 dispatch(step=verify)")
         return 0
@@ -405,12 +452,13 @@ def run_publish(ctx: Ctx, step: str = "publish", sleep=time.sleep) -> int:
 
 def _verify(ctx: Ctx, sleep) -> int:
     ep = ctx.episode()
-    if ep["status"] not in ("SCHEDULED", "PARTIAL"):
+    if ep["status"] not in ("SCHEDULED", "PARTIAL", "FAILED"):
         log.info("[NunaWeekly:pipeline] verify 대상 아님 — 상태 %s", ep["status"])
         return 0
     res = publish_mod.verify(ctx.episode_id, ctx.store, ctx.zernio(), sleep=sleep)
     targets = ctx.store.list_targets(ctx.episode_id)
-    states = [t.get("status") for t in targets]
+    by_platform = {t["platform"]: t.get("status") for t in targets}
+    states = [by_platform.get(p, "missing") for p in config.PLATFORMS]
     if states and all(s == "published" for s in states):
         new = "PUBLISHED"
     elif "scheduled" in states:
@@ -421,7 +469,7 @@ def _verify(ctx: Ctx, sleep) -> int:
         ctx.store.transition(ctx.episode_id, [ep["status"]], new)
     urls = {t["platform"]: t.get("platform_post_url") for t in targets if t.get("platform_post_url")}
     _report(ctx, f"[NUNA] {ctx.episode_id} 발행 확인 → {new} · {res} · {urls}")
-    return 0 if new in ("PUBLISHED", "SCHEDULED") else 1
+    return 0 if all(s in ("published", "scheduled") for s in states) else 1
 
 
 # --------------------------------------------------------------------------- #
