@@ -69,3 +69,18 @@ PR에서는 이 실제 키 검사 job을 실행하지 않는다. Telegram·SNS·
 
 로컬 검증: NUNA 전체 173 passed (82.24s), 기존 운영 가드레일 14 passed.
 Ruff·actionlint 1.7.7(관련 YAML 3개)·git diff --check 통과. 실제 키의 권한 결과는 원격 job으로 구분한다.
+
+## 실제 GitHub Secret 점검 결과
+
+2026-10-24 코드 400ee54의 main push CI에서 NUNA/Alert/Comic Novel/운영 가드레일 회귀 job은 모두 통과했다.
+실제 키 점검 job 120779890530은 실패했다.
+- key_source: SUPABASE_KEY
+- key_type: legacy_jwt
+- db_host: ccomoimhhttaklfadaos.supabase.co
+- 오류: HTTP 401 GET nuna_cost_ledger, SQLSTATE 42501, DB_PERMISSION_DENIED
+- 의미: Secret 참조 이름과 대상 프로젝트는 확인됐으나 해당 요청의 NUNA 테이블 조회 권한은 없다.
+- 실제 키 원문과 JWT 역할은 출력·확인하지 않았다. anon이라고 단정하지 않는다.
+- 소스의 변수명 재변경으로 해결되지 않는다. SUPABASE_KEY 이름을 유지하고 동일 프로젝트의 서버 권한 키 값을 설정해야 한다.
+- 실제 데이터 쓰기·유료 생성·SNS 발행은 실행하지 않았다.
+
+증거: https://github.com/yumens2-byte/investment-os/actions/runs/40062697708/job/120779890530
