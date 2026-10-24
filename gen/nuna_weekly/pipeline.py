@@ -494,10 +494,15 @@ def main(argv: list[str] | None = None) -> int:
         return 0
     try:
         run_date = _parse_date(a.date)
-        allowed = ({"run", "preflight", "poc"} | {s[0] for s in GEN_STEPS}
-                   if a.command == "gen" else {"publish", "verify"})
+        allowed = ({"run", "preflight", "poc", "dbcheck"} | {s[0] for s in GEN_STEPS}
+                   if a.command == "gen" else {"publish", "verify", "dbcheck"})
         if a.step and a.step not in allowed:
             raise PipelineError(f"{a.command} 단계 허용값 아님: {a.step}")
+        if a.step == "dbcheck":
+            # dry-run 메모리 원장이 아닌 실제 주입 키로 GET만 검사한다.
+            result = db.make_store(False).check_access()
+            log.info("[NunaWeekly:pipeline] DB_CHECK_PASSED (읽기 전용): %s", json.dumps(result, ensure_ascii=False))
+            return 0
         if a.command == "gen" and a.step == "preflight":
             gate = calendar_gate.evaluate(run_date)
             log.info("[NunaWeekly:pipeline] preflight: %s ok=%s days=%s holidays=%s reason=%s",

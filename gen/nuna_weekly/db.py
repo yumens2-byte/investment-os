@@ -18,7 +18,7 @@ import threading
 from collections.abc import Iterable
 from datetime import UTC, datetime
 from typing import Any, Protocol
-from urllib.parse import quote
+from urllib.parse import quote, urlsplit
 
 from . import secret_env
 
@@ -28,6 +28,7 @@ log = logging.getLogger("nuna_weekly.db")
 WRITE_TABLES = frozenset({"nuna_episodes", "nuna_publish_targets", "nuna_cost_ledger", "nuna_step_runs"})
 READ_TABLES = WRITE_TABLES | frozenset({"daily_snapshots", "daily_news", "daily_analysis"})
 RPC_ALLOWED = frozenset({"nuna_reserve_cost"})
+SUPABASE_KEY_ENV = "SUPABASE_KEY"
 
 
 class StoreError(RuntimeError):
@@ -73,18 +74,37 @@ class RestStore:
         import requests
 
         self.base = (url or secret_env.require("SUPABASE_URL")).rstrip("/") + "/rest/v1"
-        self._key = key or secret_env.require("SUPABASE_KEY")
+        self._key = key or secret_env.require(SUPABASE_KEY_ENV)
         secret_env.register(self._key)
         self.s = session or requests.Session()
         self.timeout = timeout
 
     # ── 공통 ──
+    def _key_type(self) -> str:
+        if self._key.startswith("sb_secret_"):
+            return "secret"
+        if self._key.startswith("sb_publishable_"):
+            return "publishable"
+        return "legacy_jwt" if self._key.count(".") == 2 else "unknown"
+
     def _headers(self, prefer: str | None = None) -> dict[str, str]:
-        h = {"apikey": self._key, "Authorization": f"Bearer {self._key}",
-             "Content-Type": "application/json", "Accept": "application/json"}
+        h = {"apikey": self._key, "Content-Type": "application/json", "Accept": "application/json"}
+        # 신형 API 키는 JWT가 아니다. 기존 JWT 키만 Bearer 헤더에 전달한다.
+        if self._key_type() not in ("secret", "publishable"):
+            h["Authorization"] = f"Bearer {self._key}"
         if prefer:
             h["Prefer"] = prefer
         return h
+
+    def check_access(self) -> dict[str, Any]:
+        """현재 Actions 키로 실제 읽기 권한 검사. 0행 조회만 하며 원장·비용을 쓰지 않는다."""
+        checked = []
+        for table in sorted(READ_TABLES):
+            self._call("GET", table, params={"select": "*", "limit": "0"})
+            checked.append(table)
+        return {"key_source": SUPABASE_KEY_ENV, "key_type": self._key_type(),
+                "db_host": urlsplit(self.base).hostname, "readable_tables": checked,
+                "write_permission": "not_tested"}
 
     @staticmethod
     def _check_table(table: str, write: bool) -> None:
@@ -104,6 +124,17 @@ class RestStore:
             text = secret_env.redact(r.text, 500)
             if "NUNA_BUDGET_EXCEEDED" in r.text:
                 raise BudgetExceeded(text)
+            try:
+                body = r.json()
+            except Exception:
+                body = {}
+            if isinstance(body, dict) and body.get("code") == "42501":
+                raise StoreError(
+                    f"DB_PERMISSION_DENIED: HTTP {r.status_code} {method} {path}; "
+                    f"key_source={SUPABASE_KEY_ENV}, key_type={self._key_type()}, "
+                    f"db_host={urlsplit(self.base).hostname}. "
+                    "YAML과 코드의 키 이름은 SUPABASE_KEY입니다. Secret 값의 프로젝트·서버 권한을 확인하세요. "
+                    "키 이름 변경만으로 DB 권한은 변경되지 않습니다.")
             raise StoreError(f"DB HTTP {r.status_code} {method} {path}: {text}")
         if not r.text.strip():
             return None
@@ -338,7 +369,7 @@ def make_store(dry: bool, memory_only: bool = False) -> Any:
         return MemoryStore()
     if dry:
         reader = None
-        if secret_env.optional("SUPABASE_URL") and secret_env.optional("SUPABASE_KEY"):
+        if secret_env.optional("SUPABASE_URL") and secret_env.optional(SUPABASE_KEY_ENV):
             reader = RestStore()
         return DryRunStore(reader)
     return RestStore()

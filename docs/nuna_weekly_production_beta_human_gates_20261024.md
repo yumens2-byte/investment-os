@@ -50,6 +50,7 @@ NUNA_ENABLED의 현재 값은 API로 확인하지 못했다. 자동 예약과 �
 | 순서 | 워크플로 | step | date | dry_run | 의미 |
 |---|---|---|---|---|---|
 | A | nuna-weekly-gen | preflight | 2026-10-22 | true | 달력·장 종료 판정 |
+| A2 | nuna-weekly-publish | dbcheck | 2026-10-22 | false | 실제 키로 테이블 조회 권한 확인, 데이터 쓰기·발행 없음 |
 | B | nuna-weekly-gen | run | 2026-10-22 | false | 유료 실생성 → QC → 스테이징 → Telegram 알림 |
 | C | nuna-weekly-publish | publish | 2026-10-22 | false | 검수 완료 후 실행하는 실제 예약·발행 승인 |
 | D | nuna-weekly-publish | verify | 2026-10-22 | false | 외부 게시물 상태·URL 조회 및 원장 갱신 |
@@ -63,6 +64,9 @@ gen → Run workflow → A 입력값으로 실행한다.
 성공 로그에서 회차 nuna-2026-W43, 발행 기준일 2026-10-22, 거래일 10-19~21을 확인한다.
 
 preflight 성공은 키·잔액·계정 연결 성공을 의미하지 않는다. DB·유료 SDK를 초기화하지 않는 달력 검사다.
+실생성 전 A2도 실행한다. DB_CHECK_PASSED와 readable_tables 7개를 확인한다.
+DB_PERMISSION_DENIED는 key_source/key_type/db_host를 확인한 뒤 해당 Secret 값·프로젝트·권한을 점검한다.
+조회 성공으로 INSERT/UPDATE 권한까지 검증됐다고 판단하지 않는다.
 실행 URL로 점검을 요청한 뒤 다음 단계로 진행할 수 있다.
 
 ## 3. 휴먼게이트 B — 실생성 및 검수

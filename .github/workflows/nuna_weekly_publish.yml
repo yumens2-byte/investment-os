@@ -16,7 +16,7 @@ name: 🎬 nuna-weekly-publish
       step:
         description: "실행 단계"
         type: choice
-        options: [publish, verify]
+        options: [publish, verify, dbcheck]
         default: publish
       date:
         description: "기준일 KST (YYYY-MM-DD, 비우면 오늘)"
