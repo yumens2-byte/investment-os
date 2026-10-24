@@ -58,7 +58,7 @@ jobs:
           IN_DATE: ${{ github.event.inputs.date }}
           IN_EVENT: ${{ github.event_name }}
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
-          SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
           ZERNIO_API_KEY: ${{ secrets.ZERNIO_API_KEY }}
           ZERNIO_API_SUB_KEY: ${{ secrets.ZERNIO_API_SUB_KEY }}
           NUNA_INSTAGRAM_ACCOUNT_ID: ${{ secrets.NUNA_INSTAGRAM_ACCOUNT_ID }}

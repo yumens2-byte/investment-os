@@ -1,5 +1,7 @@
 # NUNA 파이프라인 키 참조 대조 및 DB 점검 보완 — 2026-10-24
 
+> 최신 정정: 사용자가 올바른 Secret 이름을 SUPABASE_SERVICE_ROLE_KEY로 확인하여 NUNA의 생성·발행·DB 점검 참조를 해당 이름으로 복원했다. 아래 SUPABASE_KEY 표와 실패 결과는 변경 전 점검 이력이다.
+
 기준 운영 SHA: aa96dbea781c14e6a02cec755c0b4706d494f7e8.
 대상: nuna_weekly_gen.yml, nuna_weekly_publish.yml, gen/nuna_weekly 런타임 코드.
 

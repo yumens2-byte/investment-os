@@ -34,11 +34,11 @@ class Session:
 def test_workflow_secret_reaches_live_and_dry_db_reader(monkeypatch, workflow):
     root = Path(__file__).resolve().parents[3]
     text = (root / ".github" / "workflows" / workflow).read_text()
-    match = re.search(r"^\s+SUPABASE_KEY: \$\{\{ secrets\.(\w+) \}\}", text, re.MULTILINE)
+    match = re.search(r"^\s+SUPABASE_SERVICE_ROLE_KEY: \$\{\{ secrets\.(\w+) \}\}", text, re.MULTILINE)
     assert match and match[1] == db.SUPABASE_KEY_ENV
     monkeypatch.setenv("SUPABASE_URL", "https://example.supabase.co")
     monkeypatch.setenv(match[1], "sb_secret_configured0123456789")
-    monkeypatch.delenv("SUPABASE_SERVICE_ROLE_KEY", raising=False)
+    monkeypatch.delenv("SUPABASE_KEY", raising=False)
     live = db.make_store(False)
     live.s = Session()
     assert live.get_episode("nuna-2026-W43") is None
@@ -74,7 +74,7 @@ def test_permission_error_identifies_binding_without_key_leak():
     with pytest.raises(db.StoreError) as caught:
         store.check_access()
     error = str(caught.value)
-    assert "DB_PERMISSION_DENIED" in error and "key_source=SUPABASE_KEY" in error
+    assert "DB_PERMISSION_DENIED" in error and "key_source=SUPABASE_SERVICE_ROLE_KEY" in error
     assert "key_type=secret" in error and key not in error
 
 

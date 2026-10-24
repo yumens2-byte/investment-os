@@ -32,11 +32,11 @@ python -m pytest gen/nuna_weekly/tests -q && ruff check gen/nuna_weekly
 - 월~수 미국장이 모두 끝나기 전 수집은 `MARKET_NOT_READY`로 중단한다. `--date`는 회차 선택이며
   실제 시각을 변경하지 않는다. 조기 실행에서 현재 주 미래 종가를 채우지 않는다.
 - `preflight`는 DB·생성 백엔드를 초기화하지 않고 달력과 장 종료 여부만 확인한다.
-- `dbcheck`는 실제 SUPABASE_KEY로 7개 테이블을 0행 조회한다. 날짜·회차가 없어도 실행 가능하며
+- `dbcheck`는 실제 SUPABASE_SERVICE_ROLE_KEY로 7개 테이블을 0행 조회한다. 날짜·회차가 없어도 실행 가능하며
   성공은 조회 권한만 확인한다. INSERT/UPDATE·비용 RPC 권한은 검사하지 않는다.
-- DB 키는 두 YAML과 db.py 모두 `SUPABASE_KEY`를 사용한다. 기존 JWT 키는 apikey+Bearer,
+- DB 키는 두 YAML과 db.py 모두 `SUPABASE_SERVICE_ROLE_KEY`를 사용한다. 기존 JWT 키는 apikey+Bearer,
   신형 sb_secret_/sb_publishable_ 키는 apikey 헤더만 사용한다. 공개용 키를 서버 권한 키로 승격하지 않는다.
-- 발행은 생성 API 키를 요구하지 않는다. 기존 `SUPABASE_KEY`와 발행·알림 키는 필요하다.
+- 발행은 생성 API 키를 요구하지 않는다. 기존 `SUPABASE_SERVICE_ROLE_KEY`와 발행·알림 키는 필요하다.
 - `SCHEDULED/PARTIAL/FAILED` 회차도 생성 알림 이력이 있으면 `step=publish`로 재시도할 수 있다.
   이미 scheduled/published인 채널은 POST하지 않는다. 결과가 확정된 4xx 실패·미전송 차단 건만 재시도한다.
   post ID가 있는 건, 전송 후 pending, 5xx/408/409/429는 `RECONCILE_REQUIRED`로 신규 POST를 차단한다.
@@ -53,7 +53,7 @@ python -m pytest gen/nuna_weekly/tests -q && ruff check gen/nuna_weekly
 
 상세 분석·테스트·배포/롤백 절차: `docs/nuna_weekly_predeployment_20261024.md`.
 
-운영 실행 전 `vars.NUNA_ENABLED=1`, `SUPABASE_KEY` 및 README의 Secrets 설정을 확인한다.
+운영 실행 전 `vars.NUNA_ENABLED=1`, `SUPABASE_SERVICE_ROLE_KEY` 및 README의 Secrets 설정을 확인한다.
 활성화 스위치와 키는 코드 수정으로 우회하지 않는다. 수동 실생성은 완료된 주차의 목요일을 `date`에 넣고
 `step=run`, `dry_run=false`로 실행한다. `NOTIFIED`와 QC·스테이징을 확인한 뒤 동일 `date`로 발행한다.
 
@@ -70,7 +70,7 @@ python -m pytest gen/nuna_weekly/tests -q && ruff check gen/nuna_weekly
 | vars `NUNA_REF_IMAGE_URLS` | — | Iron Nuna 기준 이미지 https URL(콤마). 없으면 `assets/nuna_ref_front.png` |
 | secret `TELEGRAM_PAID_CHANNEL_ID` | — | 알림 대상. 해당 채널의 실제 관리자만 보류 가능. 개인 대화는 상대 사용자만 허용 |
 
-Secrets: `FAL_AI_KEY`, `ANTHROPIC_API_KEY`, `GEMINI_API_SUB_PAY_KEY`, `SUPABASE_URL`, `SUPABASE_KEY`,
+Secrets: `FAL_AI_KEY`, `ANTHROPIC_API_KEY`, `GEMINI_API_SUB_PAY_KEY`, `SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY`,
 `ZERNIO_API_KEY`(IG·Threads), `ZERNIO_API_SUB_KEY`(YT·FB), `NUNA_{INSTAGRAM,THREADS,YOUTUBE,FACEBOOK}_ACCOUNT_ID`,
 `TELEGRAM_BOT_TOKEN`, `TELEGRAM_PAID_CHANNEL_ID`.
 

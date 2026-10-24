@@ -5,7 +5,7 @@ supabase-py 를 쓰지 않는다: supabase==2.10.0 과 google-genai>=2.25 가 �
 (2026-10-19 pip 해석 실패 실측). PostgREST REST 를 requests 로 직접 호출한다.
 
 보안 (설계서 15장):
-    S-05 — 서버용 DB 키는 기존 SUPABASE_KEY Secret을 사용 — 이 모듈만 읽는다.
+    S-05 — 서버용 DB 키는 SUPABASE_SERVICE_ROLE_KEY Secret을 사용 — 이 모듈만 읽는다.
     S-06 — 테이블 허용 목록 밖 접근은 호출 전에 예외.
 
 테스트·DRY_RUN 용 MemoryStore 는 RestStore 와 동일한 의미(상한·조건부 전이)를 구현한다.
@@ -28,7 +28,7 @@ log = logging.getLogger("nuna_weekly.db")
 WRITE_TABLES = frozenset({"nuna_episodes", "nuna_publish_targets", "nuna_cost_ledger", "nuna_step_runs"})
 READ_TABLES = WRITE_TABLES | frozenset({"daily_snapshots", "daily_news", "daily_analysis"})
 RPC_ALLOWED = frozenset({"nuna_reserve_cost"})
-SUPABASE_KEY_ENV = "SUPABASE_KEY"
+SUPABASE_KEY_ENV = "SUPABASE_SERVICE_ROLE_KEY"
 
 
 class StoreError(RuntimeError):
@@ -133,7 +133,7 @@ class RestStore:
                     f"DB_PERMISSION_DENIED: HTTP {r.status_code} {method} {path}; "
                     f"key_source={SUPABASE_KEY_ENV}, key_type={self._key_type()}, "
                     f"db_host={urlsplit(self.base).hostname}. "
-                    "YAML과 코드의 키 이름은 SUPABASE_KEY입니다. Secret 값의 프로젝트·서버 권한을 확인하세요. "
+                    f"YAML과 코드의 키 이름은 {SUPABASE_KEY_ENV}입니다. Secret 값의 프로젝트·서버 권한을 확인하세요. "
                     "키 이름 변경만으로 DB 권한은 변경되지 않습니다.")
             raise StoreError(f"DB HTTP {r.status_code} {method} {path}: {text}")
         if not r.text.strip():
