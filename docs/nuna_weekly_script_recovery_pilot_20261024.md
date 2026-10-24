@@ -23,7 +23,7 @@
 ## 검증
 
 - test_script.py: 24 passed. 잘린 응답/문법 오류 복구, 실패 응답 사용량, 두 번 실패 후 중단, 거부/통신 예외 재시도 금지, 예산 초과 시 두 번째 API 호출 차단을 포함한다.
-- 전체 NUNA 회귀: 181 passed (83.27초). 이후 추가한 SDK 계약 검사 2개를 포함한 test_script.py 24개도 통과했다. 모의 E2E는 60초 영상 생성·QC, 멱등 재실행, 4개 채널 예약·검증과 보류 차단을 포함한다. 반영 후 GitHub CI는 추가 검사까지 포함한 전체 183개를 실행한다.
+- 전체 NUNA 회귀: 181 passed (83.27초). 이후 추가한 SDK 계약 검사 2개를 포함한 test_script.py 24개도 통과했다. 모의 E2E는 60초 영상 생성·QC, 멱등 재실행, 4개 채널 예약·검증과 보류 차단을 포함한다. 장애 재현 통합 파일럿 1개도 별도로 통과했다(15.26초): COLLECTED에서 첫 Claude 응답을 max_tokens/잘린 JSON으로 주입하고, 두 번째 응답으로 복구 후 NOTIFIED→SCHEDULED→PUBLISHED 및 4개 대상 원장을 확인했다. 실제 외부 API는 호출하지 않았다. 최종 GitHub CI는 전체 184개를 실행한다.
 - 운영 워크플로 가드레일: 14 passed.
 - 모의 테스트는 유료 API·실제 텔레그램·SNS 발행 성공의 증거가 아니다.
 
@@ -42,3 +42,9 @@ GitHub 연결 도구는 현재 워크플로 dispatch 기능을 제공하지 않�
 
 - https://platform.claude.com/docs/en/build-with-claude/structured-outputs
 - 공식 문서상 structured outputs도 max_tokens 종료·refusal 시 정상 스키마 결과를 보장하지 않으므로 종료 사유 검사와 별도 처리 경로를 유지한다.
+
+## 반영 기록
+
+- 동작 수정 커밋: 19e5b15715b260bb7894181893ab726c09cef0e0 (main).
+- CI: https://github.com/yumens2-byte/investment-os/actions/runs/40065278303
+- 파일럿 추가 증빙은 후속 테스트 커밋에 포함한다. 실제 API 파일럿은 아직 미실행이다.

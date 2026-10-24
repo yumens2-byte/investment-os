@@ -110,6 +110,38 @@ def test_full_flow_dummy(env):
     print(out.read_text())
 
 
+def test_script_response_recovery_pilot_full_flow(env):
+    """실제 실패 형태를 주입한 뒤 생성·QC·4채널 검증까지 모의 파일럿."""
+    from types import SimpleNamespace
+    from gen.nuna_weekly import script
+    from gen.nuna_weekly.backends.llm import ClaudeBackend, DummyLLM
+    from gen.nuna_weekly.tests.test_script import Responses, response
+
+    store = db.MemoryStore(daily=_daily())
+    ctx = _ctx(store, dry=False, tg=_NoTelegram())
+    assert pipeline.run_gen(ctx, "collect") == 0
+    facts = pipeline._facts(ctx.episode())
+    user = script.build_user_prompt(facts, config.segments(60), RUN_DATE)
+    good = DummyLLM().complete_json(script.SYSTEM_PROMPT, user, 8000).data
+    messages = Responses(response('{"title":"unfinished', "max_tokens", 4000, "req-truncated"),
+                         response(json.dumps(good, ensure_ascii=False), request_id="req-complete"))
+    ctx._backends.llm = ClaudeBackend(client=SimpleNamespace(messages=messages))
+    # 유료 intent·보호 경로도 검사하되 외부 서비스는 전부 가짜 클라이언트다.
+    ctx._backends.is_dummy = False
+    assert pipeline.run_gen(ctx) == 0
+    ep = store.get_episode(ctx.episode_id)
+    assert ep["status"] == "NOTIFIED" and ep["last_error"] is None
+    assert ep["script_json"]["attempts"] == 2
+    costs = [c for c in store.costs if c["step"] == "script"]
+    assert [c["request_id"] for c in costs] == ["req-truncated", "req-complete"]
+    assert len(messages.calls) == 2
+    assert ep["qc_json"]["main"]["passed"]
+    assert pipeline.run_publish(ctx, "publish", sleep=pipeline.datetime.advance) == 0
+    assert pipeline.run_publish(ctx, "verify", sleep=lambda _: None) == 0
+    assert store.get_episode(ctx.episode_id)["status"] == "PUBLISHED"
+    assert len(store.list_targets(ctx.episode_id)) == 4
+
+
 def test_dry_run_publish_skips(env):
     store = db.MemoryStore(daily=_daily())
     ctx = _ctx(store, dry=True, tg=_NoTelegram())
