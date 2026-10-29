@@ -3,9 +3,7 @@ name: 🌐 Comic Novel Facebook (Friday)
 
 on:
   schedule:
-    # Friday 10:17 KST. GitHub schedule delays of 4h+ observed (2026-10-16/23) pushed
-    # the old 22:17 slot into Saturday KST, where the Friday gate skips the run.
-    - cron: '17 1 * * 5'
+    - cron: '17 13 * * 5' # Friday 22:17 KST
   workflow_dispatch:
     inputs:
       stage:

@@ -37,7 +37,7 @@ sending 상태에서 프로세스가 종료되거나 게시 성공 후 DB 갱신
 
 ## 3. 스케줄 및 종료 정책
 
-- `.github/workflows/comic_novel_fb.yml`: UTC cron `17 1 * * 5`, 금요일 10:17 KST(2026-10-29 22:17에서 변경). 예약 실행에 0~199초 추가 지연이 있다. GitHub 자체 지연도 가능하다.
+- `.github/workflows/comic_novel_fb.yml`: UTC cron `17 13 * * 5`, 금요일 22:17 KST. 예약 실행에 0~199초 추가 지연이 있다. GitHub 자체 지연도 가능하다.
 - 최초 정규일: 2026-10-16. 금요일 조건은 애플리케이션에서도 검사한다.
 - workflow 동시 실행 그룹: `comic-novel-facebook`, 실행 중 취소 false, timeout 15분.
 - 운영 반영 승인 이후 직접 연결의 anon 권한 오류가 확인되었다. 기존 키를 유지하는 GitHub OIDC gateway를 보완하며 실제 main OIDC smoke VERIFIED 확인 후 workflow 활성 기본값 true를 반영한다. repository variable `FACE_NOVEL_ENABLED=false`는 명시적인 중지 설정이다. CLI 모듈 자체는 환경변수 없을 때 false다.
