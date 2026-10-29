@@ -59,7 +59,7 @@ jobs:
       FACE_NOVEL_FIRST_DATE: '2026-11-01'
       # Operational limit, not a Meta API maximum.
       FACE_NOVEL_MAX_CHARS: '10000'
-      DRY_RUN: ${{ inputs.dry_run == 'false' && 'false' || 'true' }}
+      DRY_RUN: ${{ inputs.dry_run != 'false' && 'true' || 'false' }}
       REQUEST_STAGE: ${{ inputs.stage }}
       SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
       SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}

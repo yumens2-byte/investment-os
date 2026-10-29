@@ -56,7 +56,7 @@ jobs:
     timeout-minutes: 15
     env:
       NOVEL_USE_GITHUB_OIDC: 'true'
-      DRY_RUN: ${{ github.event_name == 'schedule' && 'false' || inputs.dry_run || 'false' }}
+      DRY_RUN: ${{ github.event_name != 'schedule' && inputs.dry_run != 'false' && 'true' || 'false' }}
       ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
       NOTION_API_KEY: ${{ secrets.NOTION_API_KEY }}
       X_API_KEY: ${{ secrets.X_API_KEY }}
@@ -109,7 +109,7 @@ jobs:
     uses: ./.github/workflows/comic_novel_fb.yml
     with:
       stage: ${{ github.event_name == 'schedule' && 'publish' || inputs.fb_stage }}
-      dry_run: ${{ github.event_name == 'schedule' && 'false' || inputs.dry_run || 'false' }}
+      dry_run: ${{ github.event_name != 'schedule' && inputs.dry_run != 'false' && 'true' || 'false' }}
       claim_id: ${{ inputs.fb_claim_id }}
       post_id: ${{ inputs.fb_post_id }}
       confirmed_at: ${{ inputs.fb_confirmed_at }}
