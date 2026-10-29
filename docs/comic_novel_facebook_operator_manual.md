@@ -98,7 +98,7 @@ actor는 실행한 GitHub 사용자로 자동 기록되므로 별도 입력칸�
 
 Branch=main, target=facebook, fb_stage=reconcile, dry_run=false, fb_not_posted=체크함으로 설정합니다.
 
-claim_id와 note만 입력하고 post_id/confirmed_at은 반드시 비웁니다. note에 Page 활동 기록, 실행 로그 등 미게시 확인 근거를 적습니다. 이 실행은 미해결 선점을 해제할 뿐 즉시 발행하지 않습니다. 다음 적법한 금요일 실행에서 재선정될 수 있습니다.
+claim_id와 note만 입력하고 post_id/confirmed_at은 반드시 비웁니다. note에 Page 활동 기록, 실행 로그 등 미게시 확인 근거를 적습니다. 이 실행은 미해결 선점을 해제할 뿐 즉시 발행하지 않습니다. 다음 적법한 일요일 정기 실행(10:17 KST)에서 재선정될 수 있습니다.
 
 게시 여부를 모르면 not_posted를 체크하지 않고 보류를 유지합니다. 시간이 지났거나 오류가 났다는 사실만으로 미게시가 확인되는 것은 아닙니다.
 
@@ -118,6 +118,8 @@ claim_id와 note만 입력하고 post_id/confirmed_at은 반드시 비웁니다.
 
 ## 10. 현재 확인된 운영 상태
 
-2026-10-12 기준 main 코드·gateway 배포 및 운영 연결 미리보기 검증 완료. 기존 원본 23행과 기존 SUPABASE_KEY를 유지했습니다. 최초 정규 실행은 2026-10-16 금요일 22:17 KST입니다. 이 문서 작성 시 실제 Facebook 게시와 publish_fb_data 갱신은 0건입니다.
+2026-10-30 기준: publish_fb_yn 마이그레이션 적용, gateway v2 배포, comic_novel.yml(target=facebook, fb_stage=preview) 운영 미리보기 검증 완료([run 40963824179](https://github.com/yumens2-byte/investment-os/actions/runs/40963824179), 최초 후보 2026-04-05 EP.01~EP.04, 쓰기 0건). 최초 정규 실행은 2026-11-01 일요일 10:17 KST입니다. 이 문서 작성 시 실제 Facebook 게시와 publish_fb_data 갱신은 0건입니다(publish_fb_yn 23행 모두 N).
+
+이전 기록(2026-10-12): main 코드·gateway v1 배포 및 운영 연결 미리보기 검증 완료. 기존 원본 23행과 기존 SUPABASE_KEY 유지. 당시 최초 정규 실행 예정은 2026-10-16 금요일 22:17 KST였으며, 금요일 2회(10-16, 10-23)는 GitHub 예약 지연으로 토요일 KST에 시작되어 SKIPPED_NOT_FRIDAY로 게시 없이 종료되었습니다.
 
 [운영 연결 점검](https://github.com/yumens2-byte/investment-os/actions/runs/38178676459/job/114586388853)은 Page 대상 일치 및 첫 원본 PREVIEW를 확인한 결과입니다. 실제 게시 권한과 첫 게시 성공은 정규 발행 결과에서 확인합니다.

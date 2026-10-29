@@ -236,8 +236,12 @@ def _run_sunday() -> dict:
 
     # ── C-7: EDT Universe 소설형 에피소드 ──
     # A안 투표 발행 훅은 publish_novel_episode() 말미로 이동 (2026-08-11 패치).
-    # 사유: 소설 실제 발행은 comic_novel.yml(일 22:17)이 담당할 수 있어,
+    # 사유: 소설 실제 발행은 comic_novel.yml 이 담당할 수 있어,
     #       이 지점(일 10:00) 훅은 소설 미발행 시 독립 투표가 되는 갭 존재.
+    # ⚠️ 2026-10-30: comic_novel.yml x-novel 이 일 10:17 KST 로 이동했다. weekend_content.yml
+    #    (일 10:00 KST, 2026-04-05 이후 수동 비활성)을 다시 켜면 같은 KST 날짜로
+    #    publish_novel_episode() 가 거의 동시에 두 번 실행된다. 재활성화 전에 이 호출을 빼거나
+    #    두 실행 시각을 분리할 것.
     _run_comic_novel()
 
     return {

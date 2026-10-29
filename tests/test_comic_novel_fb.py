@@ -338,3 +338,30 @@ def test_legacy_confirmation_does_not_cover_changed_or_new_sources(change):
     evidence = legacy_evidence(SOURCE)
     source = dict(SOURCE, **change)
     assert verify_x_publication(source, evidence) is False
+
+
+def test_direct_client_selects_oldest_by_publish_fb_yn(monkeypatch):
+    from db.comic_novel_channel_store import ComicNovelChannelStore
+    monkeypatch.setenv("NOVEL_USE_GITHUB_OIDC", "false")
+    calls = []
+
+    class Query:
+        def __getattr__(self, name):
+            def record(*args):
+                calls.append((name, args))
+                return self
+            return record
+
+        def execute(self):
+            return Mock(data=[dict(SOURCE, id=4, publish_fb_yn="N")])
+
+    client = Mock()
+    client.table.side_effect = lambda name: calls.append(("table", (name,))) or Query()
+    row = ComicNovelChannelStore(client=client).select_oldest_pending("2026-11-01")
+    assert row["publish_date"] == "2026-04-05"
+    assert ("table", ("comic_novels",)) in calls
+    assert ("eq", ("publish_fb_yn", "N")) in calls
+    assert ("eq", ("status", "published")) in calls
+    assert ("lte", ("publish_date", "2026-11-01")) in calls
+    assert [c for c in calls if c[0] == "order"] == [("order", ("publish_date",)), ("order", ("id",))]
+    assert not any(c[0] == "is_" for c in calls)

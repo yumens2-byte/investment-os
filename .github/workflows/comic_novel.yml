@@ -13,10 +13,10 @@ on:
   workflow_dispatch:
     inputs:
       target:
-        description: '실행 대상 (all=X+Facebook)'
+        description: '실행 대상 (all=X+Facebook). 기본 facebook: fb_stage 기본 preview 와 합쳐 수동 실행 기본값은 발행 0건'
         type: choice
-        options: [all, x, facebook]
-        default: all
+        options: [facebook, x, all]
+        default: facebook
       dry_run:
         description: 'DRY_RUN (true=모의, false=실발행)'
         required: false
