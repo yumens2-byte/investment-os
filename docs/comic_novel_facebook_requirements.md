@@ -1,5 +1,13 @@
 # Comic Novel Facebook 연재 요구사항 정의서 v1.0
 
+> **2026-10-30 변경 (본문의 금요일·comic_novel_fb.yml 단독 실행 서술보다 우선)**
+> - 실행: `comic_novel.yml` 일요일 10:17 KST(cron `17 1 * * 0`). job `x-novel`(기존 X 흐름)과 `facebook-novel`이 needs 없이 병렬로 시작한다. X 실행 시각도 22:17 → 10:17로 함께 변경했다(22:17 슬롯이 2026-10-04~10-25 4회 모두 GitHub 지연으로 월요일 KST에 시작됨).
+> - `comic_novel_fb.yml`은 `workflow_call` 전용 재사용 워크플로우다. 수동 점검·복구는 comic_novel.yml을 target=facebook, fb_stage=preview/publish/reconcile로 실행한다.
+> - 요일 게이트: Python `weekday()==6`(SKIPPED_NOT_SUNDAY), gateway `novel_fb_claim` KST 일요일. 최초 발행일 2026-11-01. 주차 슬롯은 기존과 같은 KST 월요일 시작 주.
+> - gateway 권한: FB 쓰기는 OIDC `job_workflow_ref`가 comic_novel_fb.yml인 job만, X 확정(novel_x_confirm)은 job이 comic_novel.yml인 경우만 허용한다. 같은 실행의 X job은 FB 쓰기를 할 수 없다.
+> - Y/N: `comic_novels.publish_fb_yn char(1)`은 `publish_fb_data`에서 자동 계산되는 STORED 컬럼(NULL→N, 날짜→Y)이다. 대상 선정은 `publish_fb_yn='N'`, 쓰기는 기존대로 `publish_fb_data`만 한다.
+> - FB는 그 주 X 신작이 아니라 가장 오래된 미발행 행을 소비하므로 X 결과를 기다리지 않는다. 대기열이 빈 주에만 X 신작과의 선후에 따라 그 주 게시 또는 SKIPPED_NO_DATA가 갈린다.
+
 - 기준일: 2026-10-12 KST
 - 저장소: yumens2-byte/investment-os
 - 요청 범위: 기존 comic_novel 운영을 바탕으로 요구사항 정의, 상세설계 및 개발 착수

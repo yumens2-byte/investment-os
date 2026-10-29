@@ -22,6 +22,7 @@ try {
  await db.exec(schema);
  await db.exec(schema); // Deploy script must be safe to reapply.
  check((await row(`select data_type from information_schema.columns where table_name='comic_novels' and column_name='publish_fb_data'`)).data_type==='date');
+ check((await row(`select is_generated from information_schema.columns where table_name='comic_novels' and column_name='publish_fb_yn'`)).is_generated==='ALWAYS');
  await db.exec(`insert into comic_novels(publish_date,title,episode_range,novel_text,status) values
  ('2026-04-05','First','EP.01~04','Body A','published'),
  ('2026-04-12','Second','EP.05~09','Body B','published');`);
@@ -53,6 +54,11 @@ try {
  check(futureRejected);
  check((await rpc('novel_fb_finalize',[claim.id,'123_456','2026-10-09T22:18:00+09:00','operator','Page checked'])).status==='ok');
  check((await row('select publish_fb_data::text as d from comic_novels where publish_date=$1',['2026-04-05'])).d==='2026-10-09');
+ check((await row('select publish_fb_yn from comic_novels where publish_date=$1',['2026-04-05'])).publish_fb_yn==='Y');
+ check((await row('select publish_fb_yn from comic_novels where publish_date=$1',['2026-04-12'])).publish_fb_yn==='N');
+ let ynWriteRejected=false;
+ try {await db.exec("update comic_novels set publish_fb_yn='Y' where publish_date='2026-04-12'");} catch {ynWriteRejected=true;}
+ check(ynWriteRejected);
  const weekBlocked=await rpc('novel_fb_claim',['2026-04-12','123','2026-10-05','run-4','hash2',h2]);
  check(weekBlocked.status!=='claimed');
  const next=await rpc('novel_fb_claim',['2026-04-12','123','2026-10-12','run-5','hash2',h2]);

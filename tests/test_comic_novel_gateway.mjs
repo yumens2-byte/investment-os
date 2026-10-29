@@ -25,6 +25,25 @@ test('algorithm substitution, missing kid and forged signature rejected',async()
   for(const h of [{alg:'none',kid:jwk.kid},{alg:'HS256',kid:jwk.kid},{alg:'RS256',kid:'other'},{alg:'RS256',kid:jwk.kid,crit:['b64']}]){const t=await token(claims,h);await assert.rejects(()=>verify(t));}
   const t=await token();const parts=t.split('.');parts[1]=enc({...claims,aud:'wrong'});await assert.rejects(()=>verify(parts.join('.')));
 });
+const wf=w=>`yumens2-byte/investment-os/.github/workflows/${w}@refs/heads/main`;
+test('reusable FB job is identified by job_workflow_ref, not the caller',async()=>{
+  const fbJob=await verify(await token({...claims,event_name:'schedule',workflow_ref:wf('comic_novel.yml'),job_workflow_ref:wf('comic_novel_fb.yml')}));
+  assert.equal(fbJob.workflow,'comic_novel.yml');assert.equal(fbJob.jobWorkflow,'comic_novel_fb.yml');
+  authorizeOperation(fbJob,'novel_fb_claim');
+  assert.throws(()=>authorizeOperation(fbJob,'novel_x_confirm'));
+  const xJob=await verify(await token({...claims,event_name:'schedule',workflow_ref:wf('comic_novel.yml'),job_workflow_ref:wf('comic_novel.yml')}));
+  authorizeOperation(xJob,'novel_x_confirm');
+  for(const op of ['novel_fb_claim','novel_fb_mark_sending','novel_fb_finalize','novel_fb_mark_result','novel_fb_release'])assert.throws(()=>authorizeOperation(xJob,op));
+  for(const jobRef of ['other/repo/.github/workflows/comic_novel_fb.yml@refs/heads/main',wf('comic_novel_fb.yml').replace('main','feature'),wf('unknown.yml')]){
+    const odd=await verify(await token({...claims,workflow_ref:wf('comic_novel.yml'),job_workflow_ref:jobRef}));
+    assert.equal(odd.jobWorkflow,null);assert.throws(()=>authorizeOperation(odd,'novel_fb_claim'));
+    authorizeOperation(odd,'novel_x_confirm'); // existing X job rule is unaffected by an unexpected job ref
+  }
+  const noJobRef=await verify(await token({...claims,workflow_ref:wf('comic_novel.yml')}));
+  authorizeOperation(noJobRef,'novel_x_confirm');assert.throws(()=>authorizeOperation(noJobRef,'novel_fb_claim'));
+  const ciCaller={workflow:'ci_alert_tests.yml',jobWorkflow:'comic_novel_fb.yml'};
+  assert.throws(()=>authorizeOperation(ciCaller,'novel_fb_claim'));authorizeOperation(ciCaller,'select_oldest_pending');
+});
 test('CI cannot mutate; cross workflow writes denied',()=>{
   for(const w of ['ci_alert_tests.yml','comic_novel.yml'])assert.throws(()=>authorizeOperation({workflow:w},'novel_fb_claim'));
   assert.throws(()=>authorizeOperation({workflow:'comic_novel_fb.yml'},'novel_x_confirm'));
@@ -36,11 +55,20 @@ test('RPC whitelist, extra parameters, invalid dates and future timestamps denie
   assert.throws(()=>validateParams('get_x_evidence',{source_date:'2026-02-30'}));
   assert.throws(()=>validateParams('novel_fb_finalize',{p_claim_id:1,p_post_id:'1',p_confirmed_at:'2099-01-01T00:00:00Z'}));
 });
-test('claim only current Friday slot after firstdate',()=>{
-  const p={p_source_date:'2026-04-05',p_target:'facebook:123',p_slot:'2026-10-12',p_run_id:'42',p_content_hash:'a'.repeat(64),p_source_hash:'b'.repeat(64)};
-  validateParams('novel_fb_claim',p,new Date('2026-10-16T13:17:00Z'));
-  assert.throws(()=>validateParams('novel_fb_claim',p,new Date('2026-10-12T13:17:00Z')));
-  assert.throws(()=>validateParams('novel_fb_claim',{...p,p_slot:'2026-10-05'},new Date('2026-10-16T13:17:00Z')));
+test('claim only current Sunday KST slot after firstdate',()=>{
+  const p={p_source_date:'2026-04-05',p_target:'facebook:123',p_slot:'2026-10-26',p_run_id:'42',p_content_hash:'a'.repeat(64),p_source_hash:'b'.repeat(64)};
+  validateParams('novel_fb_claim',p,new Date('2026-11-01T01:17:00Z'));
+  validateParams('novel_fb_claim',p,new Date('2026-11-01T14:59:00Z')); // Sunday 23:59 KST
+  assert.throws(()=>validateParams('novel_fb_claim',p,new Date('2026-11-01T15:00:00Z'))); // Monday KST
+  assert.throws(()=>validateParams('novel_fb_claim',p,new Date('2026-10-30T13:17:00Z'))); // Friday KST
+  assert.throws(()=>validateParams('novel_fb_claim',{...p,p_slot:'2026-10-19'},new Date('2026-10-25T01:17:00Z'))); // before first date
+  assert.throws(()=>validateParams('novel_fb_claim',{...p,p_slot:'2026-10-19'},new Date('2026-11-01T01:17:00Z')));
+});
+test('oldest pending is selected by publish_fb_yn N in date then id order',async()=>{
+  let seen;await executeOperation('select_oldest_pending',{today_kst:'2026-11-01'},async(path,params)=>{seen={path,params};return [];});
+  assert.equal(seen.path,'comic_novels');assert.equal(seen.params.publish_fb_yn,'eq.N');
+  assert.equal(seen.params.order,'publish_date.asc,id.asc');assert.equal(seen.params.status,'eq.published');
+  assert.ok(!('publish_fb_data' in seen.params));
 });
 test('history access and legacy fallback contracts',async()=>{
   assert.equal(await executeOperation('verify_history_access',{},async()=>[]),true);

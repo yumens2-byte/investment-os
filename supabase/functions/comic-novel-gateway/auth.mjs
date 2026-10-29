@@ -33,13 +33,20 @@ export async function verifyGithubToken(token, {fetchJwks, cryptoProvider = glob
     const workflow = allowed.find(w => c.workflow_ref === `${REPO}/.github/workflows/${w}@${REF}`);
     if (!workflow || !['schedule','workflow_dispatch','push'].includes(c.event_name)) fail();
     if (workflow === 'ci_alert_tests.yml' ? !['push','workflow_dispatch'].includes(c.event_name) : !['schedule','workflow_dispatch'].includes(c.event_name)) fail();
-    return {workflow, claims:c};
+    // job_workflow_ref names the file the job actually runs. comic_novel.yml runs X inline and calls
+    // comic_novel_fb.yml as a reusable workflow, so writes are authorized by the job, not the caller.
+    // An unrecognised job ref only loses FB write access; X confirmation keeps its caller rule.
+    const jobRef = c.job_workflow_ref ?? c.workflow_ref;
+    const jobWorkflow = allowed.find(w => jobRef === `${REPO}/.github/workflows/${w}@${REF}`) ?? null;
+    return {workflow, jobWorkflow, claims:c};
   } catch (e) { if (e instanceof GatewayError) throw e; fail(); }
 }
 export function authorizeOperation(identity, operation) {
+  const job = identity.jobWorkflow === undefined ? identity.workflow : identity.jobWorkflow;
   const reads = ['select_oldest_pending','get_x_evidence','get_week_state','verify_history_access'];
   if (reads.includes(operation)) return;
-  if (operation === 'novel_x_confirm' && identity.workflow === 'comic_novel.yml') return;
-  if (['novel_fb_claim','novel_fb_mark_sending','novel_fb_finalize','novel_fb_mark_result','novel_fb_release'].includes(operation) && identity.workflow === 'comic_novel_fb.yml') return;
+  if (identity.workflow === 'ci_alert_tests.yml') throw new GatewayError('OPERATION_REJECTED');
+  if (operation === 'novel_x_confirm' && identity.workflow === 'comic_novel.yml' && job !== 'comic_novel_fb.yml') return;
+  if (['novel_fb_claim','novel_fb_mark_sending','novel_fb_finalize','novel_fb_mark_result','novel_fb_release'].includes(operation) && job === 'comic_novel_fb.yml') return;
   throw new GatewayError('OPERATION_REJECTED');
 }

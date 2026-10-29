@@ -24,14 +24,14 @@ export function validateParams(op,p,now=new Date()) {
   if(op==='novel_fb_claim') {
     const kst=new Date(now.getTime()+9*3600000);const today=kst.toISOString().slice(0,10);
     const monday=new Date(kst);monday.setUTCDate(monday.getUTCDate()-((monday.getUTCDay()+6)%7));
-    if(kst.getUTCDay()!==5||today<'2026-10-16'||p.p_source_date>today||p.p_slot!==monday.toISOString().slice(0,10)) reject();
+    if(kst.getUTCDay()!==0||today<'2026-11-01'||p.p_source_date>today||p.p_slot!==monday.toISOString().slice(0,10)) reject();
   }
   return p;
 }
 export async function executeOperation(op,p,rest) {
   if(op.startsWith('novel_')) return rest(`rpc/${op}`,{},'POST',p);
   if(op==='verify_history_access') {await rest('comic_novel_channel_history',{select:'id',limit:'1'}); return true;}
-  if(op==='select_oldest_pending') return (await rest('comic_novels',{select:'id,publish_date,title,episode_range,novel_text,status,publish_fb_data',publish_fb_data:'is.null',status:'eq.published',publish_date:`lte.${p.today_kst}`,order:'publish_date.asc,id.asc',limit:'1'}))[0]??null;
+  if(op==='select_oldest_pending') return (await rest('comic_novels',{select:'id,publish_date,title,episode_range,novel_text,status,publish_fb_data,publish_fb_yn',publish_fb_yn:'eq.N',status:'eq.published',publish_date:`lte.${p.today_kst}`,order:'publish_date.asc,id.asc',limit:'1'}))[0]??null;
   if(op==='get_x_evidence') {
     const rows=await rest('comic_novel_channel_history',{select:'*',channel:'eq.x',source_date:`eq.${p.source_date}`,status:'eq.ok',limit:'1'});
     if(rows.length)return rows[0];

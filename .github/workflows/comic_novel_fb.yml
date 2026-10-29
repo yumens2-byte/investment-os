@@ -1,67 +1,72 @@
-# Deployment approved; GitHub OIDC read-only production verification passed.
-name: 🌐 Comic Novel Facebook (Friday)
+# Facebook job of comic_novel.yml (Sunday, parallel with X). Reusable only: run it through
+# comic_novel.yml (target=facebook). The gateway authorizes FB writes by this file's
+# job_workflow_ref, so the X job of the caller cannot perform them.
+name: 🌐 Comic Novel Facebook (reusable)
 
 on:
-  schedule:
-    - cron: '17 13 * * 5' # Friday 22:17 KST
-  workflow_dispatch:
+  workflow_call:
     inputs:
       stage:
-        description: 'Preview, Friday publish, or operator-confirmed reconciliation'
-        type: choice
-        options: [preview, publish, reconcile]
+        description: 'preview | publish | reconcile'
+        type: string
         default: preview
       dry_run:
-        description: 'Preview only; publish/reconcile require false'
-        type: boolean
-        default: true
-
+        description: "'true' = preview only; publish/reconcile require 'false'"
+        type: string
+        default: 'true'
       claim_id:
-        description: 'Reconcile: existing claim ID'
         type: string
+        default: ''
       post_id:
-        description: 'Reconcile: verified Facebook post ID'
         type: string
+        default: ''
       confirmed_at:
-        description: 'Reconcile: actual publication ISO timestamp with timezone'
         type: string
+        default: ''
       note:
-        description: 'Reconcile: operator verification evidence'
         type: string
+        default: ''
       not_posted:
-        description: 'Reconcile: operator confirmed no Facebook post exists'
-        type: boolean
-        default: false
-
-permissions:
-  contents: read
-
-concurrency:
-  group: comic-novel-facebook
-  cancel-in-progress: false
-
-env:
-  NOVEL_USE_GITHUB_OIDC: 'true'
-  FACE_NOVEL_ENABLED: ${{ vars.FACE_NOVEL_ENABLED || 'true' }}
-  FACE_NOVEL_FIRST_DATE: '2026-10-16'
-  # Operational limit, not a Meta API maximum.
-  FACE_NOVEL_MAX_CHARS: '10000'
-  DRY_RUN: ${{ github.event_name == 'schedule' && 'false' || (inputs.dry_run && 'true' || 'false') }}
-  REQUEST_STAGE: ${{ github.event_name == 'schedule' && 'publish' || inputs.stage || 'preview' }}
-  SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
-  SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
-  FACE_PAGE_ID: ${{ secrets.FACE_PAGE_ID }}
-  FACE_PAGE_TOKEN: ${{ secrets.FACE_PAGE_TOKEN }}
-  TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
-  TELEGRAM_FREE_CHANNEL_ID: ${{ secrets.TELEGRAM_FREE_CHANNEL_ID }}
+        type: string
+        default: 'false'
+    secrets:
+      SUPABASE_URL:
+        required: true
+      SUPABASE_KEY:
+        required: true
+      FACE_PAGE_ID:
+        required: true
+      FACE_PAGE_TOKEN:
+        required: true
+      TELEGRAM_BOT_TOKEN:
+        required: false
+      TELEGRAM_FREE_CHANNEL_ID:
+        required: false
 
 jobs:
   comic-novel-facebook:
     permissions:
       contents: read
       id-token: write
+    concurrency:
+      group: comic-novel-facebook
+      cancel-in-progress: false
     runs-on: ubuntu-latest
     timeout-minutes: 15
+    env:
+      NOVEL_USE_GITHUB_OIDC: 'true'
+      FACE_NOVEL_ENABLED: ${{ vars.FACE_NOVEL_ENABLED || 'true' }}
+      FACE_NOVEL_FIRST_DATE: '2026-11-01'
+      # Operational limit, not a Meta API maximum.
+      FACE_NOVEL_MAX_CHARS: '10000'
+      DRY_RUN: ${{ inputs.dry_run != 'false' && 'true' || 'false' }}
+      REQUEST_STAGE: ${{ inputs.stage }}
+      SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+      SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
+      FACE_PAGE_ID: ${{ secrets.FACE_PAGE_ID }}
+      FACE_PAGE_TOKEN: ${{ secrets.FACE_PAGE_TOKEN }}
+      TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+      TELEGRAM_FREE_CHANNEL_ID: ${{ secrets.TELEGRAM_FREE_CHANNEL_ID }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -83,6 +88,7 @@ jobs:
           RECONCILE_NOT_POSTED: ${{ inputs.not_posted }}
           RECONCILE_ACTOR: ${{ github.actor }}
         run: |
+          case "$REQUEST_STAGE" in preview|publish|reconcile) ;; *) echo "Invalid stage: $REQUEST_STAGE"; exit 1 ;; esac
           args=(--stage "$REQUEST_STAGE" --output output/comic-novel-fb-report.json)
           if [[ "$REQUEST_STAGE" == 'reconcile' ]]; then
             if [[ "$DRY_RUN" != 'false' ]]; then
