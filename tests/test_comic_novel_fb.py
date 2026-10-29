@@ -8,7 +8,7 @@ from weekend.comic_novel_fb import (
     format_facebook_novel, run_facebook_novel, source_content_hash, verify_x_publication,
 )
 
-FRIDAY = datetime(2026, 10, 16, 13, 17, tzinfo=timezone.utc)
+SUNDAY = datetime(2026, 11, 1, 1, 17, tzinfo=timezone.utc)  # 10:17 KST
 SOURCE = {"publish_date": "2026-04-05", "title": "힘의 의미", "episode_range": "EP01~04",
           "novel_text": "옛 시장의 이야기\n\nEDT: ‘말’\n***\n원문", "status": "published"}
 
@@ -32,7 +32,7 @@ def publisher():
 
 
 def run(store, publisher, **kwargs):
-    options = dict(store=store, publisher=publisher, clock=lambda: FRIDAY,
+    options = dict(store=store, publisher=publisher, clock=lambda: SUNDAY,
                    enabled=True, dry_run=False, target="page", notifier=Mock(), run_id="test-run")
     options.update(kwargs)
     return run_facebook_novel(**options)
@@ -66,10 +66,10 @@ def test_one_oldest_candidate_sent_once_with_durable_sending_before_graph(store,
     result = run(store, publisher)
     assert result["status"] == "PUBLISHED"
     assert calls == ["sending", "graph"]
-    store.select_oldest_pending.assert_called_once_with("2026-10-16")
+    store.select_oldest_pending.assert_called_once_with("2026-11-01")
     assert publisher.call_count == 1
-    store.claim_slot.assert_called_once_with("2026-04-05", "page", "2026-10-12", "test-run", result["content_hash"], result["source_content_hash"])
-    store.finalize_publication.assert_called_once_with(1, "123_456", "2026-10-16T22:17:00+09:00")
+    store.claim_slot.assert_called_once_with("2026-04-05", "page", "2026-10-26", "test-run", result["content_hash"], result["source_content_hash"])
+    store.finalize_publication.assert_called_once_with(1, "123_456", "2026-11-01T10:17:00+09:00")
 
 
 @pytest.mark.parametrize("state", ["ok", "sending", "unknown", "claimed", "failed"])
@@ -183,8 +183,9 @@ def test_mark_result_failure_retains_sending(store, publisher):
 
 
 @pytest.mark.parametrize("clock,status", [
-    (datetime(2026, 10, 15, 14, 59, tzinfo=timezone.utc), "SKIPPED_BEFORE_FIRST_DATE"),
-    (datetime(2026, 10, 16, 15, 0, tzinfo=timezone.utc), "SKIPPED_NOT_FRIDAY"),
+    (datetime(2026, 10, 31, 14, 59, tzinfo=timezone.utc), "SKIPPED_BEFORE_FIRST_DATE"),
+    (datetime(2026, 11, 1, 15, 0, tzinfo=timezone.utc), "SKIPPED_NOT_SUNDAY"),  # Monday 00:00 KST
+    (datetime(2026, 11, 6, 13, 17, tzinfo=timezone.utc), "SKIPPED_NOT_SUNDAY"),  # Friday KST
 ])
 def test_initial_date_and_kst_day_gates(store, publisher, clock, status):
     assert run(store, publisher, clock=lambda: clock)["status"] == status
@@ -192,11 +193,11 @@ def test_initial_date_and_kst_day_gates(store, publisher, clock, status):
     assert_no_writes(store, publisher)
 
 
-def test_kst_thursday_utc_is_friday_and_year_week_is_local_monday(store, publisher):
-    stamp = datetime(2026, 12, 31, 15, 1, tzinfo=timezone.utc)  # Jan 1 Friday KST
+def test_kst_saturday_utc_is_sunday_and_year_week_is_local_monday(store, publisher):
+    stamp = datetime(2027, 1, 2, 15, 1, tzinfo=timezone.utc)  # Jan 3 Sunday KST
     result = run(store, publisher, clock=lambda: stamp)
     assert result["status"] == "PUBLISHED" and result["slot_week_start"] == "2026-12-28"
-    assert result["publication_date"] == "2027-01-01"
+    assert result["publication_date"] == "2027-01-03"
 
 
 def test_disabled_default_blocks_before_database(monkeypatch, store, publisher):

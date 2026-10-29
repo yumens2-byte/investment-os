@@ -35,7 +35,8 @@ def test_every_production_job_has_a_timeout() -> None:
         for index, match in enumerate(job_starts):
             end = job_starts[index + 1].start() if index + 1 < len(job_starts) else len(body)
             job_body = body[match.end():end]
-            if "timeout-minutes:" not in job_body:
+            # A job that calls a reusable workflow cannot set timeout-minutes; the called job does.
+            if "timeout-minutes:" not in job_body and not re.search(r"^    uses: \./", job_body, re.MULTILINE):
                 missing.append(f"{path.name}:{match.group(1)}")
 
     assert not missing, "jobs without timeout-minutes: " + ", ".join(missing)

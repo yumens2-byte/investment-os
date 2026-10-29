@@ -36,8 +36,8 @@ class ComicNovelChannelStore:
         if self.gateway is not None:
             return self.gateway.call("select_oldest_pending", {"today_kst": str(today_kst)})
         rows = (self.client.table("comic_novels")
-                .select("id,publish_date,title,episode_range,novel_text,status,publish_fb_data")
-                .is_("publish_fb_data", "null").eq("status", "published")
+                .select("id,publish_date,title,episode_range,novel_text,status,publish_fb_data,publish_fb_yn")
+                .eq("publish_fb_yn", "N").eq("status", "published")
                 .lte("publish_date", str(today_kst)).order("publish_date").order("id")
                 .limit(1).execute().data)
         return rows[0] if rows else None

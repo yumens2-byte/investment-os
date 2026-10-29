@@ -15,6 +15,12 @@ def _workflow_name(path: Path) -> str:
     return match.group(1).strip("\"'")
 
 
+def _is_reusable_only(path: Path) -> bool:
+    """workflow_call-only files never emit their own workflow_run; the caller's run covers them."""
+    text = path.read_text(encoding="utf-8")
+    return re.search(r"^on:\n  workflow_call:\n(?:    .*\n|\n)*(?=\S)", text, re.MULTILINE) is not None
+
+
 def _watched_workflow_names() -> set[str]:
     text = WATCHDOG_PATH.read_text(encoding="utf-8")
     match = re.search(r"^    workflows:\n(?P<items>(?:      - .+\n)+)", text, re.MULTILINE)
@@ -31,7 +37,7 @@ def test_watchdog_monitors_every_production_workflow() -> None:
     production_names = {
         _workflow_name(path)
         for path in WORKFLOW_DIRECTORY.glob("*.yml")
-        if path.name not in ignored_files
+        if path.name not in ignored_files and not _is_reusable_only(path)
     }
 
     assert _watched_workflow_names() == production_names

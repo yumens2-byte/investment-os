@@ -1,49 +1,83 @@
 # .github/workflows/comic_novel.yml
-# C-7: EDT Universe 소설형 에피소드 — 매주 일요일 22:17 KST
+# C-7: EDT Universe 소설형 에피소드 — 매주 일요일 10:17 KST, X·Facebook 병렬
+#   x-novel        : Notion → Claude 소설화 → comic_novels 적재 → X·TG 발행 (기존 운영 흐름)
+#   facebook-novel : AI 호출 없음. comic_novels 에서 publish_fb_yn='N' 최초 행 1편 → Facebook 발행
+# 두 job 은 needs 없이 동시에 시작한다. FB 는 그 주 X 신작이 아니라 가장 오래된 미발행 행을 소비하므로
+# X 결과를 기다리지 않으며, 한쪽 실패가 다른 쪽을 막지 않는다.
+# 2026-10-30: 22:17 KST 슬롯이 GitHub 예약 지연으로 매번 월요일 KST 에 시작되어 10:17 KST 로 변경.
 name: 📝 Comic Novel (Sunday)
 
 on:
   schedule:
-    - cron: '17 13 * * 0' 
+    - cron: '17 1 * * 0'  # UTC 일 01:17 = KST 일 10:17
   workflow_dispatch:
     inputs:
+      target:
+        description: '실행 대상 (all=X+Facebook)'
+        type: choice
+        options: [all, x, facebook]
+        default: all
       dry_run:
         description: 'DRY_RUN (true=모의, false=실발행)'
         required: false
         default: 'false'
+      fb_stage:
+        description: 'Facebook: preview / publish / operator-confirmed reconcile'
+        type: choice
+        options: [preview, publish, reconcile]
+        default: preview
+      fb_claim_id:
+        description: 'Facebook reconcile: existing claim ID'
+        type: string
+      fb_post_id:
+        description: 'Facebook reconcile: verified Facebook post ID'
+        type: string
+      fb_confirmed_at:
+        description: 'Facebook reconcile: actual publication ISO timestamp with timezone'
+        type: string
+      fb_note:
+        description: 'Facebook reconcile: operator verification evidence'
+        type: string
+      fb_not_posted:
+        description: 'Facebook reconcile: operator confirmed no Facebook post exists'
+        type: boolean
+        default: false
 
-env:
-  NOVEL_USE_GITHUB_OIDC: 'true'
-  DRY_RUN: ${{ github.event_name == 'schedule' && 'false' || inputs.dry_run || 'false' }}
-  ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
-  NOTION_API_KEY: ${{ secrets.NOTION_API_KEY }}
-  X_API_KEY: ${{ secrets.X_API_KEY }}
-  X_API_SECRET: ${{ secrets.X_API_SECRET }}
-  X_ACCESS_TOKEN: ${{ secrets.X_ACCESS_TOKEN }}
-  X_ACCESS_TOKEN_SECRET: ${{ secrets.X_ACCESS_TOKEN_SECRET }}
-  TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
-  TELEGRAM_FREE_CHANNEL_ID: ${{ secrets.TELEGRAM_FREE_CHANNEL_ID }}
-  SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
-  SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
-  GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
-  GEMINI_API_SUB_KEY: ${{ secrets.GEMINI_API_SUB_KEY }}
-  GEMINI_API_SUB_SUB_KEY: ${{ secrets.GEMINI_API_SUB_SUB_KEY }}
-  GEMINI_API_SUB_PAY_KEY: ${{ secrets.GEMINI_API_SUB_PAY_KEY }}
+permissions:
+  contents: read
 
 jobs:
-  comic-novel:
+  x-novel:
+    if: github.event_name == 'schedule' || inputs.target != 'facebook'
     permissions:
       contents: read
       id-token: write
     runs-on: ubuntu-latest
     timeout-minutes: 15
+    env:
+      NOVEL_USE_GITHUB_OIDC: 'true'
+      DRY_RUN: ${{ github.event_name == 'schedule' && 'false' || inputs.dry_run || 'false' }}
+      ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+      NOTION_API_KEY: ${{ secrets.NOTION_API_KEY }}
+      X_API_KEY: ${{ secrets.X_API_KEY }}
+      X_API_SECRET: ${{ secrets.X_API_SECRET }}
+      X_ACCESS_TOKEN: ${{ secrets.X_ACCESS_TOKEN }}
+      X_ACCESS_TOKEN_SECRET: ${{ secrets.X_ACCESS_TOKEN_SECRET }}
+      TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+      TELEGRAM_FREE_CHANNEL_ID: ${{ secrets.TELEGRAM_FREE_CHANNEL_ID }}
+      SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+      SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
+      GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+      GEMINI_API_SUB_KEY: ${{ secrets.GEMINI_API_SUB_KEY }}
+      GEMINI_API_SUB_SUB_KEY: ${{ secrets.GEMINI_API_SUB_SUB_KEY }}
+      GEMINI_API_SUB_PAY_KEY: ${{ secrets.GEMINI_API_SUB_PAY_KEY }}
     steps:
       - uses: actions/checkout@v4
 
       - uses: actions/setup-python@v5
         with:
           python-version: '3.11'
-      
+
       - name: Install dependencies
         run: pip install -r requirements.txt
 
@@ -66,3 +100,25 @@ jobs:
           print(json.dumps(result, ensure_ascii=False, indent=2))
           sys.exit(0 if result.get('success') else 1)
           "
+
+  facebook-novel:
+    if: github.event_name == 'schedule' || inputs.target != 'x'
+    permissions:
+      contents: read
+      id-token: write
+    uses: ./.github/workflows/comic_novel_fb.yml
+    with:
+      stage: ${{ github.event_name == 'schedule' && 'publish' || inputs.fb_stage }}
+      dry_run: ${{ github.event_name == 'schedule' && 'false' || inputs.dry_run || 'false' }}
+      claim_id: ${{ inputs.fb_claim_id }}
+      post_id: ${{ inputs.fb_post_id }}
+      confirmed_at: ${{ inputs.fb_confirmed_at }}
+      note: ${{ inputs.fb_note }}
+      not_posted: ${{ inputs.fb_not_posted && 'true' || 'false' }}
+    secrets:
+      SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+      SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
+      FACE_PAGE_ID: ${{ secrets.FACE_PAGE_ID }}
+      FACE_PAGE_TOKEN: ${{ secrets.FACE_PAGE_TOKEN }}
+      TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+      TELEGRAM_FREE_CHANNEL_ID: ${{ secrets.TELEGRAM_FREE_CHANNEL_ID }}

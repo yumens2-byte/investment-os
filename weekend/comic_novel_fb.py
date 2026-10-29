@@ -1,4 +1,6 @@
-"""Consume one X-confirmed stored novel per KST Friday; never generate content.
+"""Consume one X-confirmed stored novel per KST Sunday; never generate content.
+
+Runs as the Facebook job of comic_novel.yml, in parallel with the X job.
 
 The durable store is the authority for weekly/source uniqueness. A sending row
 must survive process death and is never released merely because it is old.
@@ -18,7 +20,7 @@ from pathlib import Path
 from typing import Callable
 
 KST = timezone(timedelta(hours=9))
-FIRST_PUBLICATION_DATE = date(2026, 10, 16)
+FIRST_PUBLICATION_DATE = date(2026, 11, 1)
 # Operational safety limit, not a claim about Meta's maximum message length.
 DEFAULT_MAX_CHARS = 10000
 FOOTER = (
@@ -157,8 +159,8 @@ def run_facebook_novel(*, store=None, publisher=None, clock=None, dry_run=True,
                 return finish("SKIPPED_DISABLED", 0)
             if today < first_date:
                 return finish("SKIPPED_BEFORE_FIRST_DATE", 0)
-            if today.weekday() != 4:
-                return finish("SKIPPED_NOT_FRIDAY", 0)
+            if today.weekday() != 6:
+                return finish("SKIPPED_NOT_SUNDAY", 0)
         target = target or os.getenv("FACE_PAGE_ID", "").strip()
         if not target:
             raise ValueError("missing_page_id")

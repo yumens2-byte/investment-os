@@ -1,5 +1,13 @@
 # Comic Novel Facebook 운영 가이드
 
+> **2026-10-30 변경 (본문의 금요일·comic_novel_fb.yml 단독 실행 서술보다 우선)**
+> - 실행: `comic_novel.yml` 일요일 10:17 KST(cron `17 1 * * 0`). job `x-novel`(기존 X 흐름)과 `facebook-novel`이 needs 없이 병렬로 시작한다. X 실행 시각도 22:17 → 10:17로 함께 변경했다(22:17 슬롯이 2026-10-04~10-25 4회 모두 GitHub 지연으로 월요일 KST에 시작됨).
+> - `comic_novel_fb.yml`은 `workflow_call` 전용 재사용 워크플로우다. 수동 점검·복구는 comic_novel.yml을 target=facebook, fb_stage=preview/publish/reconcile로 실행한다.
+> - 요일 게이트: Python `weekday()==6`(SKIPPED_NOT_SUNDAY), gateway `novel_fb_claim` KST 일요일. 최초 발행일 2026-11-01. 주차 슬롯은 기존과 같은 KST 월요일 시작 주.
+> - gateway 권한: FB 쓰기는 OIDC `job_workflow_ref`가 comic_novel_fb.yml인 job만, X 확정(novel_x_confirm)은 job이 comic_novel.yml인 경우만 허용한다. 같은 실행의 X job은 FB 쓰기를 할 수 없다.
+> - Y/N: `comic_novels.publish_fb_yn char(1)`은 `publish_fb_data`에서 자동 계산되는 STORED 컬럼(NULL→N, 날짜→Y)이다. 대상 선정은 `publish_fb_yn='N'`, 쓰기는 기존대로 `publish_fb_data`만 한다.
+> - FB는 그 주 X 신작이 아니라 가장 오래된 미발행 행을 소비하므로 X 결과를 기다리지 않는다. 대기열이 빈 주에만 X 신작과의 선후에 따라 그 주 게시 또는 SKIPPED_NO_DATA가 갈린다.
+
 기준일: 2026-10-12 KST. 사용자가 운영 반영을 승인했다. 운영 DB의 기본 스키마 및 기존 원본 확인 마이그레이션은 완료했으며, GitHub OIDC gateway v1 ACTIVE 및 main 무쓰기 smoke VERIFIED를 확인하고 Facebook workflow 활성 기본값을 true로 반영한다. 저장소 변수 FACE_NOVEL_ENABLED=false로 중지할 수 있다. 실제 Facebook 게시와 publish_fb_data 갱신은 아직 0건이다.
 
 ## 1. 현재 운영 데이터
