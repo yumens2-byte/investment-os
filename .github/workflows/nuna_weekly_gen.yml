@@ -1,10 +1,17 @@
 # ─────────────────────────────────────────────────────────────────────────────
-# nuna_weekly_gen.yml — NUNA 주간 미국시장 뉴스 쇼츠 · 생성 워크플로 (v1.0.0)
+# nuna_weekly_gen.yml — NUNA 주간 미국시장 뉴스 쇼츠 · 생성 + 발행 연결 워크플로 (v1.1.0)
 #   설계서: "NUNA 주간 뉴스 쇼츠 상세설계서" 3·10·15장 (2026-10-19)
 #   cron 은 UTC 기준: "47 21 * * 3" = 목 06:47 KST
+#   cron↔if 매핑: schedule "47 21 * * 3" → job gen if(vars.NUNA_ENABLED == '1') → job publish(needs gen)
 #   보안(15장): permissions 최소, secret 은 실행 step 에만, 아티팩트는 QC JSON 만(S-02)
 #   운영 스위치: vars.NUNA_ENABLED == '1' 일 때만 schedule 실행 진행
 #   DRY_RUN: 기존 규약 (main.yml:188) — inputs.dry_run || secrets.DRY_RUN
+#   v1.1.0 (2026-10-31, DN2026_0079) 생성→발행 연결:
+#     gen 이 이번 실행에서 live 로 NOTIFIED 에 도달하면(chain=publish-live) 같은 실행의 publish job 이
+#     곧바로 발행한다. 독립 cron 두 개의 지연 차이로 '알림+62분' 이후 발행이 시작돼
+#     예약 시각 경과로 차단되는 문제를 없앤다(STD-SCHED-03). nuna_weekly_publish.yml 의 schedule 은 제거,
+#     수동 재시도·verify 용 workflow_dispatch 만 남긴다.
+#     publish job 에는 생성 API 키를 주입하지 않는다(15.2 최소 권한 — nuna_weekly_publish.yml 과 같은 키 집합).
 # ─────────────────────────────────────────────────────────────────────────────
 name: 🎬 nuna-weekly-gen
 
@@ -42,6 +49,13 @@ jobs:
     # fal 대기 합계 상한 70분(config.FAL_WAIT_TOTAL_MAX_SEC, 70초판 기본 6×300+2×900=60분)
     #   + 설치·대본·TTS·조립·폴링 HTTP 여유 → 90분. 상한을 바꾸면 함께 조정한다.
     timeout-minutes: 90
+    # DN2026_0079: publish job 연결 판정값 (pipeline.gen_outputs).
+    #   secret 값을 포함한 output 은 runner 가 가려 전달하지 않으므로(GitHub 문서 jobs.<job_id>.outputs)
+    #   'true'/'false' 같은 값은 output 으로 쓰지 않는다 — chain=publish-live|none 전용 토큰.
+    outputs:
+      chain: ${{ steps.gen_run.outputs.chain }}
+      run_date: ${{ steps.gen_run.outputs.run_date }}
+      episode_id: ${{ steps.gen_run.outputs.episode_id }}
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
       - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
@@ -52,6 +66,7 @@ jobs:
       - name: 의존성 설치 (secret 주입 없음)
         run: pip install -r gen/nuna_weekly/requirements.txt
       - name: 생성 실행
+        id: gen_run
         env:
           DRY_RUN: ${{ github.event.inputs.dry_run || secrets.DRY_RUN }}
           FORCE_RUN: ${{ secrets.FORCE_RUN || 'false' }}
@@ -82,9 +97,59 @@ jobs:
           python -m gen.nuna_weekly gen "${ARGS[@]}"
       - name: QC 결과 업로드 (영상·대본 제외 — 보안 S-02)
         if: always()
+        # DN2026_0079: 업로드 실패로 gen job 이 실패하면 NOTIFIED 회차의 publish job 이 skipped 된다 → 실패를 job 결과에 넣지 않는다
+        continue-on-error: true
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: nuna-weekly-qc-${{ github.run_id }}
           path: gen/data/nuna_out/*/qc/
           retention-days: 7
           if-no-files-found: ignore
+
+  # DN2026_0079: 이번 실행에서 live 로 NOTIFIED 에 도달한 경우(chain=publish-live)에만 같은 실행 안에서 발행한다.
+  #   dry 실행·스킵 회차·이미 알림된 회차 재실행·생성 실패는 chain=none(또는 gen 실패) → 이 job 은 skipped.
+  #   vars.NUNA_ENABLED != '1' 이면 수동 live 생성이라도 자동 발행하지 않는다(운영 스위치, 수동 발행은 B 워크플로).
+  #   env 는 nuna_weekly_publish.yml 의 '발행 실행' step 과 같은 키 집합(생성 키 없음)이다. 바꾸면 함께 바꾼다.
+  #   timeout 120분 매핑(STD-CI-13): 설치 ~2 + 보류창 60(알림 직후 시작이라 매번 전부 대기) + 예약 POST
+  #     + 검증 대기 최대 30(예약+5분까지, 30분 초과면 대기 없이 종료) + verify 3회×300초 최대 10 → 최대 약 102분.
+  publish:
+    needs: gen
+    if: needs.gen.outputs.chain == 'publish-live' && vars.NUNA_ENABLED == '1'
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
+        with:
+          python-version: "3.11"
+      - name: 의존성 설치 (secret 주입 없음)
+        run: pip install -r gen/nuna_weekly/requirements.txt
+      - name: 발행 실행 (생성 연결)
+        env:
+          # chain=publish-live 는 gen 이 live(DRY_RUN=false)로 NOTIFIED 에 도달했을 때만 나온다(pipeline.gen_outputs).
+          #   불리언 output 은 secret 마스킹으로 빈 값이 될 수 있어 넘기지 않고 이 job 에서 고정한다.
+          DRY_RUN: "false"
+          NUNA_ENABLED: ${{ vars.NUNA_ENABLED }}
+          NUNA_DURATION_SEC: ${{ vars.NUNA_DURATION_SEC }}
+          NUNA_FB_CUT: ${{ vars.NUNA_FB_CUT }}
+          GH_RUN_ID: ${{ github.run_id }}
+          IN_DATE: ${{ needs.gen.outputs.run_date }}
+          IN_EPISODE: ${{ needs.gen.outputs.episode_id }}
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+          ZERNIO_API_KEY: ${{ secrets.ZERNIO_API_KEY }}
+          ZERNIO_API_SUB_KEY: ${{ secrets.ZERNIO_API_SUB_KEY }}
+          NUNA_INSTAGRAM_ACCOUNT_ID: ${{ secrets.NUNA_INSTAGRAM_ACCOUNT_ID }}
+          NUNA_THREADS_ACCOUNT_ID: ${{ secrets.NUNA_THREADS_ACCOUNT_ID }}
+          NUNA_YOUTUBE_ACCOUNT_ID: ${{ secrets.NUNA_YOUTUBE_ACCOUNT_ID }}
+          NUNA_FACEBOOK_ACCOUNT_ID: ${{ secrets.NUNA_FACEBOOK_ACCOUNT_ID }}
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_PAID_CHANNEL_ID: ${{ secrets.TELEGRAM_PAID_CHANNEL_ID }}
+        run: |
+          # fail-closed: 회차·기준일이 비면(마스킹 등) 오늘 날짜로 다른 회차를 발행하지 않도록 중단한다.
+          if [ -z "$IN_DATE" ] || [ -z "$IN_EPISODE" ]; then
+            echo "::error::생성 연결 출력(run_date·episode_id) 없음 — nuna_weekly_publish.yml 수동 실행 필요"
+            exit 1
+          fi
+          echo "[nuna-weekly-gen] 생성 연결 발행 · ${IN_EPISODE} · date=${IN_DATE}"
+          python -m gen.nuna_weekly publish --step publish --date "$IN_DATE"

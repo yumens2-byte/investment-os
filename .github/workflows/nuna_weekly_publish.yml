@@ -1,16 +1,21 @@
 # ─────────────────────────────────────────────────────────────────────────────
-# nuna_weekly_publish.yml — NUNA 주간 뉴스 쇼츠 · 발행 워크플로 (v1.0.0)
+# nuna_weekly_publish.yml — NUNA 주간 뉴스 쇼츠 · 발행 워크플로 (수동 재시도·검증용, v1.1.0)
 #   설계서 3·8·10·15장 (2026-10-19)
-#   cron UTC "12 23 * * 3" = 목 08:12 KST → Zernio scheduledFor = max(08:30, 알림+62분)
+#   v1.1.0 (2026-10-31, DN2026_0079): schedule 제거. 정기 발행은 nuna_weekly_gen.yml 의 publish job 이
+#     생성 직후 같은 실행에서 수행한다(STD-SCHED-03 — 독립 cron 지연 차이로 '알림+62분' 이후 시작되면
+#     예약 시각 경과로 영구 차단되던 구조 해소). 이 워크플로는 workflow_dispatch 로만 실행한다:
+#     생성 연결 발행 실패 후 재시도(step=publish), 예약 후 검증(step=verify), 권한 확인(step=dbcheck).
+#   cron↔if 매핑: schedule 없음 → job if 는 workflow_dispatch 만
+#   Zernio scheduledFor = max(발행일 08:30 KST, 알림+62분) — 그 시각이 지나면 재시도도 차단된다
 #   Telegram [보류] 콜백은 TELEGRAM_PAID_CHANNEL_ID의 채널 관리자만 인정 (S-04)
-#   timeout 90분 = 최대 60분 보류창 + 예약 후 검증 포함
+#   timeout 120분 = 설치 + 보류창 최대 60분 + 검증 대기 최대 30분 + verify 3회×300초 (최대 약 102분, STD-CI-13)
+#     v1.1.0: 알림 직후 수동 실행해도 넘지 않도록 90 → 120 (생성 연결 publish job 과 동일)
 #   fal·Claude·Gemini 키는 이 워크플로에 주입하지 않는다 (15.2 최소 권한)
+#   env 키 집합은 nuna_weekly_gen.yml 의 publish job 과 같다. 바꾸면 함께 바꾼다.
 # ─────────────────────────────────────────────────────────────────────────────
 name: 🎬 nuna-weekly-publish
 
 "on":
-  schedule:
-    - cron: "12 23 * * 3"
   workflow_dispatch:
     inputs:
       step:
@@ -37,9 +42,9 @@ concurrency:
 
 jobs:
   publish:
-    if: github.event_name == 'workflow_dispatch' || vars.NUNA_ENABLED == '1'
+    if: github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
-    timeout-minutes: 90
+    timeout-minutes: 120
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
       - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
@@ -56,7 +61,6 @@ jobs:
           GH_RUN_ID: ${{ github.run_id }}
           IN_STEP: ${{ github.event.inputs.step || 'publish' }}
           IN_DATE: ${{ github.event.inputs.date }}
-          IN_EVENT: ${{ github.event_name }}
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
           SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
           ZERNIO_API_KEY: ${{ secrets.ZERNIO_API_KEY }}
@@ -68,6 +72,4 @@ jobs:
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_PAID_CHANNEL_ID: ${{ secrets.TELEGRAM_PAID_CHANNEL_ID }}
         run: |
-          ARGS=(--step "$IN_STEP" --date "$IN_DATE")
-          if [ "$IN_EVENT" = "schedule" ]; then ARGS+=(--scheduled); fi
-          python -m gen.nuna_weekly publish "${ARGS[@]}"
+          python -m gen.nuna_weekly publish --step "$IN_STEP" --date "$IN_DATE"

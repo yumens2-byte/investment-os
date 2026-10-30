@@ -11,7 +11,8 @@ Zernio 예약 발행한다. hero_shorts 대체 파이프라인(설계서 12장 �
 ```bash
 # 생성 (워크플로 A, 목 06:47 KST)
 python -m gen.nuna_weekly gen [--step run|preflight|collect|script|tts|images|clips|assemble|qc|stage|notify] [--date YYYY-MM-DD]
-# 발행 (워크플로 B, 목 08:12 KST → scheduledFor = max(08:30, 알림+62분))
+# 발행 (생성 워크플로의 publish job 이 NOTIFIED 직후 실행 · 수동 재시도는 워크플로 B dispatch,
+#       scheduledFor = max(08:30, 알림+62분)) — DN2026_0079
 python -m gen.nuna_weekly publish [--step publish|verify] [--date YYYY-MM-DD]
 # Actions Secret으로 DB 접근만 점검 (GET 0행, 유료 호출·원장 쓰기·발행 없음)
 python -m gen.nuna_weekly publish --step dbcheck
@@ -24,9 +25,18 @@ python -m pytest gen/nuna_weekly/tests -q && ruff check gen/nuna_weekly
 
 ## 생성 → 발행 연결과 장애 복구
 
-- 두 워크플로는 독립 cron 이다. 생성 성공이 발행 워크플로를 자동 호출하지 않는다.
+- (DN2026_0079) 정기 발행은 생성 워크플로(`nuna_weekly_gen.yml`)의 `publish` job 이 맡는다. 생성 실행이
+  이번 실행에서 live 로 `NOTIFIED`에 도달하면(`gen` 출력 `chain=publish-live`) 같은 실행 안에서 곧바로 발행한다.
+  dry 실행·스킵 회차·이미 알림된 회차 재실행·생성 실패·`vars.NUNA_ENABLED != 1`이면 `publish` job 이 skipped 다.
+  job output 은 secret 값을 포함하면 가려지므로 `true`/`false` 값은 output 으로 넘기지 않는다.
+  연결 발행은 알림 직후 시작해 보류창 60분을 매번 기다리므로 job timeout 은 120분이다.
+  출력 기록이 실패하면 `NOTIFIED` 회차가 남는다 — 로그 안내대로 예약 시각 전에 B 워크플로를 수동 실행한다.
+  독립 cron 두 개는 서로 다른 시간만큼 지연될 수 있어(W44 실측 3시간 이상), 발행이 '알림+62분' 이후 시작되면
+  예약 시각 경과로 차단되던 구조를 없앤 것이다(STD-SCHED-03).
+- `nuna_weekly_publish.yml`은 schedule 이 없다. 수동 재시도(`step=publish`), 예약 후 검증(`step=verify`),
+  권한 확인(`step=dbcheck`)에만 쓴다. 두 발행 경로의 env 키 집합은 같게 유지한다.
 - 연결 키는 같은 ISO 주차의 `episode_id`이며, 실운영 DB `nuna_episodes`의 `NOTIFIED` 상태와
-  `script_json`, `media_json`, `notified_at`를 발행 워크플로가 읽는다.
+  `script_json`, `media_json`, `notified_at`를 발행 단계가 읽는다.
 - 생성 `dry_run=true`는 원장을 메모리에만 쓴다. 별도 발행 실행으로 결과가 전달되지 않는다.
   무과금 전체 연결 점검은 `tests/test_pipeline.py`의 공유 MemoryStore 통합 테스트로 수행한다.
 - 월~수 미국장이 모두 끝나기 전 수집은 `MARKET_NOT_READY`로 중단한다. `--date`는 회차 선택이며
@@ -46,7 +56,7 @@ python -m pytest gen/nuna_weekly/tests -q && ruff check gen/nuna_weekly
   원격 이미지·클립은 재사용하며, 원격 백업이 없는 음성은 기존 정책에 따라 예산 범위 내 재생성한다.
 - 생성 원장이 없거나 생성 미완료이면 발행 실행은 exit 1로 표시한다. 정상 발행으로 오인하지 않는다.
 - 보류창은 알림부터 60분이며 발행 실행에서 30초 이하 간격으로 확인한다. 창 종료 후 API 호출 여유 2분을 둔다.
-  따라서 예약은 `max(목 08:30, 알림+62분)`이다. 발행 job timeout은 90분이다.
+  따라서 예약은 `max(목 08:30, 알림+62분)`이다. 발행 job timeout은 120분이다(DN2026_0079, 보류창 60 + 검증 대기 최대 30 + verify 최대 10 + 설치).
   예약 POST 이후의 보류는 자동 취소를 뜻하지 않으며, Zernio 예약을 별도 확인해야 한다.
 - 실유료 단계 호출 전에 `PAID_STEP_IN_PROGRESS:<step>`을 남긴다. 실패·강제 중단 후 새 러너에서도
   자동 유료 재제출을 차단한다. 로컬 pending만으로 무중복·무재과금 자동 복구를 보장하지 않는다.
@@ -60,14 +70,16 @@ python -m pytest gen/nuna_weekly/tests -q && ruff check gen/nuna_weekly
 
 운영 실행 전 `vars.NUNA_ENABLED=1`, `SUPABASE_SERVICE_ROLE_KEY` 및 README의 Secrets 설정을 확인한다.
 활성화 스위치와 키는 코드 수정으로 우회하지 않는다. 수동 실생성은 완료된 주차의 목요일을 `date`에 넣고
-`step=run`, `dry_run=false`로 실행한다. `NOTIFIED`와 QC·스테이징을 확인한 뒤 동일 `date`로 발행한다.
+`step=run`, `dry_run=false`로 실행한다. 생성이 `NOTIFIED`에 도달하면 같은 실행의 `publish` job 이 발행한다
+(DN2026_0079). 그 job 이 실패했을 때만 `nuna_weekly_publish.yml`을 동일 `date`로 수동 실행하며,
+예약 시각(알림+62분과 발행일 08:30 중 늦은 쪽) 전에 시작해야 한다.
 
 ## 운영 스위치 (GitHub vars / secrets)
 
 | 이름 | 기본 | 의미 |
 | --- | --- | --- |
 | secret `DRY_RUN` | true | 기존 규약. `false` 일 때만 유료 호출·발행. A시스템과 공유 |
-| vars `NUNA_ENABLED` | 0 | `1` 일 때만 schedule 실행 |
+| vars `NUNA_ENABLED` | 0 | `1` 일 때만 schedule 실행. (DN2026_0079) 생성 연결 `publish` job 도 `1` 일 때만 실행 — `1`이면 수동 live 생성(`dry_run=false`)도 NOTIFIED 직후 자동 예약 발행된다(보류창 60분 opt-out). `1`이 아니면 자동 발행 없음, 수동 발행은 B 워크플로 |
 | vars `NUNA_DURATION_SEC` | 60 | C1 — 60 또는 70 |
 | vars `NUNA_FB_CUT` | 0 | C1 ②안 — 70초일 때 Facebook 60초 편집본 |
 | vars `NUNA_MARKET_SOURCE` | direct | D1 — direct(Yahoo 직접) / supabase(daily_snapshots) |

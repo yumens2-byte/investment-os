@@ -3,7 +3,8 @@ gen/nuna_weekly/pipeline.py — 오케스트레이터 (설계서 3장 처리 흐
 ====================================================================================
 명령:
     python -m gen.nuna_weekly gen     [--step run|<단계>] [--date YYYY-MM-DD] [--scheduled]
-    python -m gen.nuna_weekly publish [--step publish|verify] [--date ...] [--scheduled]
+    python -m gen.nuna_weekly publish [--step publish|verify] [--date ...]
+    (DN2026_0079) 정기 발행은 gen 실행이 GITHUB_OUTPUT chain=publish-live 를 남기면 같은 워크플로의 publish job 이 수행.
 
 원칙
     - 재개: 실패해도 상태를 FAILED 로 덮지 않는다. 마지막 성공 상태에 머물고 last_error 만 기록 →
@@ -40,7 +41,7 @@ from .backends import make_backends
 from .backends.fal import FalPendingTimeout
 from .models import Asset, Facts, Script
 
-VERSION = "1.0.0"
+VERSION = "1.1.0"  # 1.1.0 (2026-10-31, DN2026_0079) 생성→발행 연결 출력(GITHUB_OUTPUT)
 log = logging.getLogger("nuna_weekly.pipeline")
 
 GEN_STEPS: tuple[tuple[str, str, str], ...] = (
@@ -507,7 +508,7 @@ def run_publish(ctx: Ctx, step: str = "publish", sleep=time.sleep) -> int:
     _report(ctx, f"[NUNA] {ctx.episode_id} 예약 {sched.strftime('%m/%d %H:%M')} KST · {summary}")
     if not ok:
         return 1
-    # 예약 시각 + 5분까지 대기 후 검증 (보류창 포함 워크플로 timeout 90분 이내)
+    # 예약 시각 + 5분까지 대기 후 검증 (보류창 포함 발행 job timeout 120분 이내, DN2026_0079)
     wait = (sched + timedelta(minutes=5) - datetime.now(config.KST)).total_seconds()
     if 0 < wait <= 30 * 60:
         log.info("[NunaWeekly:pipeline] 검증 대기 %.0f초", wait)
@@ -552,6 +553,39 @@ def _parse_date(s: str | None) -> date:
     return datetime.now(config.KST).date()
 
 
+# DN2026_0079: 생성→발행 연결. 두 워크플로의 독립 cron 은 서로 다른 시간만큼 지연돼
+#   발행이 '알림+62분' 이후 시작되면 예약 시각 경과로 영구 차단된다(STD-SCHED-03).
+#   생성 실행이 이번 실행에서 live 로 NOTIFIED 에 도달했을 때만 같은 워크플로의 publish job 을 연결한다.
+GH_OUTPUT_ENV = "GITHUB_OUTPUT"
+# job output 은 secret 값을 포함하면 runner 가 가려 전달하지 않는다(GitHub 문서 jobs.<job_id>.outputs).
+#   secrets.DRY_RUN 등이 'true'/'false' 이므로 불리언 문자열을 output 으로 쓰지 않고 전용 토큰을 쓴다.
+CHAIN_PUBLISH_LIVE = "publish-live"
+CHAIN_NONE = "none"
+
+
+def gen_outputs(ctx: Ctx, run_date: date, before_status: str | None, rc: int) -> dict[str, str]:
+    """publish job 연결 판정값. chain 은 live·성공·이번 실행에서 NOTIFIED 로 전이된 경우에만 publish-live."""
+    after = (ctx.store.get_episode(ctx.episode_id) or {}).get("status")
+    notified_now = rc == 0 and not ctx.dry and after == "NOTIFIED" and before_status != "NOTIFIED"
+    return {
+        "episode_id": ctx.episode_id,
+        "run_date": run_date.isoformat(),
+        "episode_status": after or "",
+        "chain": CHAIN_PUBLISH_LIVE if notified_now else CHAIN_NONE,
+    }
+
+
+def write_gh_outputs(outputs: dict[str, str], path: str | None = None) -> bool:
+    """GitHub Actions step output 파일에 key=value 를 추가한다. 경로가 없으면(로컬 실행) 아무것도 쓰지 않는다."""
+    target = path if path is not None else os.environ.get(GH_OUTPUT_ENV, "").strip()
+    if not target:
+        return False
+    with open(target, "a", encoding="utf-8") as fh:
+        for key, value in outputs.items():
+            fh.write(f"{key}={value}\n")
+    return True
+
+
 def main(argv: list[str] | None = None) -> int:
     secret_env.setup_logging()
     ap = argparse.ArgumentParser(prog="python -m gen.nuna_weekly")
@@ -586,7 +620,20 @@ def main(argv: list[str] | None = None) -> int:
             step = a.step or "run"
             if step == "poc":
                 raise PipelineError("poc 단계는 PoC 승인 후 별도 구현 예정(설계서 11장)")
-            return run_gen(ctx, None if step == "run" else step)
+            # DN2026_0079: 실행 전 상태를 기록해 '이번 실행에서 NOTIFIED 도달' 만 발행으로 연결한다.
+            before = (ctx.store.get_episode(ctx.episode_id) or {}).get("status")
+            rc = run_gen(ctx, None if step == "run" else step)
+            try:
+                outputs = gen_outputs(ctx, run_date, before, rc)
+                write_gh_outputs(outputs)
+            except Exception as e:
+                # 출력 없이 job 이 실패하면 publish job 은 skipped — NOTIFIED 회차는 수동 발행이 필요하다.
+                log.error("[NunaWeekly:pipeline] 발행 연결 출력 실패 — %s 이 NOTIFIED 면 nuna_weekly_publish.yml 을 "
+                          "date=%s 로 예약 시각(알림+62분) 전에 수동 실행: %s", ctx.episode_id, run_date.isoformat(),
+                          secret_env.redact(f"{type(e).__name__}: {e}", 300))
+                return 1
+            log.info("[NunaWeekly:pipeline] 발행 연결 출력: %s", json.dumps(outputs, ensure_ascii=False))
+            return rc
         return run_publish(ctx, a.step or "publish")
     except Exception as e:
         log.error("[NunaWeekly:pipeline] 중단: %s", secret_env.redact(f"{type(e).__name__}: {e}", 500))
