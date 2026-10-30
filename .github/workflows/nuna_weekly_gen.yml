@@ -39,8 +39,9 @@ jobs:
   gen:
     if: github.event_name == 'workflow_dispatch' || vars.NUNA_ENABLED == '1'
     runs-on: ubuntu-latest
-    # fal 최악 대기: 이미지 5×300s + 클립 2×900s = 55분(기본값) + 설치·대본·TTS 약 5분 → 70분
-    timeout-minutes: 70
+    # fal 대기 합계 상한 70분(config.FAL_WAIT_TOTAL_MAX_SEC, 70초판 기본 6×300+2×900=60분)
+    #   + 설치·대본·TTS·조립·폴링 HTTP 여유 → 90분. 상한을 바꾸면 함께 조정한다.
+    timeout-minutes: 90
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
       - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5

@@ -8,6 +8,7 @@ run_paid(fal, budget, jobs, key, ...) -> FalResult
          (nuna_cost_ledger.request_id UNIQUE — 같은 request_id 로 두 번 정산할 수 없다)
     2) 없으면 → budget.charge 안에서 제출. 제출 직후 request_id 를 비용 원장에,
        작업 기록(request_id·status_url·response_url)을 jobs 에 남긴 뒤 폴링한다.
+    2-1) 원장 기록이 있는데 endpoint·payload 가 다르면 → FAL_JOB_MISMATCH 로 차단(진행 중 작업 폐기·재과금 방지).
     3) 대기 상한 초과 → FalPendingTimeout(persisted=작업 기록 보존 여부). 원격 작업은 진행 중일 수 있다.
 
 jobs 는 get(key)/save(key, job) 을 가진 객체(pipeline._FalJobs: assets_json.fal_pending). None 이면
@@ -21,7 +22,7 @@ from pathlib import Path
 from typing import Any, Protocol
 
 from .backends import FalResult
-from .backends.fal import FalPendingTimeout, is_resumable, load_pending, request_signature
+from .backends.fal import FalError, FalPendingTimeout, is_resumable, load_pending, request_signature
 
 VERSION = "1.0.0"
 log = logging.getLogger("nuna_weekly.fal_jobs")
@@ -38,8 +39,10 @@ def run_paid(fal: Any, budget: Any, jobs: FalJobs | None, key: str, *, step: str
     sig = request_signature(payload)
     known = jobs.get(key) if jobs is not None else None
     if known is not None and not is_resumable(known, endpoint, sig):
-        log.warning("%s 원장 fal 작업 기록 불일치(endpoint·payload 변경) → 신규 제출", key)
-        known = None
+        # 기록된 작업은 이미 과금 정산됐다. 프롬프트·캐논·기준 이미지 변경 후 재실행이 진행 중 작업을 버리고
+        # 재과금하지 않도록 차단한다 — 대사 후 assets_json.fal_pending 에서 해당 키를 지워야 신규 제출.
+        raise FalError(f"FAL_JOB_MISMATCH: {key} 원장 작업(request_id={known.get('request_id')})과 "
+                       "endpoint·payload 불일치 — 재제출 차단, 대사 후 fal_pending 정리 필요")
     if known is None and is_resumable(load_pending(Path(pending_path)), endpoint, sig):
         known = load_pending(Path(pending_path))
     if known is not None:

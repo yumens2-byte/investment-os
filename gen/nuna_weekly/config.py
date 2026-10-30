@@ -132,10 +132,16 @@ CLIP_SECONDS = 5
 # 단일 상한을 쓰지 않고 작업 종류별로 분리한다. 워크플로 timeout-minutes 안에 들어야 한다.
 FAL_WAIT_MIN_SEC = 60
 FAL_WAIT_MAX_SEC = 1200
+# 회차당 fal 대기 상한 합계 — nuna_weekly_gen.yml timeout-minutes(90) 에서 설치·대본·TTS·조립 여유를 뺀 값
+FAL_WAIT_TOTAL_MAX_SEC = 70 * 60
 
 
 def _fal_wait(name: str, default: int) -> int:
-    v = _env_int(name, default)
+    raw = _env(name, str(default))
+    try:
+        v = int(raw)
+    except ValueError:
+        raise ValueError(f"{name} 는 정수 초만 허용: {raw!r}") from None
     if not FAL_WAIT_MIN_SEC <= v <= FAL_WAIT_MAX_SEC:
         raise ValueError(f"{name} 는 {FAL_WAIT_MIN_SEC}~{FAL_WAIT_MAX_SEC} 초만 허용: {v}")
     return v

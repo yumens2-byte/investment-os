@@ -17,6 +17,7 @@ gen/nuna_weekly/pipeline.py — 오케스트레이터 (설계서 3장 처리 흐
 from __future__ import annotations
 
 import argparse
+import copy
 import json
 import logging
 import os
@@ -188,7 +189,7 @@ class _FalJobs:
 
     def save(self, key: str, job: dict[str, Any]) -> None:
         self.assets["fal_pending"] = {**(self.assets.get("fal_pending") or {}), key: dict(job)}
-        self.ctx.store.update_episode(self.ctx.episode_id, {"assets_json": self.assets})
+        self.ctx.store.update_episode(self.ctx.episode_id, {"assets_json": copy.deepcopy(self.assets)})
 
     def clear_prefix(self, prefix: str) -> None:
         rest = {k: v for k, v in (self.assets.get("fal_pending") or {}).items() if not k.startswith(prefix)}
@@ -202,6 +203,16 @@ def _has_fal_pending(ep: dict[str, Any], step: str) -> bool:
     prefix = FAL_JOB_PREFIX.get(step)
     pending = (ep.get("assets_json") or {}).get("fal_pending") or {}
     return bool(prefix) and any(k.startswith(prefix) for k in pending)
+
+
+def _check_fal_wait(segs: list[config.Segment]) -> None:
+    """유료 단계 전에 대기 상한 설정을 검증한다 — 잘못된 vars 가 PAID_STEP_IN_PROGRESS 뒤에 터지면 영구 차단된다."""
+    n_img = len(images_mod.image_segments(segs))
+    n_clip = sum(1 for s in segs if s.visual == "clip")
+    worst = n_img * config.fal_image_max_wait_sec() + n_clip * config.fal_clip_max_wait_sec()
+    if worst > config.FAL_WAIT_TOTAL_MAX_SEC:
+        raise PipelineError(f"fal 대기 상한 합계 {worst}s > {config.FAL_WAIT_TOTAL_MAX_SEC}s "
+                            f"(이미지 {n_img}장·클립 {n_clip}개) — NUNA_FAL_*_MAX_WAIT_SEC 조정 필요")
 
 
 def _audio_by_seg(assets: list[Asset]) -> dict[str, Asset]:
@@ -347,6 +358,7 @@ def run_gen(ctx: Ctx, only: str | None = None) -> int:
     if status in DONE_GEN or status in ("SKIPPED", "FAILED"):
         log.info("[NunaWeekly:pipeline] 이미 %s — 생성 단계 없음", status)
         return 0
+    _check_fal_wait(_segs())
     if status in ("ASSEMBLED", "QC_PASSED"):
         assets = dict(ctx.episode().get("assets_json") or {})
         videos = assets.get("videos") or {}

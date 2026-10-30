@@ -99,7 +99,7 @@ def test_wait_defaults_split_by_kind():
     assert config.fal_clip_max_wait_sec() == 900
 
 
-@pytest.mark.parametrize("value", ["59", "1201"])
+@pytest.mark.parametrize("value", ["59", "1201", "15m"])
 def test_wait_bounds_rejected(monkeypatch, value):
     monkeypatch.setenv("NUNA_FAL_CLIP_MAX_WAIT_SEC", value)
     with pytest.raises(ValueError, match="NUNA_FAL_CLIP_MAX_WAIT_SEC"):
@@ -185,16 +185,17 @@ def test_run_paid_resume_adds_no_cost_row(tmp_path, mp4):
     assert res.request_id == "req-1" and sess.posts == [] and store.costs == []
 
 
-def test_run_paid_changed_payload_resubmits_with_charge(tmp_path):
+def test_run_paid_changed_payload_is_blocked_not_recharged(tmp_path):
+    """프롬프트·캐논·기준 이미지 변경 후 재실행 — 진행 중 작업을 버리고 재과금하지 않는다."""
     store, jobs = db.MemoryStore(), Jobs()
     jobs.save("img_S2", {"endpoint": config.FAL_IMAGE_ENDPOINT, "signature": "stale", "request_id": "req-9",
                          "status_url": "https://queue.test/s/req-9", "response_url": "https://queue.test/r/req-9"})
     sess = QueueSession()
-    res = run_paid(fal_backend(sess), Budget(store, "EP", fx_rate=1500.0), jobs, "img_S2", step="images",
-                   endpoint=config.FAL_IMAGE_ENDPOINT, payload={"prompt": "new"}, out_path=tmp_path / "a.png",
-                   pending_path=tmp_path / "a.json", units=1, unit="image", est_usd=0.039, max_wait_sec=60)
-    assert sess.posts == ["req-1"] and res.request_id == "req-1"
-    assert [c["request_id"] for c in _charged(store)] == ["req-1"]
+    with pytest.raises(FalError, match="FAL_JOB_MISMATCH"):
+        run_paid(fal_backend(sess), Budget(store, "EP", fx_rate=1500.0), jobs, "img_S2", step="images",
+                 endpoint=config.FAL_IMAGE_ENDPOINT, payload={"prompt": "new"}, out_path=tmp_path / "a.png",
+                 pending_path=tmp_path / "a.json", units=1, unit="image", est_usd=0.039, max_wait_sec=60)
+    assert sess.posts == [] and store.costs == []
 
 
 # --------------------------------------------------------------------------- #
@@ -265,6 +266,26 @@ def test_partial_clip_success_is_reused_on_new_runner(monkeypatch, tmp_path, mp4
     ctx2 = _live_ctx(monkeypatch, store, tmp_path / "r2", sess2)
     assert pipeline.run_gen(ctx2, only="clips") == 0
     assert sess2.posts == [] and len(_charged(store)) == 2
+
+
+@pytest.mark.parametrize(("duration", "clip_wait"), [("60", "1200"), ("70", "1200")])
+def test_wait_total_over_job_budget_fails_before_paid_marker(monkeypatch, tmp_path, duration, clip_wait):
+    """잘못된 대기 vars 는 PAID_STEP_IN_PROGRESS 기록 전에 중단 — 무과금 영구 차단 방지."""
+    monkeypatch.setenv("NUNA_DURATION_SEC", duration)
+    monkeypatch.setenv("NUNA_FAL_IMAGE_MAX_WAIT_SEC", "600")
+    monkeypatch.setenv("NUNA_FAL_CLIP_MAX_WAIT_SEC", clip_wait)
+    store = db.MemoryStore()
+    ctx = _live_ctx(monkeypatch, store, tmp_path / "r", QueueSession())
+    _seed_imaged(store, ctx, tmp_path)
+    store.update_episode(ctx.episode_id, {"duration_target_sec": int(duration)})
+    with pytest.raises(pipeline.PipelineError, match="대기 상한 합계"):
+        pipeline.run_gen(ctx, only="clips")
+    assert store.get_episode(ctx.episode_id).get("last_error") is None and store.costs == []
+
+
+def test_default_waits_fit_job_budget_for_both_lengths(monkeypatch):
+    for duration in (60, 70):
+        pipeline._check_fal_wait(config.segments(duration))
 
 
 def test_fal_pending_marker_without_job_record_stays_blocked(monkeypatch, tmp_path):

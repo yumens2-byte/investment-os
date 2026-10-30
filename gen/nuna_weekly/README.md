@@ -53,6 +53,8 @@ python -m pytest gen/nuna_weekly/tests -q && ruff check gen/nuna_weekly
 - fal 이미지·클립은 제출 직후 작업 기록(request_id·status_url·response_url)을 `assets_json.fal_pending`에,
   request_id를 비용 원장에 남긴다. 대기 상한 초과는 `FAL_PENDING:<step>:`으로 기록되며, 이 경우에만
   재실행이 원장 기록으로 재제출·재과금 없이 재조회한다. 기록이 없거나 다른 오류면 기존 차단을 유지한다.
+  수동 복구로 last_error 를 지울 때는 실패 작업의 `assets_json.fal_pending` 키도 함께 지운다.
+  대기 상한 합계(이미지 수×이미지 상한 + 클립 수×클립 상한)는 70분 이하여야 하며 유료 단계 전에 검사한다.
 
 상세 분석·테스트·배포/롤백 절차: `docs/nuna_weekly_predeployment_20261024.md`.
 
