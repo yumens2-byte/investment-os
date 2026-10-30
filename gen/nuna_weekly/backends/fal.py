@@ -11,12 +11,17 @@ gen/hero_shorts/generator.py(_fal_call)의 queue 프로토콜을 이식했다(im
 
 같은 endpoint + signature(payload 정렬 JSON 의 sha256) pending 이 있으면 재제출 없이 재개한다
 (재실행 시 이중 과금 방지). 로그에는 request_id 만 남긴다(URL·키 금지).
+
+pending 은 로컬 파일 외에 호출부가 넘기는 pending_job(원장 assets_json.fal_pending)으로도 재개한다.
+러너가 바뀌면 로컬 파일이 사라지기 때문이다. 제출 직후 on_submit(job) 으로 호출부에 알려 원장에 보존하게 한다.
+max_wait_sec 를 주면 그 시간 기준으로 폴링 횟수를 정한다(작업 종류별 상한, config.fal_*_max_wait_sec).
 """
 from __future__ import annotations
 
 import hashlib
 import json
 import logging
+import math
 import subprocess
 import time
 from collections.abc import Callable
@@ -38,6 +43,19 @@ class FalError(RuntimeError):
     """fal 호출 실패 (메시지는 마스킹됨)."""
 
 
+class FalPendingTimeout(FalError):
+    """대기 상한 안에 끝나지 않음 — 원격 작업은 계속 진행 중일 수 있다(실패 아님).
+
+    persisted: 작업 기록(request_id·status_url·response_url)이 원장에 보존됐는지. 호출부가 설정한다.
+    """
+
+    def __init__(self, message: str, request_id: str, last_status: str) -> None:
+        super().__init__(message)
+        self.request_id = request_id
+        self.last_status = last_status
+        self.persisted = False
+
+
 def request_signature(payload: dict[str, Any]) -> str:
     """payload 정렬 JSON 의 sha256 — pending 재개 판정용."""
     raw = json.dumps(payload, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
@@ -48,11 +66,17 @@ def is_video_endpoint(endpoint: str, payload: dict[str, Any]) -> bool:
     return endpoint == config.FAL_CLIP_ENDPOINT or "video" in endpoint or "duration" in payload
 
 
+def is_resumable(job: dict[str, Any] | None, endpoint: str, signature: str) -> bool:
+    """같은 endpoint·payload 로 제출된 작업이고 재조회 URL 이 있으면 재개 가능."""
+    return bool(job and job.get("endpoint") == endpoint and job.get("signature") == signature
+                and job.get("request_id") and job.get("status_url") and job.get("response_url"))
+
+
 def _now_utc() -> str:
     return datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
-def _load_pending(path: Path) -> dict[str, Any] | None:
+def load_pending(path: Path) -> dict[str, Any] | None:
     if not path.exists():
         return None
     try:
@@ -127,18 +151,19 @@ class FalQueueBackend:
         tmp.replace(out_path)
 
     # ── 본 호출 ──
-    def run(self, endpoint: str, payload: dict[str, Any], out_path: Path,
-            pending_path: Path) -> FalResult:
+    def run(self, endpoint: str, payload: dict[str, Any], out_path: Path, pending_path: Path, *,
+            max_wait_sec: float | None = None, pending_job: dict[str, Any] | None = None,
+            on_submit: Callable[[dict[str, Any]], None] | None = None,
+            submit_allowed: bool = True) -> FalResult:
         out_path = Path(out_path)
         pending_path = Path(pending_path)
         sig = request_signature(payload)
-        pending = _load_pending(pending_path)
-        resumable = bool(pending and pending.get("endpoint") == endpoint
-                         and pending.get("signature") == sig
-                         and pending.get("status_url") and pending.get("response_url"))
-        if resumable:
-            job = pending  # type: ignore[assignment]
+        pending = next((j for j in (load_pending(pending_path), pending_job) if is_resumable(j, endpoint, sig)), None)
+        if pending is not None:
+            job = pending
             log.warning("기존 fal 작업 재개(재제출 없음): request_id=%s", job.get("request_id"))
+        elif not submit_allowed:
+            raise FalError("재개 대상 fal 작업 기록 불일치 — 재제출 차단(재과금 방지)")
         else:
             sub = self._json("POST", f"{config.FAL_QUEUE_BASE}/{endpoint}", "제출", body=payload)
             job = {"endpoint": endpoint, "signature": sig, "request_id": sub.get("request_id"),
@@ -148,10 +173,14 @@ class FalQueueBackend:
                 raise FalError(f"fal 제출 응답 불완전 — request_id={job.get('request_id')}")
             _save_pending(pending_path, job)   # 폴링 전에 기록 — 중단 후 재개 근거
             log.info("fal 작업 제출: request_id=%s", job["request_id"])
+            if on_submit is not None:
+                on_submit(dict(job))
 
         req_id = str(job["request_id"])
         last = "SUBMITTED"
-        for i in range(self.max_polls):
+        polls = (self.max_polls if max_wait_sec is None
+                 else max(1, math.ceil(float(max_wait_sec) / self.poll_interval)))
+        for i in range(polls):
             self.sleep(self.poll_interval)
             st = self._json("GET", job["status_url"], "폴링")
             last = str(st.get("status", "UNKNOWN"))
@@ -161,8 +190,8 @@ class FalQueueBackend:
             if last in STATUS_FAILED:
                 raise FalError(f"fal 작업 실패 status={last} request_id={req_id}")
         else:
-            raise FalError(f"fal 작업 타임아웃({self.poll_interval * self.max_polls:.0f}s) "
-                           f"request_id={req_id} last_status={last} — pending 유지(재실행 시 재개)")
+            raise FalPendingTimeout(f"fal 작업 타임아웃(대기 상한 {self.poll_interval * polls:.0f}s) "
+                                    f"request_id={req_id} last_status={last}", req_id, last)
 
         data = self._json("GET", job["response_url"], "결과조회")
         try:
@@ -212,8 +241,8 @@ class DummyFal:
         if r.returncode != 0:
             raise FalError(f"더미 영상 생성 실패: {r.stderr[:300]}")
 
-    def run(self, endpoint: str, payload: dict[str, Any], out_path: Path,
-            pending_path: Path) -> FalResult:
+    def run(self, endpoint: str, payload: dict[str, Any], out_path: Path, pending_path: Path,
+            **_: Any) -> FalResult:
         out_path = Path(out_path)
         out_path.parent.mkdir(parents=True, exist_ok=True)
         self.calls.append((endpoint, dict(payload)))

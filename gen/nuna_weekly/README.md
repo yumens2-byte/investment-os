@@ -50,6 +50,11 @@ python -m pytest gen/nuna_weekly/tests -q && ruff check gen/nuna_weekly
   예약 POST 이후의 보류는 자동 취소를 뜻하지 않으며, Zernio 예약을 별도 확인해야 한다.
 - 실유료 단계 호출 전에 `PAID_STEP_IN_PROGRESS:<step>`을 남긴다. 실패·강제 중단 후 새 러너에서도
   자동 유료 재제출을 차단한다. 로컬 pending만으로 무중복·무재과금 자동 복구를 보장하지 않는다.
+- fal 이미지·클립은 제출 직후 작업 기록(request_id·status_url·response_url)을 `assets_json.fal_pending`에,
+  request_id를 비용 원장에 남긴다. 대기 상한 초과는 `FAL_PENDING:<step>:`으로 기록되며, 이 경우에만
+  재실행이 원장 기록으로 재제출·재과금 없이 재조회한다. 기록이 없거나 다른 오류면 기존 차단을 유지한다.
+  수동 복구로 last_error 를 지울 때는 실패 작업의 `assets_json.fal_pending` 키도 함께 지운다.
+  대기 상한 합계(이미지 수×이미지 상한 + 클립 수×클립 상한)는 70분 이하여야 하며 유료 단계 전에 검사한다.
 
 상세 분석·테스트·배포/롤백 절차: `docs/nuna_weekly_predeployment_20261024.md`.
 
@@ -68,6 +73,8 @@ python -m pytest gen/nuna_weekly/tests -q && ruff check gen/nuna_weekly
 | vars `NUNA_MARKET_SOURCE` | direct | D1 — direct(Yahoo 직접) / supabase(daily_snapshots) |
 | vars `NUNA_TTS_VOICE` | Kore | PoC P3 에서 확정 |
 | vars `NUNA_REF_IMAGE_URLS` | — | Iron Nuna 기준 이미지 https URL(콤마). 없으면 `assets/nuna_ref_front.png` |
+| vars `NUNA_FAL_IMAGE_MAX_WAIT_SEC` | 300 | fal 이미지 1장 대기 상한(60~1200초) |
+| vars `NUNA_FAL_CLIP_MAX_WAIT_SEC` | 900 | fal 클립 1개 대기 상한(60~1200초). 초과 시 작업 기록 보존 후 `FAL_PENDING:clips:` |
 | secret `TELEGRAM_PAID_CHANNEL_ID` | — | 알림 대상. 해당 채널의 실제 관리자만 보류 가능. 개인 대화는 상대 사용자만 허용 |
 
 Secrets: `FAL_AI_KEY`, `ANTHROPIC_API_KEY`, `GEMINI_API_SUB_PAY_KEY`, `SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY`,

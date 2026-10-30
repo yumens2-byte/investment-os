@@ -39,7 +39,9 @@ jobs:
   gen:
     if: github.event_name == 'workflow_dispatch' || vars.NUNA_ENABLED == '1'
     runs-on: ubuntu-latest
-    timeout-minutes: 40
+    # fal 대기 합계 상한 70분(config.FAL_WAIT_TOTAL_MAX_SEC, 70초판 기본 6×300+2×900=60분)
+    #   + 설치·대본·TTS·조립·폴링 HTTP 여유 → 90분. 상한을 바꾸면 함께 조정한다.
+    timeout-minutes: 90
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
       - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
@@ -59,6 +61,8 @@ jobs:
           NUNA_MARKET_SOURCE: ${{ vars.NUNA_MARKET_SOURCE }}
           NUNA_TTS_VOICE: ${{ vars.NUNA_TTS_VOICE }}
           NUNA_REF_IMAGE_URLS: ${{ vars.NUNA_REF_IMAGE_URLS }}
+          NUNA_FAL_IMAGE_MAX_WAIT_SEC: ${{ vars.NUNA_FAL_IMAGE_MAX_WAIT_SEC }}
+          NUNA_FAL_CLIP_MAX_WAIT_SEC: ${{ vars.NUNA_FAL_CLIP_MAX_WAIT_SEC }}
           GH_RUN_ID: ${{ github.run_id }}
           IN_STEP: ${{ github.event.inputs.step || 'run' }}
           IN_DATE: ${{ github.event.inputs.date }}

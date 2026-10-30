@@ -7,6 +7,8 @@ generate_clips(episode_id, script, segs, images, fal, budget, out_dir) -> dict[s
     generate_audio 는 반드시 False (단가 config.PRICE_CLIP_USD_PER_SEC 전제) — 아니면 호출 전 ClipError.
     결과 검증: ffprobe 길이 CLIP_SECONDS ±0.5s, 파일 >10KB.
     이미 검증 통과한 파일(clip_<seg>.mp4)이 있으면 재사용(재과금 없음).
+    jobs(원장 fal_pending) 에 제출 기록이 있으면 재제출 없이 재조회(fal_jobs.run_paid).
+    대기 상한: config.fal_clip_max_wait_sec() (기본 900s).
 """
 from __future__ import annotations
 
@@ -17,6 +19,7 @@ from typing import Any
 
 from . import config
 from .backends.tts import TTSError, probe_seconds
+from .fal_jobs import FalJobs, run_paid
 from .images import canon_short, load_canon, read_meta, write_meta
 from .models import Asset, Script
 
@@ -51,7 +54,7 @@ def verify_clip(path: Path) -> float:
 
 
 def generate_clips(episode_id: str, script: Script, segs: Sequence[config.Segment], images: Mapping[str, Asset],
-                   fal: Any, budget: Any, out_dir: Path) -> dict[str, Asset]:
+                   fal: Any, budget: Any, out_dir: Path, jobs: FalJobs | None = None) -> dict[str, Asset]:
     targets = [s for s in segs if s.visual == "clip"]
     log.info("[NunaWeekly:clips] v%s 시작 · %s · backend=%s · %d개",
              VERSION, episode_id, getattr(fal, "name", "?"), len(targets))
@@ -86,10 +89,9 @@ def generate_clips(episode_id: str, script: Script, segs: Sequence[config.Segmen
             raise ClipError("generate_audio 는 False 여야 함 — 단가 전제 위반")
         pending = out_dir / f"clip_{seg.seg_id}.fal_pending.json"
         units = config.CLIP_SECONDS
-        with budget.charge(step="clips", provider="fal", model=config.FAL_CLIP_ENDPOINT, units=units,
-                           unit="sec", est_usd=units * config.PRICE_CLIP_USD_PER_SEC) as ch:
-            res = fal.run(config.FAL_CLIP_ENDPOINT, payload, path, pending)
-            ch.actual(request_id=res.request_id)
+        res = run_paid(fal, budget, jobs, f"clip_{seg.seg_id}", step="clips", endpoint=config.FAL_CLIP_ENDPOINT,
+                       payload=payload, out_path=path, pending_path=pending, units=units, unit="sec",
+                       est_usd=units * config.PRICE_CLIP_USD_PER_SEC, max_wait_sec=config.fal_clip_max_wait_sec())
         sec = verify_clip(path)
         write_meta(path, res.remote_url, res.request_id)
         out[seg.seg_id] = Asset(kind="clip", key=f"clip_{seg.seg_id}", local_path=str(path),

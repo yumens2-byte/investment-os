@@ -10,6 +10,8 @@ generate_images(episode_id, script, segs, fal, budget, out_dir) -> dict[seg_id, 
            ※ PoC 항목 — fal 의 data URI 입력 수용 여부 미검증
         3) 둘 다 없고 dummy 가 아니면 ImageError
     이미 생성된 파일(img_<seg>.png)이 있으면 재사용(재과금 없음). remote_url 은 사이드카 .meta.json.
+    jobs(원장 fal_pending) 에 제출 기록이 있으면 재제출 없이 재조회(fal_jobs.run_paid).
+    대기 상한: config.fal_image_max_wait_sec() (기본 300s).
 """
 from __future__ import annotations
 
@@ -23,6 +25,7 @@ from pathlib import Path
 from typing import Any
 
 from . import config
+from .fal_jobs import FalJobs, run_paid
 from .models import Asset, Script, ScriptSegment
 
 VERSION = "1.0.0"
@@ -116,7 +119,7 @@ def _valid_image(p: Path) -> bool:
 
 
 def generate_images(episode_id: str, script: Script, segs: Sequence[config.Segment], fal: Any, budget: Any,
-                    out_dir: Path) -> dict[str, Asset]:
+                    out_dir: Path, jobs: FalJobs | None = None) -> dict[str, Asset]:
     targets = image_segments(segs)
     log.info("[NunaWeekly:images] v%s 시작 · %s · backend=%s · %d장",
              VERSION, episode_id, getattr(fal, "name", "?"), len(targets))
@@ -141,10 +144,9 @@ def generate_images(episode_id: str, script: Script, segs: Sequence[config.Segme
         payload = {"prompt": build_prompt(ss), "image_urls": refs, "aspect_ratio": "9:16",
                    "output_format": "png", "num_images": 1}
         pending = out_dir / f"img_{seg.seg_id}.fal_pending.json"
-        with budget.charge(step="images", provider="fal", model=config.FAL_IMAGE_ENDPOINT, units=1,
-                           unit="image", est_usd=config.PRICE_IMAGE_USD) as ch:
-            res = fal.run(config.FAL_IMAGE_ENDPOINT, payload, path, pending)
-            ch.actual(request_id=res.request_id)
+        res = run_paid(fal, budget, jobs, f"img_{seg.seg_id}", step="images", endpoint=config.FAL_IMAGE_ENDPOINT,
+                       payload=payload, out_path=path, pending_path=pending, units=1, unit="image",
+                       est_usd=config.PRICE_IMAGE_USD, max_wait_sec=config.fal_image_max_wait_sec())
         if not _valid_image(path):
             raise ImageError(f"{seg.seg_id} 이미지 검증 실패 request_id={res.request_id}")
         write_meta(path, res.remote_url, res.request_id)
