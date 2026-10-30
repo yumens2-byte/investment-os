@@ -74,6 +74,34 @@ python -m pytest gen/nuna_weekly/tests -q && ruff check gen/nuna_weekly
 (DN2026_0079). 그 job 이 실패했을 때만 `nuna_weekly_publish.yml`을 동일 `date`로 수동 실행하며,
 예약 시각(알림+62분과 발행일 08:30 중 늦은 쪽) 전에 시작해야 한다.
 
+## 실패 대응 런북 (DN2026_0081)
+
+발행 워크플로(B)는 이미 만들어진 영상을 예약 발행할 뿐이다. 생성이 `NOTIFIED`에 도달하지 못한 회차는
+B 를 돌려도 「발행 보류 — 생성 미완료」로 끝난다. 생성 실패는 **gen 재실행**으로 복구하고, 재실행이
+`NOTIFIED`에 도달하면 같은 실행의 `publish` job 이 자동으로 발행한다(DN2026_0079).
+
+1. 실패 확인 — Watchdog 알림 또는 Actions 실패 표시를 받으면 원인 접두를 확인한다.
+   단계 실패는 Telegram 리포트 `[NUNA] <회차> 생성 실패 — <접두>: …`, 실행 로그 `✖ <접두>: …`,
+   또는 `nuna_episodes.last_error`에 남는다. 차단으로 멈춘 경우는 로그 `중단: PipelineError: …`에만 남는다.
+2. 접두별 조치
+
+| `last_error` 접두 | 뜻 | 조치 |
+| --- | --- | --- |
+| `FAL_PENDING:images:` · `FAL_PENDING:clips:` | fal 작업이 대기 상한 안에 안 끝남(작업 기록 보존) | gen 을 `dry_run=false`, 같은 `date`로 재실행 → 재제출·재과금 없이 같은 작업을 재조회해 이어간다 |
+| `collect:` · `assemble:` · `qc:` · `stage:` · `notify:` | 무료 단계 실패 | 원인(시세·네트워크·QC 게이트)을 확인한 뒤 같은 방법으로 재실행 → 실패한 단계부터 이어간다 |
+| `script:` · `tts:` · `images:` · `clips:` (접두에 `FAL_PENDING` 없음), `PAID_STEP_IN_PROGRESS:` | 유료 호출 결과가 불확정 | **재실행 금지**(자동 재과금 차단, `PAID_RECOVERY_REQUIRED`). 비용 원장·공급사 대사 후 원장 정리가 필요하다 — 개발조직에 요청 |
+| (없음, 상태 `NOTIFIED`) | 생성은 끝났고 연결 발행만 실패·skipped | 예약 시각 전에 B 워크플로를 `step=publish`, 같은 `date`, `dry_run=false`로 수동 실행 |
+
+3. 재실행 한도 — gen 재실행은 2회까지. 두 번째도 실패하면 더 돌리지 않고 개발조직에 원인 판정을 요청한다.
+4. 시간 한도
+   - 발행은 예약 시각(알림+62분과 발행일 08:30 중 늦은 쪽)이 지나면 「예약 시각 경과」로 영구 차단된다.
+     재실행으로 새로 `NOTIFIED`가 되면 알림 시각이 새로 찍혀 예약도 그 뒤로 잡힌다.
+   - 다음 주 회차와 겹치지 않게, 같은 주(ISO 주차) 안에서만 재실행한다.
+5. 대기 상한 조정 — 클립·이미지가 반복해서 `FAL_PENDING`이면 `vars.NUNA_FAL_CLIP_MAX_WAIT_SEC`·
+   `vars.NUNA_FAL_IMAGE_MAX_WAIT_SEC`(60~1200 정수)를 fal 실측 처리 시간 기준으로 올린다(코드 변경 없음).
+   합계(이미지 수×이미지 상한 + 클립 수×클립 상한)는 70분 이하여야 하며, 넘으면 유료 단계 전에 중단된다.
+   60초판(이미지 5·클립 2) 기준 클립 상한은 이미지 300초일 때 최대 1200초.
+
 ## 운영 스위치 (GitHub vars / secrets)
 
 | 이름 | 기본 | 의미 |
