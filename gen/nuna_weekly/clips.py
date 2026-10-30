@@ -8,7 +8,7 @@ generate_clips(episode_id, script, segs, images, fal, budget, out_dir) -> dict[s
     결과 검증: ffprobe 길이 CLIP_SECONDS ±0.5s, 파일 >10KB.
     이미 검증 통과한 파일(clip_<seg>.mp4)이 있으면 재사용(재과금 없음).
     jobs(원장 fal_pending) 에 제출 기록이 있으면 재제출 없이 재조회(fal_jobs.run_paid).
-    대기 상한: config.fal_clip_max_wait_sec() (기본 900s).
+    대기 상한: config.fal_clip_max_wait_sec() (기본 1200s, DN2026_0082).
 """
 from __future__ import annotations
 

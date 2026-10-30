@@ -46,7 +46,7 @@ jobs:
   gen:
     if: github.event_name == 'workflow_dispatch' || vars.NUNA_ENABLED == '1'
     runs-on: ubuntu-latest
-    # fal 대기 합계 상한 70분(config.FAL_WAIT_TOTAL_MAX_SEC, 70초판 기본 6×300+2×900=60분)
+    # fal 대기 합계 상한 70분(config.FAL_WAIT_TOTAL_MAX_SEC, 70초판 기본 6×300+2×1200=70분, DN2026_0082)
     #   + 설치·대본·TTS·조립·폴링 HTTP 여유 → 90분. 상한을 바꾸면 함께 조정한다.
     timeout-minutes: 90
     # DN2026_0079: publish job 연결 판정값 (pipeline.gen_outputs).

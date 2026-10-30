@@ -13,7 +13,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
-VERSION = "1.0.0"
+VERSION = "1.1.0"  # 1.1.0 (2026-10-31, DN2026_0082) 클립 대기 상한 기본 1200s
 
 KST = ZoneInfo("Asia/Seoul")
 NY = ZoneInfo("America/New_York")
@@ -152,7 +152,9 @@ def fal_image_max_wait_sec() -> int:
 
 
 def fal_clip_max_wait_sec() -> int:
-    return _fal_wait("NUNA_FAL_CLIP_MAX_WAIT_SEC", 900)
+    # DN2026_0082: 기본 900 → 1200(허용 최댓값). W44 클립 S1 이 300s 에도 IN_PROGRESS, 실측 처리시간 미확인.
+    #   합계 상한: 60초판 5×300+2×1200=3900s, 70초판 6×300+2×1200=4200s(=FAL_WAIT_TOTAL_MAX_SEC).
+    return _fal_wait("NUNA_FAL_CLIP_MAX_WAIT_SEC", 1200)
 
 # ── 스케줄 (Q7, C2) ─────────────────────────────────────────────────
 PUBLISH_HOUR_KST = 8

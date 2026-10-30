@@ -114,7 +114,7 @@ B 를 돌려도 「발행 보류 — 생성 미완료」로 끝난다. 생성 �
 | vars `NUNA_TTS_VOICE` | Kore | PoC P3 에서 확정 |
 | vars `NUNA_REF_IMAGE_URLS` | — | Iron Nuna 기준 이미지 https URL(콤마). 없으면 `assets/nuna_ref_front.png` |
 | vars `NUNA_FAL_IMAGE_MAX_WAIT_SEC` | 300 | fal 이미지 1장 대기 상한(60~1200초) |
-| vars `NUNA_FAL_CLIP_MAX_WAIT_SEC` | 900 | fal 클립 1개 대기 상한(60~1200초). 초과 시 작업 기록 보존 후 `FAL_PENDING:clips:` |
+| vars `NUNA_FAL_CLIP_MAX_WAIT_SEC` | 1200 (DN2026_0082) | fal 클립 1개 대기 상한(60~1200초). 초과 시 작업 기록 보존 후 `FAL_PENDING:clips:` |
 | secret `TELEGRAM_PAID_CHANNEL_ID` | — | 알림 대상. 해당 채널의 실제 관리자만 보류 가능. 개인 대화는 상대 사용자만 허용 |
 
 Secrets: `FAL_AI_KEY`, `ANTHROPIC_API_KEY`, `GEMINI_API_SUB_PAY_KEY`, `SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY`,

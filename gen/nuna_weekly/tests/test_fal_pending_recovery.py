@@ -96,7 +96,7 @@ class Jobs:
 # --------------------------------------------------------------------------- #
 def test_wait_defaults_split_by_kind():
     assert config.fal_image_max_wait_sec() == 300
-    assert config.fal_clip_max_wait_sec() == 900
+    assert config.fal_clip_max_wait_sec() == 1200   # DN2026_0082
 
 
 @pytest.mark.parametrize("value", ["59", "1201", "15m"])
