@@ -101,7 +101,7 @@ def test_clips_dummy(tmp_path):
 
 
 class ShortFal(DummyFal):
-    def run(self, endpoint, payload, out_path, pending_path):
+    def run(self, endpoint, payload, out_path, pending_path, **_):
         out_path.write_bytes(b"x" * 100)
         return FalResult(path=out_path, remote_url="https://dummy.invalid/x", request_id="dummy-x")
 

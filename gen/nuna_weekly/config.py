@@ -127,6 +127,27 @@ TTS_TOKENS_PER_SEC = 25
 
 CLIP_SECONDS = 5
 
+# ── fal 대기 상한 (W44 clips 300s 타임아웃 대응, 2026-10-30) ─────────
+# 이미지(nano-banana)는 실측 ~10s, 클립(kling i2v)은 300s 경과 시 IN_PROGRESS 였다.
+# 단일 상한을 쓰지 않고 작업 종류별로 분리한다. 워크플로 timeout-minutes 안에 들어야 한다.
+FAL_WAIT_MIN_SEC = 60
+FAL_WAIT_MAX_SEC = 1200
+
+
+def _fal_wait(name: str, default: int) -> int:
+    v = _env_int(name, default)
+    if not FAL_WAIT_MIN_SEC <= v <= FAL_WAIT_MAX_SEC:
+        raise ValueError(f"{name} 는 {FAL_WAIT_MIN_SEC}~{FAL_WAIT_MAX_SEC} 초만 허용: {v}")
+    return v
+
+
+def fal_image_max_wait_sec() -> int:
+    return _fal_wait("NUNA_FAL_IMAGE_MAX_WAIT_SEC", 300)
+
+
+def fal_clip_max_wait_sec() -> int:
+    return _fal_wait("NUNA_FAL_CLIP_MAX_WAIT_SEC", 900)
+
 # ── 스케줄 (Q7, C2) ─────────────────────────────────────────────────
 PUBLISH_HOUR_KST = 8
 PUBLISH_MINUTE_KST = 30

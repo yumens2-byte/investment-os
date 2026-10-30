@@ -39,6 +39,11 @@ class _Charge:
         self.request_id = request_id
         self.actual_known = True
 
+    def submitted(self, request_id: str | None) -> None:
+        """제출 직후 request_id 만 확보 — 결과 불명으로 끝나도 원장에 대사 근거를 남긴다."""
+        if request_id:
+            self.request_id = request_id
+
 
 class Budget:
     def __init__(self, store, episode_id: str, fx_rate: float | None = None) -> None:
@@ -76,8 +81,9 @@ class Budget:
                                        request_id=ch.request_id)
                 log.warning("응답 처리 실패 — 확인된 사용량 정산: %s/%s $%.4f", step, provider, ch.usd)
             else:
-                self.store.settle_cost(cid, "charged", usd=est_usd, fx_rate=self.fx)
-                log.warning("유료 호출 실패 — 과금 여부 불명, 예약액으로 확정: %s/%s $%.4f", step, provider, est_usd)
+                self.store.settle_cost(cid, "charged", usd=est_usd, fx_rate=self.fx, request_id=ch.request_id)
+                log.warning("유료 호출 실패 — 과금 여부 불명, 예약액으로 확정: %s/%s $%.4f request_id=%s",
+                            step, provider, est_usd, ch.request_id or "-")
             raise
         self.store.settle_cost(cid, "charged", usd=ch.usd, units=ch.units, fx_rate=self.fx,
                                request_id=ch.request_id)

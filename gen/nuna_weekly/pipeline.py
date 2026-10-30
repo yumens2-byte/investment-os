@@ -9,6 +9,8 @@ gen/nuna_weekly/pipeline.py — 오케스트레이터 (설계서 3장 처리 흐
     - 재개: 실패해도 상태를 FAILED 로 덮지 않는다. 마지막 성공 상태에 머물고 last_error 만 기록 →
       재실행 시 다음 단계부터. 이미지·클립은 assets_json 의 원격 URL 로 재다운로드(재과금 없음).
     - 조건부 전이: store.transition(expect=이전 상태) — 0건이면 다른 실행이 선점한 것으로 보고 중단.
+    - fal 작업 기록: 제출 즉시 assets_json.fal_pending 에 보존. 대기 상한 초과(FalPendingTimeout)는
+      last_error 를 FAL_PENDING:<단계>: 로 남겨, 재실행 시 재제출 없이 재조회한다(유료 재호출 차단의 예외).
     - DRY_RUN(기본): dummy 백엔드·메모리 원장·Zernio POST 없음·Telegram 전송 없음.
     - schedule 실행은 vars NUNA_ENABLED=1 일 때만.
 """
@@ -34,6 +36,7 @@ from . import publish as publish_mod
 from . import script as script_mod
 from . import tts as tts_mod
 from .backends import make_backends
+from .backends.fal import FalPendingTimeout
 from .models import Asset, Facts, Script
 
 VERSION = "1.0.0"
@@ -53,6 +56,8 @@ GEN_STEPS: tuple[tuple[str, str, str], ...] = (
 )
 DONE_GEN = ("NOTIFIED", "HELD", "SCHEDULED", "PUBLISHED", "PARTIAL")
 PAID_STEPS = frozenset({"script", "tts", "images", "clips"})
+FAL_JOB_PREFIX = {"images": "img_", "clips": "clip_"}
+FAL_PENDING = "FAL_PENDING"
 
 
 class PipelineError(RuntimeError):
@@ -166,6 +171,39 @@ def _rehydrate(assets: dict[str, Asset], out: Path) -> None:
         log.info("자산 복원: %s (%dB)", key, len(r.content))
 
 
+class _FalJobs:
+    """fal 제출 기록 ↔ 원장 assets_json.fal_pending (새 러너 재개 근거).
+
+    save 는 즉시 원장에 쓴다(폴링 중 러너가 사라져도 남도록). 단계가 성공하면 clear_prefix 로 지우고
+    전이 필드(assets_json)와 함께 기록된다.
+    """
+
+    def __init__(self, ctx: Ctx, assets_json: dict[str, Any]) -> None:
+        self.ctx = ctx
+        self.assets = assets_json
+
+    def get(self, key: str) -> dict[str, Any] | None:
+        job = (self.assets.get("fal_pending") or {}).get(key)
+        return dict(job) if job else None
+
+    def save(self, key: str, job: dict[str, Any]) -> None:
+        self.assets["fal_pending"] = {**(self.assets.get("fal_pending") or {}), key: dict(job)}
+        self.ctx.store.update_episode(self.ctx.episode_id, {"assets_json": self.assets})
+
+    def clear_prefix(self, prefix: str) -> None:
+        rest = {k: v for k, v in (self.assets.get("fal_pending") or {}).items() if not k.startswith(prefix)}
+        if rest:
+            self.assets["fal_pending"] = rest
+        else:
+            self.assets.pop("fal_pending", None)
+
+
+def _has_fal_pending(ep: dict[str, Any], step: str) -> bool:
+    prefix = FAL_JOB_PREFIX.get(step)
+    pending = (ep.get("assets_json") or {}).get("fal_pending") or {}
+    return bool(prefix) and any(k.startswith(prefix) for k in pending)
+
+
 def _audio_by_seg(assets: list[Asset]) -> dict[str, Asset]:
     return {a.key.split("_", 1)[1]: a for a in assets}
 
@@ -212,15 +250,21 @@ def _do_step(ctx: Ctx, step: str) -> dict[str, Any]:
         assets_json["audio"] = _assets_dump({a.key: a for a in audio})
         return {"assets_json": assets_json}
     if step == "images":
-        imgs = images_mod.generate_images(ctx.episode_id, _script(ep), segs, ctx.backends.fal, ctx.budget, ctx.out)
+        jobs = _FalJobs(ctx, assets_json)
+        imgs = images_mod.generate_images(ctx.episode_id, _script(ep), segs, ctx.backends.fal, ctx.budget, ctx.out,
+                                          jobs=jobs)
         assets_json["images"] = _assets_dump(imgs)
+        jobs.clear_prefix(FAL_JOB_PREFIX["images"])
         return {"assets_json": assets_json}
     if step == "clips":
         imgs = _assets_load(assets_json.get("images"))
         if not ctx.backends.is_dummy:
             _rehydrate(imgs, ctx.out)
-        cl = clips_mod.generate_clips(ctx.episode_id, _script(ep), segs, imgs, ctx.backends.fal, ctx.budget, ctx.out)
+        jobs = _FalJobs(ctx, assets_json)
+        cl = clips_mod.generate_clips(ctx.episode_id, _script(ep), segs, imgs, ctx.backends.fal, ctx.budget, ctx.out,
+                                      jobs=jobs)
         assets_json["clips"] = _assets_dump(cl)
+        jobs.clear_prefix(FAL_JOB_PREFIX["clips"])
         return {"assets_json": assets_json}
     if step == "assemble":
         sc = _script(ep)
@@ -325,10 +369,16 @@ def run_gen(ctx: Ctx, only: str | None = None) -> int:
         live_paid = (step in PAID_STEPS and not ctx.dry
                      and (ctx._backends is None or not ctx._backends.is_dummy))
         if live_paid:
-            previous = ctx.episode().get("last_error") or ""
+            ep_now = ctx.episode()
+            previous = ep_now.get("last_error") or ""
             if previous.startswith((f"{step}:", f"PAID_STEP_IN_PROGRESS:{step}")):
                 raise PipelineError(
                     f"PAID_RECOVERY_REQUIRED: {step} 이전 호출 결과·비용 대사 필요 — 자동 재과금 차단")
+            if previous.startswith(f"{FAL_PENDING}:{step}:"):
+                if not _has_fal_pending(ep_now, step):
+                    raise PipelineError(
+                        f"PAID_RECOVERY_REQUIRED: {step} fal 작업 기록(assets_json.fal_pending) 없음 — 재조회 불가")
+                log.info("[NunaWeekly:pipeline] %s 진행 중이던 fal 작업 재조회로 재개(재제출 없음)", step)
             # 새 러너에 로컬 pending 파일이 없어도 중단된 유료 작업을 재제출하지 않는다.
             ctx.store.update_episode(ctx.episode_id, {"last_error": f"PAID_STEP_IN_PROGRESS:{step}"})
         started = time.time()
@@ -337,12 +387,19 @@ def run_gen(ctx: Ctx, only: str | None = None) -> int:
         try:
             fields = _do_step(ctx, step)
         except Exception as e:
-            err = secret_env.redact(f"{step}: {type(e).__name__}: {e}", 500)
+            fal_pending = isinstance(e, FalPendingTimeout) and e.persisted and step in FAL_JOB_PREFIX
+            head = f"{FAL_PENDING}:{step}" if fal_pending else step
+            err = secret_env.redact(f"{head}: {type(e).__name__}: {e}", 500)
             ctx.store.update_episode(ctx.episode_id, {"last_error": err})
             _step_log(ctx, step, "failed", started, err)
             log.error("[NunaWeekly:pipeline] ✖ %s", err)
-            recovery = (f"'{step}' 유료 호출 결과·비용 대사 후 복구 필요(자동 재호출 차단)" if live_paid
-                        else f"재실행 시 '{step}' 단계부터 이어서 진행")
+            if fal_pending:
+                recovery = (f"'{step}' fal 작업 진행 중(request_id={e.request_id}) — 재실행 시 원장 기록으로 "
+                            "재제출 없이 재조회(추가 과금 없음)")
+            elif live_paid:
+                recovery = f"'{step}' 유료 호출 결과·비용 대사 후 복구 필요(자동 재호출 차단)"
+            else:
+                recovery = f"재실행 시 '{step}' 단계부터 이어서 진행"
             _report(ctx, f"[NUNA] {ctx.episode_id} 생성 실패 — {err}\n{recovery}")
             return 1
         fields["last_error"] = None
