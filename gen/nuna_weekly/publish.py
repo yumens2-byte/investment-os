@@ -253,14 +253,16 @@ def _header_key(base: str, send: list[str], plats: list[str], existing: dict[str
 
     · 기본: 설계 키 그대로(예: "<ep>:main:instagram").
     · 요청 플랫폼 일부만 보낼 때: ":<p1>+<p2>" 접미 — 본문이 달라지므로 다른 키여야 한다.
-    · 직전 확정 실패 재시도: ":r<attempts>" 접미 — 24h 내 동일 키는 원본(실패) 응답을 돌려준다.
+    · 이전 전송 이력이 있는 재시도: ":r<attempts>" 접미 — 24h 내 동일 키는 원본(실패) 응답을 돌려준다.
+      DN2026_0085(R6-03): 직전 상태가 failed 가 아니어도(예: 실패 → 헬스 blocked → 재시도) attempts>0 이면 붙인다.
+      pending·전송 후 불명 건은 이 함수에 오기 전에 RECONCILE_REQUIRED 로 차단된다.
     """
     key = base
     if list(send) != list(plats):
         key += ":" + "+".join(send)
-    failed = [attempts[p] for p in send if (existing.get(p) or {}).get("status") == "failed"]
-    if failed and max(failed) > 0:
-        key += f":r{max(failed)}"
+    prior = [attempts[p] for p in send if attempts[p] > 0]
+    if prior:
+        key += f":r{max(prior)}"
     return key
 
 

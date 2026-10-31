@@ -201,3 +201,39 @@ def test_main_key_403_on_one_platform_does_not_fail_the_other():
     assert res["youtube"].status == "scheduled" and res["facebook"].status == "scheduled"
     bodies = [c[2] for c in cl["main"].calls if c[0] == "create_post"]
     assert [[p["platform"] for p in b["platforms"]] for b in bodies] == [["instagram"], ["threads"]]
+
+
+def test_retry_after_failed_then_blocked_still_uses_new_key():
+    """DN2026_0085(R6-03): 실패 → 헬스 차단(blocked) → 재시도 때도 첫 시도와 다른 키를 써야 한다
+    (24h 내 같은 키는 Zernio 가 캐시된 실패 응답을 돌려줌)."""
+    st = MemoryStore()
+    publish(EP, st, {"main": DummyZernioClient("main", http_status=400), "sub": DummyZernioClient("sub")},
+            script(), MEDIA, ACCTS, None, PDATE, "main", dry=False)
+    blocked = {"accounts": [{"platform": "instagram", "canPost": False, "status": "x"},
+                            {"platform": "threads", "canPost": False, "status": "x"}]}
+    publish(EP, st, {"main": DummyZernioClient("main", health=blocked), "sub": DummyZernioClient("sub")},
+            script(), MEDIA, ACCTS, None, PDATE, "main", dry=False)
+    assert {t["platform"]: t["status"] for t in st.list_targets(EP)}["instagram"] == "blocked"
+    cl = clients()
+    publish(EP, st, cl, script(), MEDIA, ACCTS, None, PDATE, "main", dry=False)
+    keys = [c[1] for c in cl["main"].calls if c[0] == "create_post"]
+    assert keys == [f"{EP}:main:instagram:r1", f"{EP}:main:threads:r1"]
+
+
+def test_split_requests_keep_separate_ledger_rows_on_403():
+    """R6-03 제안: 403 격리 시 채널별 원장 키·시도 수·오류가 각자 남는다(STD-PUB-04)."""
+    class Reject403ForInstagram(DummyZernioClient):
+        def create_post(self, body, idempotency_key):
+            if "instagram" in [p.get("platform") for p in body["platforms"]]:
+                self.calls.append(("create_post", idempotency_key, body))
+                return 403, {"error": "One or more accounts do not belong to this user"}
+            return super().create_post(body, idempotency_key)
+
+    st = MemoryStore()
+    publish(EP, st, {"main": Reject403ForInstagram("main"), "sub": DummyZernioClient("sub")},
+            script(), MEDIA, ACCTS, None, PDATE, "main", dry=False)
+    rows = {t["platform"]: t for t in st.list_targets(EP)}
+    assert rows["instagram"]["idempotency_key"] == f"{EP}:main:instagram"
+    assert rows["threads"]["idempotency_key"] == f"{EP}:main:threads"
+    assert rows["instagram"]["attempts"] == 1 and rows["threads"]["attempts"] == 1
+    assert rows["instagram"]["last_error"] and rows["threads"]["last_error"] is None
