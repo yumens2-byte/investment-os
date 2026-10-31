@@ -75,7 +75,7 @@ def test_write_ahead_survives_post_response_ledger_failure():
         publish(EP, store, cl, script(), MEDIA, ACCTS, None, PDATE, "main", False)
     thread = next(t for t in store.list_targets(EP) if t["platform"] == "threads")
     assert thread["status"] == "pending" and thread["attempts"] == 1
-    assert thread["request_json"]["idempotency_key"] == f"{EP}:main"
+    assert thread["request_json"]["idempotency_key"] == f"{EP}:main:threads"   # DN2026_0085
     retry = clients()
     publish(EP, store, retry, script(), MEDIA, ACCTS, None, PDATE, "main", False)
     assert not any(c[0] == "create_post" for c in retry["main"].calls)
