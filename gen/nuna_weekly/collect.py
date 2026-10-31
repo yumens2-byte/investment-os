@@ -1,5 +1,5 @@
 """
-gen/nuna_weekly/collect.py — 월~수 미국시장 사실(facts) 수집 (설계서 D1)
+gen/nuna_weekly/collect.py — 월~금 미국시장 사실(facts) 수집 (설계서 D1, DN2026_0086 월~금 확대)
 =========================================================================
     모드 (config.market_source):
       direct   — 실행 시점 Yahoo v8 chart 직접 수집 (기본). 종가·전일 대비 %·주간 누적.
@@ -24,7 +24,7 @@ from . import config
 from .calendar_gate import week_candidates
 from .models import DayFacts, Facts, GateResult
 
-VERSION = "1.0.0"
+VERSION = "1.1.0"
 log = logging.getLogger("nuna_weekly.collect")
 
 # collectors/yahoo_finance.py::_fetch_with_requests 와 동일한 URL·헤더
@@ -56,7 +56,7 @@ class CollectError(RuntimeError):
 
 
 def require_closed_sessions(gate: GateResult, now: datetime) -> None:
-    """월~수 전체가 끝나기 전에는 주간 확정 종가를 조회하지 않는다.
+    """대상 거래일(월~금) 전체가 끝나기 전에는 주간 확정 종가를 조회하지 않는다.
 
     정규장 16:00 NY를 보수적 기준으로 사용한다(조기 폐장도 이 시각 이후 허용).
     --date는 회차 선택일 뿐, 실제 수집 시각을 과거나 미래로 바꾸지 않는다.
@@ -68,9 +68,9 @@ def require_closed_sessions(gate: GateResult, now: datetime) -> None:
         ready = datetime(last.year, last.month, last.day, 16, tzinfo=config.NY)
         if now < ready:
             raise CollectError(
-                f"MARKET_NOT_READY: 월~수 미국장 종료 전 · 수집 가능 시각 "
+                f"MARKET_NOT_READY: 월~금 미국장 종료 전 · 수집 가능 시각 "
                 f"{ready.astimezone(config.KST).isoformat()} 이후 · "
-                "목요일 생성 또는 완료된 과거 주차 --date 사용")
+                "토요일 생성 또는 완료된 과거 주차 --date 사용")
 
 
 # --------------------------------------------------------------------------- #
@@ -248,6 +248,18 @@ def _issue_text(item: Any) -> str:
     return _clean(item) if item is not None else ""
 
 
+KEY_RISK_MAX = 200
+
+
+def _key_risk(rows: list[dict[str, Any]]) -> str | None:
+    """가장 최근 행의 key_risk(DN2026_0086). 문자열이 아니거나 비면 None."""
+    for row in reversed(rows):
+        t = _clean(row.get("key_risk")) if isinstance(row.get("key_risk"), str) else ""
+        if t:
+            return t[:KEY_RISK_MAX]
+    return None
+
+
 def _collect_news(gate: GateResult, store) -> tuple[list[dict[str, str]], list[str]]:
     dates = sorted({(d + timedelta(days=1)).isoformat() for d in gate.us_days} | {gate.publish_date.isoformat()})
     rows = sorted(store.select_by_dates("daily_news", "news_date", dates), key=lambda r: str(r.get("news_date")))
@@ -290,6 +302,10 @@ def build_facts(gate: GateResult, store, session=None, now_kst: datetime | None 
         _collect_supabase(gate, days, store)
 
     headlines, issues = _collect_news(gate, store)
+    news_dates = sorted({(d + timedelta(days=1)).isoformat() for d in gate.us_days}
+                        | {gate.publish_date.isoformat()})
+    key_risk = _key_risk(sorted(store.select_by_dates("daily_news", "news_date", news_dates),
+                                key=lambda r: str(r.get("news_date"))))
     pub = gate.publish_date.isoformat()
     analysis = store.latest_row("daily_analysis", "analysis_date", pub) or {}
     snap = store.latest_row("daily_snapshots", "snapshot_date", pub) or {}
@@ -306,7 +322,7 @@ def build_facts(gate: GateResult, store, session=None, now_kst: datetime | None 
         regime=analysis.get("regime"), risk_level=analysis.get("risk_level"),
         regime_date=str(analysis["analysis_date"]) if analysis.get("analysis_date") else None,
         fear_greed=fear_greed, fear_greed_label=snap.get("fear_greed_label"),
-        headlines=headlines, top_issues=issues, usdkrw=_num(snap.get("usdkrw")),
+        headlines=headlines, top_issues=issues, usdkrw=_num(snap.get("usdkrw")), key_risk=key_risk,
     )
     log.info("수집 완료: 모드 %s 거래일 %d 헤드라인 %d 이슈 %d 주간 S&P %s 나스닥 %s", mode, len(gate.us_days),
              len(headlines), len(issues), week_sp, week_nq)

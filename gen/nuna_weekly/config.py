@@ -13,7 +13,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
-VERSION = "1.0.0"
+VERSION = "1.1.0"
 
 KST = ZoneInfo("Asia/Seoul")
 NY = ZoneInfo("America/New_York")
@@ -170,21 +170,23 @@ class Segment:
     start: float
     end: float
     visual: str          # clip | image | image_card | card_only
-    card: str            # none | week | day | keywords | risk | disclaimer
-    day_index: int = -1  # day 카드일 때 0=월,1=화,2=수
+    card: str            # none | breaking | week | chart | issue | day | keywords | risk | disclaimer
+    day_index: int = -1  # (구) day 카드일 때 0=월,1=화,2=수 — DN2026_0086 이후 시트에서는 미사용
 
     @property
     def seconds(self) -> float:
         return round(self.end - self.start, 3)
 
 
-# 70초 컷 시트(설계서 5장). 60초 = S6(키워드) 제외 후 뒤 구간을 10초 당긴다.
+# 70초 컷 시트. 60초 = S6(키워드) 제외 후 뒤 구간을 10초 당긴다.
+# DN2026_0086 뉴스 방송 큐시트: S1 이번 주 핵심(훅) · S2 주간 성적 · S3 월~금 그래프 · S4·S5 원인 해설 ·
+#   S7 리스크·다음 주 관전 포인트 · S8 마무리·면책. 구간 ID·visual·길이는 그대로(이미지·클립 자산 계약 유지).
 _SHEET_70: tuple[Segment, ...] = (
-    Segment("S1", 0, 5, "clip", "none"),
+    Segment("S1", 0, 5, "clip", "breaking"),
     Segment("S2", 5, 13, "image_card", "week"),
-    Segment("S3", 13, 22, "image_card", "day", 0),
-    Segment("S4", 22, 31, "image_card", "day", 1),
-    Segment("S5", 31, 40, "image_card", "day", 2),
+    Segment("S3", 13, 22, "image_card", "chart"),
+    Segment("S4", 22, 31, "image_card", "issue"),
+    Segment("S5", 31, 40, "image_card", "issue"),
     Segment("S6", 40, 50, "image_card", "keywords"),
     Segment("S7", 50, 62, "image_card", "risk"),
     Segment("S8", 62, 70, "clip", "disclaimer"),
@@ -209,6 +211,19 @@ def segments(total: int | None = None) -> list[Segment]:
 def chars_limit(seconds: float) -> int:
     """구간 내레이션 글자수 상한 — hero voiceover.py:93 휴리스틱(6.5자/초, 0.8초 여유)."""
     return max(10, int((seconds - 0.8) * 6.5))
+
+
+CHARS_MIN_RATIO = 0.70   # DN2026_0086: 무음 축소(W44 무음 16.0초/60초 실측). R6-05: 0.85 는 허용 폭이 좁아 재생성 실패 위험
+
+
+def chars_min(seconds: float) -> int:
+    """구간 내레이션 글자수 하한 — 상한의 70%."""
+    return int(chars_limit(seconds) * CHARS_MIN_RATIO)
+
+
+# ── 방송 그래픽 (DN2026_0086) ──────────────────────────────────────
+NEWS_BRAND = "EDT 마켓 뉴스"        # 가칭(회장 승인 2026-10-31)
+NEWS_BADGE = "주간"                  # 생방송·속보가 아니므로 LIVE·속보 표기를 쓰지 않는다
 
 
 # ── 채널 (Q9) ───────────────────────────────────────────────────────

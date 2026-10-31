@@ -1,7 +1,31 @@
-# gen/nuna_weekly — Iron Nuna 주간 미국시장 뉴스 쇼츠 (v1.0.0)
+# gen/nuna_weekly — Iron Nuna 주간 미국시장 뉴스 쇼츠 (v1.1.0)
 
-매주 목요일, 월~수 미국장 요약 영상을 만들어 Instagram Reels · Threads · YouTube Shorts · Facebook Reel 에
-Zernio 예약 발행한다. hero_shorts 대체 파이프라인(설계서 12장 이행 계획).
+매주 토요일(KST), 같은 주 월~금 미국장 요약 영상을 만들어 Instagram Reels · Threads · YouTube Shorts · Facebook Reel 에
+Zernio 예약 발행한다(DN2026_0086 — 이전 목요일·월~수). hero_shorts 대체 파이프라인(설계서 12장 이행 계획).
+
+## 영상 형식 — EDT 세계관 뉴스 방송 (DN2026_0086)
+
+가상 경제 뉴스 채널 'EDT 마켓 뉴스'(가칭)를 앵커 아이언 누나가 진행하며 '왜 움직였나'를 해설한다.
+실존 만화·영화 출판사·스튜디오·캐릭터 이름과 로고는 쓰지 않는다(99 v1.4 ART-01).
+
+| 구간(60초) | 카드 | 내용 |
+|---|---|---|
+| S1 0–5초 클립 | breaking | 이번 주 핵심 한 줄(숫자 포함, 인사말 금지) |
+| S2 5–13초 | week | 주간 성적 |
+| S3 13–22초 | chart | 월~금 일별 등락 그래프(facts 수치로 그림) |
+| S4·S5 22–40초 | issue | 원인 해설 2개(top_issues·key_risk·헤드라인, 추정은 '~로 풀이됩니다') |
+| S7 40–52초 | risk | 국면·위험·공포탐욕·WTI + 다음 주 지켜볼 점(새 날짜·수치 금지) |
+| S8 52–60초 | disclaimer | 클립 5초 + S7 이미지 위 면책 띠 3초(정지 화면 없음) |
+
+- 연출: 이미지 구간마다 다른 움직임(줌인·좌우 이동·줌아웃), 조각 사이 0.4초 전환, 카드 아래→위 등장,
+  상단 채널 로고·'주간' 배지·흐르는 시세 띠(facts 수치만), 카드 위 자막(발화 구간에 글자 수 비례 배치).
+- 내레이션 길이: 구간별 `chars_min`(상한의 70%) 이상 `chars_limit` 이하 — 무음 축소.
+- 음량: loudnorm -14 LUFS. QC JSON `measured.integrated_lufs`에 기록(게이트 아님).
+- 일요일 실행은 스킵하되 원장에 SKIPPED 를 남기지 않는다(같은 ISO 주 토요일 회차 재실행 보호).
+- 주의: 토요일 KST 에는 금요일분 `daily_news`·`daily_snapshots` 행이 없을 수 있다(main.yml morning 은 KST 월~금).
+  기본 시장 수집(direct)은 Yahoo 를 직접 읽어 영향이 없고, 금요일 뉴스·key_risk 가 빠질 수 있다.
+  `NUNA_MARKET_SOURCE=supabase` 는 금요일 행이 없으면 CollectError 로 멈춘다.
+- 구 형식(DN2026_0086 이전, 목요일·day 카드) 회차를 새 코드로 재개하지 않는다 — 원장 `pipeline_version` 1.3.0 미만은 종결 후 새로 생성.
 
 - 설계서: Notion「NUNA 주간 뉴스 쇼츠 — 상세설계서 (2026-10-19)」(Investment OS 허브 하위)
 - 원장: Supabase `nuna_*` 4테이블 (적용 완료, `sql/` 참조)
@@ -9,7 +33,7 @@ Zernio 예약 발행한다. hero_shorts 대체 파이프라인(설계서 12장 �
 ## 실행
 
 ```bash
-# 생성 (워크플로 A, 목 06:47 KST)
+# 생성 (워크플로 A, 토 06:47 KST — DN2026_0086)
 python -m gen.nuna_weekly gen [--step run|preflight|collect|script|tts|images|clips|assemble|qc|stage|notify] [--date YYYY-MM-DD]
 # 발행 (생성 워크플로의 publish job 이 NOTIFIED 직후 실행 · 수동 재시도는 워크플로 B dispatch,
 #       scheduledFor = max(08:30, 알림+62분)) — DN2026_0079
@@ -39,7 +63,7 @@ python -m pytest gen/nuna_weekly/tests -q && ruff check gen/nuna_weekly
   `script_json`, `media_json`, `notified_at`를 발행 단계가 읽는다.
 - 생성 `dry_run=true`는 원장을 메모리에만 쓴다. 별도 발행 실행으로 결과가 전달되지 않는다.
   무과금 전체 연결 점검은 `tests/test_pipeline.py`의 공유 MemoryStore 통합 테스트로 수행한다.
-- 월~수 미국장이 모두 끝나기 전 수집은 `MARKET_NOT_READY`로 중단한다. `--date`는 회차 선택이며
+- 월~금 미국장이 모두 끝나기 전 수집은 `MARKET_NOT_READY`로 중단한다(금요일 종가 = 토 05:00 KST 서머타임·06:00 KST 표준시). `--date`는 회차 선택이며
   실제 시각을 변경하지 않는다. 조기 실행에서 현재 주 미래 종가를 채우지 않는다.
 - `preflight`는 DB·생성 백엔드를 초기화하지 않고 달력과 장 종료 여부만 확인한다.
 - `dbcheck`는 실제 SUPABASE_SERVICE_ROLE_KEY로 7개 테이블을 0행 조회한다. 날짜·회차가 없어도 실행 가능하며
@@ -56,7 +80,7 @@ python -m pytest gen/nuna_weekly/tests -q && ruff check gen/nuna_weekly
   원격 이미지·클립은 재사용하며, 원격 백업이 없는 음성은 기존 정책에 따라 예산 범위 내 재생성한다.
 - 생성 원장이 없거나 생성 미완료이면 발행 실행은 exit 1로 표시한다. 정상 발행으로 오인하지 않는다.
 - 보류창은 알림부터 60분이며 발행 실행에서 30초 이하 간격으로 확인한다. 창 종료 후 API 호출 여유 2분을 둔다.
-  따라서 예약은 `max(목 08:30, 알림+62분)`이다. 발행 job timeout은 120분이다(DN2026_0079, 보류창 60 + 검증 대기 최대 30 + verify 최대 10 + 설치).
+  따라서 예약은 `max(토 08:30, 알림+62분)`이다. 발행 job timeout은 120분이다(DN2026_0079, 보류창 60 + 검증 대기 최대 30 + verify 최대 10 + 설치).
   예약 POST 이후의 보류는 자동 취소를 뜻하지 않으며, Zernio 예약을 별도 확인해야 한다.
 - 실유료 단계 호출 전에 `PAID_STEP_IN_PROGRESS:<step>`을 남긴다. 실패·강제 중단 후 새 러너에서도
   자동 유료 재제출을 차단한다. 로컬 pending만으로 무중복·무재과금 자동 복구를 보장하지 않는다.
@@ -69,7 +93,7 @@ python -m pytest gen/nuna_weekly/tests -q && ruff check gen/nuna_weekly
 상세 분석·테스트·배포/롤백 절차: `docs/nuna_weekly_predeployment_20261024.md`.
 
 운영 실행 전 `vars.NUNA_ENABLED=1`, `SUPABASE_SERVICE_ROLE_KEY` 및 README의 Secrets 설정을 확인한다.
-활성화 스위치와 키는 코드 수정으로 우회하지 않는다. 수동 실생성은 완료된 주차의 목요일을 `date`에 넣고
+활성화 스위치와 키는 코드 수정으로 우회하지 않는다. 수동 실생성은 완료된 주차의 토요일을 `date`에 넣고
 `step=run`, `dry_run=false`로 실행한다. 생성이 `NOTIFIED`에 도달하면 같은 실행의 `publish` job 이 발행한다
 (DN2026_0079). 그 job 이 실패했을 때만 `nuna_weekly_publish.yml`을 동일 `date`로 수동 실행하며,
 예약 시각(알림+62분과 발행일 08:30 중 늦은 쪽) 전에 시작해야 한다.

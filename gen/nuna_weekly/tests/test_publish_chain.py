@@ -113,7 +113,7 @@ def test_main_live_gen_emits_chain_then_chained_publish_schedules(env, monkeypat
 
     assert pipeline.main(["gen", "--step", "run", "--date", RUN_DATE.isoformat()]) == 0
     outputs = _read_outputs(out_file)
-    assert outputs == {"episode_id": "nuna-2026-W43", "run_date": "2026-10-22",
+    assert outputs == {"episode_id": "nuna-2026-W43", "run_date": RUN_DATE.isoformat(),
                        "episode_status": "NOTIFIED", "chain": LIVE}
 
     # publish job 과 같은 입력(DRY_RUN=false 고정, --date run_date)으로 같은 회차를 발행 — 예약까지 진행돼야 한다
@@ -149,9 +149,9 @@ def test_main_weekend_skip_never_chains_publish(env, monkeypatch):  # noqa: F811
     monkeypatch.setenv(pipeline.GH_OUTPUT_ENV, str(out_file))
     monkeypatch.setenv("DRY_RUN", "false")
 
-    assert pipeline.main(["gen", "--step", "run", "--date", "2026-10-24"]) == 0   # 토요일
+    assert pipeline.main(["gen", "--step", "run", "--date", "2026-10-25"]) == 0   # 일요일(DN2026_0086)
     outputs = _read_outputs(out_file)
-    assert outputs["episode_status"] == "SKIPPED"
+    assert outputs["episode_status"] == "PLANNED"   # 일요일은 SKIPPED 를 남기지 않는다
     assert outputs["chain"] == NONE
 
 

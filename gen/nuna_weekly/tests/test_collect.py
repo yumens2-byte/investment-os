@@ -11,15 +11,16 @@ from gen.nuna_weekly import calendar_gate, config
 from gen.nuna_weekly.collect import CollectError, build_facts
 from gen.nuna_weekly.db import MemoryStore
 
+# DN2026_0086: 대상 거래일 월~금(10-19~10-23), 토요일(10-24) 생성
 BAR_DATES = [date(2026, 10, 15), date(2026, 10, 16), date(2026, 10, 19), date(2026, 10, 20),
-             date(2026, 10, 21)]
+             date(2026, 10, 21), date(2026, 10, 22), date(2026, 10, 23)]
 CLOSES = {
-    "^GSPC": [6000.0, 6010.0, 6070.1, 6040.0, 6100.0],
-    "^IXIC": [20000.0, 20100.0, 20200.0, 19900.0, 20300.0],
-    "^VIX": [18.0, 17.5, 16.0, 19.0, 17.2],
-    "^TNX": [4.1, 4.12, 4.15, 4.2, 4.18],
-    "CL=F": [70.0, 71.0, 72.5, 71.8, 73.0],
-    "DX-Y.NYB": [99.0, 99.2, 99.5, 99.1, 98.9],
+    "^GSPC": [6000.0, 6010.0, 6070.1, 6040.0, 6100.0, 6120.0, 6150.0],
+    "^IXIC": [20000.0, 20100.0, 20200.0, 19900.0, 20300.0, 20400.0, 20500.0],
+    "^VIX": [18.0, 17.5, 16.0, 19.0, 17.2, 16.5, 15.9],
+    "^TNX": [4.1, 4.12, 4.15, 4.2, 4.18, 4.16, 4.14],
+    "CL=F": [70.0, 71.0, 72.5, 71.8, 73.0, 74.0, 75.5],
+    "DX-Y.NYB": [99.0, 99.2, 99.5, 99.1, 98.9, 98.7, 98.5],
 }
 
 
@@ -66,11 +67,12 @@ def daily():
             {"news_date": "2026-10-20", "top_headlines": json.dumps(["  Fed  holds ", "Tech rally", "Fed holds"]),
              "top_issues": [{"topic": "Fed", "summary": "금리 동결"}, "유가"]},
             {"news_date": "2026-10-22", "top_headlines": ["Tech rally", "X" * 300, 5, "a", "b", "c", "d"],
-             "top_issues": None},
+             "top_issues": None, "key_risk": "  기술주   실적 부진 우려 "},
+            {"news_date": "2026-10-23", "top_headlines": [], "key_risk": None},
             {"news_date": "2026-10-25", "top_headlines": ["미래 헤드라인"]},
         ],
         "daily_analysis": [{"analysis_date": "2026-10-21", "regime": "Risk-On", "risk_level": "LOW"},
-                           {"analysis_date": "2026-10-23", "regime": "Future", "risk_level": "HIGH"}],
+                           {"analysis_date": "2026-10-26", "regime": "Future", "risk_level": "HIGH"}],
         "daily_snapshots": [
             {"snapshot_date": "2026-10-20", "spy_change": 1.0, "nasdaq_change": 0.5, "vix": 16.0,
              "us10y": 4.15, "oil_wti": 72.5, "dollar_index": 99.5, "fear_greed": 55, "fear_greed_label": "Greed",
@@ -79,7 +81,13 @@ def daily():
              "us10y": 4.2, "oil_wti": 71.8, "dollar_index": 99.1, "fear_greed": 50, "fear_greed_label": "Neutral",
              "usdkrw": 1410.0},
             {"snapshot_date": "2026-10-22", "spy_change": 1.0, "nasdaq_change": 2.01, "vix": 17.2,
-             "us10y": 4.18, "oil_wti": 73.0, "dollar_index": 98.9, "fear_greed": 60, "fear_greed_label": "Greed",
+             "us10y": 4.18, "oil_wti": 73.0, "dollar_index": 98.9, "fear_greed": 58, "fear_greed_label": "Greed",
+             "usdkrw": 1415.0},
+            {"snapshot_date": "2026-10-23", "spy_change": 0.33, "nasdaq_change": 0.49, "vix": 16.5,
+             "us10y": 4.16, "oil_wti": 74.0, "dollar_index": 98.7, "fear_greed": 59, "fear_greed_label": "Greed",
+             "usdkrw": 1418.0},
+            {"snapshot_date": "2026-10-24", "spy_change": 0.49, "nasdaq_change": 0.49, "vix": 15.9,
+             "us10y": 4.14, "oil_wti": 75.5, "dollar_index": 98.5, "fear_greed": 60, "fear_greed_label": "Greed",
              "usdkrw": 1420.5},
         ],
     }
@@ -91,11 +99,11 @@ def _env(monkeypatch):
     monkeypatch.delenv("NUNA_MARKET_SOURCE", raising=False)
 
 
-NOW = datetime(2026, 10, 22, 6, 0, tzinfo=config.KST)
+NOW = datetime(2026, 10, 24, 6, 0, tzinfo=config.KST)
 
 
 def test_direct_full():
-    gate = calendar_gate.evaluate(date(2026, 10, 22))
+    gate = calendar_gate.evaluate(date(2026, 10, 24))
     s = FakeSession()
     f = build_facts(gate, MemoryStore(daily()), session=s, now_kst=NOW, sleep=lambda x: None)
     assert f.source == "direct" and f.episode_id == "nuna-2026-W43"
@@ -103,14 +111,15 @@ def test_direct_full():
     c0 = s.calls[0]
     assert c0["params"] == {"interval": "1d", "range": "1mo"} and c0["timeout"] == 10
     assert "Chrome/120.0.0.0" in c0["headers"]["User-Agent"]
-    mon, tue, wed = f.days
+    mon, tue, wed, thu, fri = f.days
     assert mon.us_date == "2026-10-19" and mon.sp500_close == 6070.1
     assert mon.sp500_chg == round((6070.1 - 6010) / 6010 * 100, 2)
     assert tue.nasdaq_chg == round((19900 - 20200) / 20200 * 100, 2)
     assert wed.vix == 17.2 and wed.vix_chg == round((17.2 - 19) / 19 * 100, 2)
     assert wed.wti == 73.0 and wed.dxy == 98.9 and wed.us10y == 4.18
-    assert f.week_sp500_chg == round((6100 - 6010) / 6010 * 100, 2)
-    assert f.week_nasdaq_chg == round((20300 - 20100) / 20100 * 100, 2)
+    assert thu.sp500_close == 6120.0 and fri.sp500_chg == round((6150 - 6120) / 6120 * 100, 2)
+    assert f.week_sp500_chg == round((6150 - 6010) / 6010 * 100, 2)
+    assert f.week_nasdaq_chg == round((20500 - 20100) / 20100 * 100, 2)
     assert f.regime == "Risk-On" and f.regime_date == "2026-10-21"
     assert f.fear_greed == 60 and f.fear_greed_label == "Greed" and f.usdkrw == 1420.5
     texts = [h["text"] for h in f.headlines]
@@ -120,29 +129,31 @@ def test_direct_full():
     # 10-22 행은 상위 5개만(5 는 문자열 아님 → 제외): Tech rally(중복), X*300, a, b
     assert texts[2] == "X" * 200 and texts[-1] == "b"
     assert f.top_issues == ["Fed: 금리 동결", "유가"]
-    assert f.fetched_at.startswith("2026-10-22T06:00:00+09:00")
+    assert f.key_risk == "기술주 실적 부진 우려"   # DN2026_0086: 가장 최근 비어 있지 않은 행
+    assert f.fetched_at.startswith("2026-10-24T06:00:00+09:00")
 
 
 def test_holiday_week_closed_day():
     gate = calendar_gate.evaluate(date(2026, 9, 10))
-    dates = [date(2026, 9, 3), date(2026, 9, 4), date(2026, 9, 8), date(2026, 9, 9)]
-    ov = {sym: Resp(chart(sym, [1.0, 2.0, 3.0, 4.0], dates)) for sym in config.TICKERS.values()}
+    dates = [date(2026, 9, 3), date(2026, 9, 4), date(2026, 9, 8), date(2026, 9, 9), date(2026, 9, 10),
+             date(2026, 9, 11)]
+    ov = {sym: Resp(chart(sym, [1.0, 2.0, 3.0, 4.0, 5.0, 6.0], dates)) for sym in config.TICKERS.values()}
     f = build_facts(gate, MemoryStore(), session=FakeSession(ov), now_kst=NOW, sleep=lambda x: None)
     assert f.days[0].closed and f.days[0].holiday_name == "Labor Day" and f.days[0].sp500_chg is None
     assert f.days[1].sp500_chg == 50.0
-    assert f.week_sp500_chg == 100.0  # 9/9 종가 4 vs 9/4 종가 2
+    assert f.week_sp500_chg == 200.0  # 9/11 종가 6 vs 9/4 종가 2
     assert f.headlines == [] and f.regime is None and f.fear_greed is None
 
 
 def test_required_missing_fail_closed():
-    gate = calendar_gate.evaluate(date(2026, 10, 22))
-    ov = {"^VIX": Resp(chart("^VIX", [18.0, 17.5, 16.0, 19.0], BAR_DATES[:4]))}
+    gate = calendar_gate.evaluate(date(2026, 10, 24))
+    ov = {"^VIX": Resp(chart("^VIX", CLOSES["^VIX"][:6], BAR_DATES[:6]))}
     with pytest.raises(CollectError, match="vix"):
         build_facts(gate, MemoryStore(), session=FakeSession(ov), now_kst=NOW, sleep=lambda x: None)
 
 
 def test_retry_then_success_and_exhaust():
-    gate = calendar_gate.evaluate(date(2026, 10, 22))
+    gate = calendar_gate.evaluate(date(2026, 10, 24))
     sleeps = []
     ov = {"^GSPC": [Resp({}, 503), ConnectionError("x"), Resp(chart("^GSPC"))]}
     f = build_facts(gate, MemoryStore(), session=FakeSession(ov), now_kst=NOW, sleep=sleeps.append)
@@ -153,7 +164,7 @@ def test_retry_then_success_and_exhaust():
 
 
 def test_shape_error_names_ticker_only():
-    gate = calendar_gate.evaluate(date(2026, 10, 22))
+    gate = calendar_gate.evaluate(date(2026, 10, 24))
     ov = {"^IXIC": Resp({"chart": {"result": None, "secret": "zzz"}})}
     with pytest.raises(CollectError) as ei:
         build_facts(gate, MemoryStore(), session=FakeSession(ov), now_kst=NOW, sleep=lambda x: None)
@@ -161,7 +172,7 @@ def test_shape_error_names_ticker_only():
 
 
 def test_optional_failure_is_none():
-    gate = calendar_gate.evaluate(date(2026, 10, 22))
+    gate = calendar_gate.evaluate(date(2026, 10, 24))
     ov = {"CL=F": [Resp({}, 500)] * 3}
     f = build_facts(gate, MemoryStore(), session=FakeSession(ov), now_kst=NOW, sleep=lambda x: None)
     assert all(d.wti is None for d in f.days) and f.days[0].sp500_chg is not None
@@ -169,7 +180,7 @@ def test_optional_failure_is_none():
 
 def test_supabase_mode(monkeypatch, caplog):
     monkeypatch.setenv("NUNA_MARKET_SOURCE", "supabase")
-    gate = calendar_gate.evaluate(date(2026, 10, 22))
+    gate = calendar_gate.evaluate(date(2026, 10, 24))
     with caplog.at_level(logging.WARNING):
         f = build_facts(gate, MemoryStore(daily()), now_kst=NOW)
     assert "신선도" in caplog.text
@@ -180,7 +191,7 @@ def test_supabase_mode(monkeypatch, caplog):
 
 def test_supabase_missing_row(monkeypatch):
     monkeypatch.setenv("NUNA_MARKET_SOURCE", "supabase")
-    gate = calendar_gate.evaluate(date(2026, 10, 22))
+    gate = calendar_gate.evaluate(date(2026, 10, 24))
     d = daily()
     d["daily_snapshots"] = d["daily_snapshots"][:2]
     with pytest.raises(CollectError, match="2026-10-21"):

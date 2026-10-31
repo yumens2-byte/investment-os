@@ -9,7 +9,7 @@ from dataclasses import asdict, dataclass, field
 from datetime import date
 from typing import Any
 
-VERSION = "1.0.0"
+VERSION = "1.1.0"
 
 # 원장 상태 (DB CHECK 제약과 동일 — db/migrations nuna_001_tables)
 STATUSES = ("PLANNED", "SKIPPED", "COLLECTED", "SCRIPTED", "VOICED", "IMAGED", "CLIPPED",
@@ -62,6 +62,7 @@ class Facts:
     headlines: list[dict[str, str]] = field(default_factory=list)  # {"date","text"}
     top_issues: list[str] = field(default_factory=list)
     usdkrw: float | None = None
+    key_risk: str | None = None      # DN2026_0086 daily_news.key_risk(외부 요약 — 주제 참고용, 숫자 근거 아님)
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)

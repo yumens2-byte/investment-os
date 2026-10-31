@@ -123,3 +123,79 @@ def test_ffmpeg_failure_stderr_tail(inputs):
     msg = str(ei.value)
     assert "ffmpeg 실패" in msg
     assert len(msg.split("| ", 1)[1]) <= assemble.STDERR_TAIL
+
+
+# --------------------------------------------------------------------------- #
+# DN2026_0086 전환·자막·음량·시세 띠
+# --------------------------------------------------------------------------- #
+def _lufs(p: Path) -> float:
+    from gen.nuna_weekly.qc import integrated_lufs
+
+    v = integrated_lufs(p)
+    assert v is not None
+    return v
+
+
+def test_news_build_keeps_length_and_writes_subtitles(inputs):
+    from gen.nuna_weekly.models import DayFacts, Facts
+
+    images, clips, audio, script, out = inputs
+    facts = Facts(episode_id="t", source="direct", fetched_at="", week_sp500_chg=1.2,
+                  days=[DayFacts("2026-10-26", sp500_chg=0.5, vix=16.0), DayFacts("2026-10-27", closed=True)])
+    p = build("main", SEGS, script, images, clips, audio, out, facts=facts)
+    info = _probe(p)
+    assert abs(float(info["format"]["duration"]) - 9.5) <= 0.1
+    ass = (out / "_work_main" / "subs.ass").read_text(encoding="utf-8")
+    assert ass.count("Dialogue:") >= 4 and "\\pos(540," in ass and "주간" in ass
+    assert (out / "_work_main" / "ticker.png").is_file() and (out / "_work_main" / "bug.png").is_file()
+    assert -16.5 <= _lufs(p) <= -11.5
+
+
+def test_subtitle_chunks_and_speech_spans(tmp_path):
+    chunks = assemble.subtitle_chunks("이번 주 S&P 지수는 1.58%, 나스닥은 2.29% 올랐습니다. 다음 주에는 유가 흐름을 지켜봐야 합니다.")
+    assert chunks[0] == "이번 주 S&P 지수는 1.58%," and all(len(c) <= assemble.SUB_CHUNK_MAX or " " not in c
+                                                          for c in chunks)
+    wav = tmp_path / "s.wav"
+    _ff("-f", "lavfi", "-i", "sine=frequency=440:duration=1.0:sample_rate=24000", "-af", "apad=pad_dur=1.5",
+        "-ac", "1", str(wav))
+    spans = assemble.speech_spans(wav, 2.5)
+    assert spans[0][0] == 0.0 and 0.9 <= spans[0][1] <= 1.1 and len(spans) == 1
+
+
+def test_chart_bars_from_facts():
+    from gen.nuna_weekly.models import DayFacts, Facts
+
+    f = Facts(episode_id="t", source="direct", fetched_at="",
+              days=[DayFacts("2026-10-26", sp500_chg=0.7), DayFacts("2026-10-27", closed=True),
+                    DayFacts("2026-10-28", sp500_chg=-0.28)])
+    assert assemble.chart_bars(f) == [("월", 0.7), ("화", None), ("수", -0.28)]
+    assert assemble.chart_bars(None) is None
+
+
+def test_full_60s_sheet_real_render(tmp_path):
+    """R6-05: 운영 큐시트(60초) 전체를 실제 연출 설정으로 1회 렌더 — 움직임 패턴·카드 종류·S8 면책 띠 배경."""
+    from gen.nuna_weekly.config import segments as sheet
+    from gen.nuna_weekly.models import DayFacts, Facts
+
+    segs = sheet(60)
+    src = tmp_path / "src"
+    src.mkdir()
+    img = src / "bg.png"
+    Image.new("RGB", (720, 1280), (30, 60, 120)).save(img)
+    images = {s.seg_id: Asset("image", f"img_{s.seg_id}", str(img)) for s in segs if s.visual == "image_card"}
+    clips = {s: Asset("clip", f"clip_{s}", str(_clip(src / f"{s}.mp4", 5.0))) for s in ("S1", "S8")}
+    audio = {s.seg_id: Asset("audio", f"tts_{s.seg_id}", str(_wav(src / f"{s.seg_id}.wav", s.seconds * 0.7)))
+             for s in segs}
+    cards = {"breaking": ("이번 주 핵심", ["S&P500 +1.58%"]), "week": ("주간 성적", ["S&P500 +1.58%"]),
+             "chart": ("월~금 흐름", ["화요일 상승폭 최대"]), "issue": ("왜 움직였나", ["기술주 강세"]),
+             "risk": ("리스크 점검", ["공포탐욕 51"])}
+    script = Script(episode_id="t", title="t", captions={}, segments=[
+        ScriptSegment(s.seg_id, s.seconds, "이번 주 흐름을 정리합니다, 다음 구간입니다.", *cards.get(s.card, ("", [])))
+        for s in segs])
+    facts = Facts(episode_id="t", source="direct", fetched_at="", week_sp500_chg=1.58, fear_greed=51,
+                  days=[DayFacts(f"2026-10-{26 + i}", sp500_chg=v) for i, v in enumerate((0.7, -0.6, 0.28, 1.1, 0.0))])
+    p = build("main", segs, script, images, clips, audio, tmp_path / "out", facts=facts)
+    assert abs(float(_probe(p)["format"]["duration"]) - 60.0) <= 0.1
+    work = tmp_path / "out" / "_work_main"
+    assert (work / "band_S8.png").is_file() and (work / "S8_end.mp4").is_file()
+    assert {f"card_{s}.png" for s in ("S1", "S2", "S3", "S4", "S5", "S7")} <= {x.name for x in work.iterdir()}

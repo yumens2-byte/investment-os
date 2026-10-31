@@ -1,8 +1,8 @@
 # ─────────────────────────────────────────────────────────────────────────────
-# nuna_weekly_gen.yml — NUNA 주간 미국시장 뉴스 쇼츠 · 생성 + 발행 연결 워크플로 (v1.1.0)
+# nuna_weekly_gen.yml — NUNA 주간 미국시장 뉴스 쇼츠 · 생성 + 발행 연결 워크플로 (v1.2.0)
 #   설계서: "NUNA 주간 뉴스 쇼츠 상세설계서" 3·10·15장 (2026-10-19)
-#   cron 은 UTC 기준: "47 21 * * 3" = 목 06:47 KST
-#   cron↔if 매핑: schedule "47 21 * * 3" → job gen if(vars.NUNA_ENABLED == '1') → job publish(needs gen)
+#   cron 은 UTC 기준: "47 21 * * 5" = UTC 금 21:47 = 토 06:47 KST (DN2026_0086, 이전 "47 21 * * 3" 목)
+#   cron↔if 매핑: schedule "47 21 * * 5" → job gen if(vars.NUNA_ENABLED == '1') → job publish(needs gen)
 #   보안(15장): permissions 최소, secret 은 실행 step 에만, 아티팩트는 QC JSON 만(S-02)
 #   운영 스위치: vars.NUNA_ENABLED == '1' 일 때만 schedule 실행 진행
 #   DRY_RUN: 기존 규약 (main.yml:188) — inputs.dry_run || secrets.DRY_RUN
@@ -12,12 +12,14 @@
 #     예약 시각 경과로 차단되는 문제를 없앤다(STD-SCHED-03). nuna_weekly_publish.yml 의 schedule 은 제거,
 #     수동 재시도·verify 용 workflow_dispatch 만 남긴다.
 #     publish job 에는 생성 API 키를 주입하지 않는다(15.2 최소 권한 — nuna_weekly_publish.yml 과 같은 키 집합).
+#   v1.2.0 (2026-10-31, DN2026_0086) 토요일 06:47 KST 생성·08:30 발행, 대상 = 같은 주 월~금.
+#     미국 금요일 종가 16:00 ET = 토 06:00 KST(표준시)·05:00 KST(서머타임) 이후 실행.
 # ─────────────────────────────────────────────────────────────────────────────
 name: 🎬 nuna-weekly-gen
 
 "on":
   schedule:
-    - cron: "47 21 * * 3"
+    - cron: "47 21 * * 5"   # DN2026_0086 토 06:47 KST
   workflow_dispatch:
     inputs:
       step:

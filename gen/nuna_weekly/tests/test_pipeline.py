@@ -11,12 +11,13 @@ from gen.nuna_weekly import config, db, pipeline
 from gen.nuna_weekly.backends import make_backends
 from gen.nuna_weekly.zernio import DummyZernioClient
 
-RUN_DATE = date(2026, 10, 22)  # 목요일 (ISO 2026-W43)
+RUN_DATE = date(2026, 10, 24)  # 토요일 (ISO 2026-W43) — DN2026_0086
 
 
 def _daily() -> dict:
     snaps, news, analysis = [], [], []
-    vals = {"2026-10-20": (-0.42, -0.61, 18.2), "2026-10-21": (0.35, 0.58, 17.4), "2026-10-22": (0.12, -0.20, 17.9)}
+    vals = {"2026-10-20": (-0.42, -0.61, 18.2), "2026-10-21": (0.35, 0.58, 17.4), "2026-10-22": (0.12, -0.20, 17.9),
+            "2026-10-23": (0.27, 0.44, 17.1), "2026-10-24": (-0.18, -0.33, 17.6)}
     for d, (spy, ndx, vix) in vals.items():
         snaps.append({"snapshot_date": d, "spy_change": spy, "nasdaq_change": ndx, "vix": vix, "us10y": 4.21,
                       "oil_wti": 71.3, "dollar_index": 104.2, "usdkrw": 1330.5, "fear_greed": 44,
@@ -46,7 +47,7 @@ class _NoTelegram:
 @pytest.fixture()
 def env(monkeypatch, tmp_path):
     class Clock(datetime):
-        current = datetime(2026, 10, 22, 6, 50, tzinfo=config.KST)
+        current = datetime(2026, 10, 24, 6, 50, tzinfo=config.KST)
 
         @classmethod
         def now(cls, tz=None):
@@ -95,7 +96,7 @@ def test_full_flow_dummy(env):
     assert pipeline.run_publish(ctx, "publish", sleep=pipeline.datetime.advance) == 0
     ep = store.get_episode(ctx.episode_id)
     assert ep["status"] == "SCHEDULED"          # 예약까지 30분 초과 → 검증은 별도 dispatch
-    assert ep["scheduled_for"].startswith("2026-10-22T08:30")
+    assert ep["scheduled_for"].startswith("2026-10-24T08:30")
     assert pipeline.run_publish(ctx, "verify", sleep=lambda s: None) == 0
     ep = store.get_episode(ctx.episode_id)
     assert ep["status"] == "PUBLISHED", store.list_targets(ctx.episode_id)
@@ -157,7 +158,7 @@ def test_hold_stops_publish(env):
 
     class HoldTG(_NoTelegram):
         def poll_hold(self, episode_id):
-            return {"by": "1", "at": "2026-10-22T07:50:00+09:00"}
+            return {"by": "1", "at": "2026-10-24T07:50:00+09:00"}
 
     ctx = _ctx(store, dry=False, tg=HoldTG())
     assert pipeline.run_gen(ctx) == 0
@@ -188,10 +189,10 @@ def test_failure_keeps_status_and_resumes(env, monkeypatch):
 
 def test_weekend_skip(env):
     store = db.MemoryStore(daily=_daily())
-    ctx = pipeline.Ctx(date(2026, 10, 24), False, store=store, backends=make_backends(True),
-                       zernio_clients={}, telegram=_NoTelegram())
+    ctx = pipeline.Ctx(date(2026, 10, 25), False, store=store, backends=make_backends(True),
+                       zernio_clients={}, telegram=_NoTelegram())  # 일요일 스킵(DN2026_0086)
     assert pipeline.run_gen(ctx) == 0
-    assert store.get_episode(ctx.episode_id)["status"] == "SKIPPED"
+    assert store.get_episode(ctx.episode_id)["status"] == "PLANNED"   # 원장에 SKIPPED 를 남기지 않음
 
 
 def test_budget_blocks_when_month_cap_reached(env, monkeypatch):
@@ -201,3 +202,27 @@ def test_budget_blocks_when_month_cap_reached(env, monkeypatch):
     assert pipeline.run_gen(ctx) == 1
     ep = store.get_episode(ctx.episode_id)
     assert "NUNA_BUDGET_EXCEEDED" in ep["last_error"]
+
+
+# --------------------------------------------------------------------------- #
+# DN2026_0086 R6-05 보완
+# --------------------------------------------------------------------------- #
+def test_sunday_rerun_keeps_saturday_episode_open(env):
+    store = db.MemoryStore(daily=_daily())
+    store.create_episode({"episode_id": "nuna-2026-W43", "publish_date": "2026-10-24", "us_days": [],
+                          "duration_target_sec": 60, "pipeline_version": pipeline.VERSION})
+    ctx = pipeline.Ctx(date(2026, 10, 25), False, store=store, backends=make_backends(True),
+                       zernio_clients={}, telegram=_NoTelegram())
+    assert pipeline.run_gen(ctx) == 0
+    assert store.get_episode("nuna-2026-W43")["status"] == "PLANNED"
+
+
+@pytest.mark.parametrize("version", ["1.2.0", None, "test"])
+def test_old_format_episode_is_not_resumed(env, version):
+    store = db.MemoryStore(daily=_daily())
+    store.create_episode({"episode_id": "nuna-2026-W43", "publish_date": "2026-10-22", "us_days": [],
+                          "duration_target_sec": 60, "pipeline_version": version})
+    store.episodes["nuna-2026-W43"]["status"] = "IMAGED"
+    ctx = _ctx(store, dry=False, tg=_NoTelegram())
+    assert pipeline.run_gen(ctx) == 1
+    assert store.get_episode("nuna-2026-W43")["status"] == "IMAGED"

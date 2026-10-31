@@ -50,8 +50,12 @@ def test_dummy_generate_passes(total, closed_mon, budget):
     costs = budget.store.costs
     assert len(costs) == 1 and costs[0]["state"] == "charged" and costs[0]["step"] == "script"
     assert costs[0]["provider"] == "anthropic" and costs[0]["unit"] == "token"
-    if closed_mon:
-        assert "휴장" in sc.segments[2].card_lines
+    if closed_mon:   # DN2026_0086: 휴장은 S3 월~금 그래프(facts)에서 표시
+        from gen.nuna_weekly.assemble import chart_bars
+        assert chart_bars(facts)[0] == ("월", None)
+    assert not sc.segments[0].narration.startswith(script.GREETINGS)
+    for seg, spec in zip(sc.segments, segs, strict=True):
+        assert config.chars_min(spec.seconds) <= len(seg.narration) <= config.chars_limit(spec.seconds)
 
 
 def test_user_prompt_markers():
@@ -280,3 +284,42 @@ def test_sdk_does_not_hide_paid_retries(monkeypatch):
     ClaudeBackend()
     assert calls[0]["max_retries"] == 0
     assert calls[0]["timeout"] == 90
+
+
+# --------------------------------------------------------------------------- #
+# DN2026_0086 뉴스 방송 형식
+# --------------------------------------------------------------------------- #
+def test_narration_floor_and_greeting_are_validated():
+    facts = make_facts()
+    segs = config.segments(60)
+    data = _good_data(facts, segs)
+    data["segments"][0]["narration"] = "안녕하세요, 아이언 누나입니다. 이번 주 S&P500 +1.50% 입니다."
+    data["segments"][1]["narration"] = "짧음"
+    sc = script._to_script(data, facts, segs, "m", 1)
+    errs = script.validate(sc, facts, segs, PUB)
+    assert any("인사말" in e for e in errs)
+    assert any(e.startswith("S2: 내레이션") and "하한" in e for e in errs)
+
+
+def test_prompt_has_news_roles_and_floor():
+    u = script.build_user_prompt(make_facts(), config.segments(60), PUB)
+    seg_payload = u.split("<segments>")[1].split("</segments>")[0]
+    assert '"chars_min"' in seg_payload and '"breaking"' in seg_payload and '"chart"' in seg_payload
+    assert config.NEWS_BRAND in script.SYSTEM_PROMPT and "인사말" in script.SYSTEM_PROMPT
+    assert "출판사" in script.SYSTEM_PROMPT
+
+
+def test_five_day_numbers_allowed():
+    facts = make_facts()
+    sc = script._to_script(_good_data(facts, config.segments(60)), facts, config.segments(60), "m", 1)
+    sc.segments[2].narration = "월요일부터 금요일까지 5거래일 흐름입니다."
+    assert script.verify_numbers(sc, facts, PUB) == []
+
+
+def test_card_title_numbers_are_verified():
+    facts = make_facts()
+    segs = config.segments(60)
+    sc = script._to_script(_good_data(facts, segs), facts, segs, "m", 1)
+    sc.segments[0].card_title = "S&P500 9.87% 폭등"
+    errs = script.verify_numbers(sc, facts, PUB)
+    assert any("9.87" in e for e in errs)

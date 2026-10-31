@@ -213,7 +213,7 @@ def _seed_imaged(store, ctx, tmp_path):
         imgs[s.seg_id] = Asset(kind="image", key=f"img_{s.seg_id}", local_path=str(p),
                                remote_url=f"https://cdn.test/img_{s.seg_id}.png", request_id=f"img-{s.seg_id}")
     store.create_episode({"episode_id": ctx.episode_id, "status": "IMAGED", "duration_target_sec": 60,
-                          "script_json": sc.to_dict(),
+                          "pipeline_version": pipeline.VERSION, "script_json": sc.to_dict(),
                           "assets_json": {"images": pipeline._assets_dump(imgs)}})
 
 

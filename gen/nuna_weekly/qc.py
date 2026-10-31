@@ -39,7 +39,7 @@ from .config import (
 from .models import Facts, QCReport, Script
 from .secret_env import redact
 
-VERSION = "1.0.0"
+VERSION = "1.1.0"
 log = logging.getLogger(__name__)
 
 DISCLAIMER_SEG = "S8"
@@ -92,6 +92,17 @@ def volumedetect(path: Path) -> tuple[float | None, float | None]:
     mean_m = re.search(r"mean_volume:\s*(-?\d+(?:\.\d+)?|-?inf)\s*dB", err)
     max_m = re.search(r"max_volume:\s*(-?\d+(?:\.\d+)?|-?inf)\s*dB", err)
     return (float(mean_m.group(1)) if mean_m else None, float(max_m.group(1)) if max_m else None)
+
+
+_LUFS_RE = re.compile(r"I:\s+(-?[0-9.]+) LUFS")
+
+
+def integrated_lufs(path: Path) -> float | None:
+    """ebur128 통합 음량(LUFS). 측정 실패 시 None."""
+    r = subprocess.run(["ffmpeg", "-hide_banner", "-nostats", "-i", str(path), "-vn", "-af", "ebur128",
+                        "-f", "null", "-"], capture_output=True, text=True)
+    hits = _LUFS_RE.findall(r.stderr or "")
+    return float(hits[-1]) if r.returncode == 0 and hits else None
 
 
 def _texts(script: Script) -> list[tuple[str, str]]:
@@ -186,6 +197,9 @@ def run(path: str | Path, variant: str, target_sec: float, script: Script, facts
     q3_ok = (max_db is not None and mean_db is not None
              and max_db > MAX_VOLUME_MIN_DB and mean_db > MEAN_VOLUME_MIN_DB)
     gates["Q3"] = _gate(q3_ok, f"max={max_db}dB(>{MAX_VOLUME_MIN_DB}) mean={mean_db}dB(>{MEAN_VOLUME_MIN_DB})")
+
+    # 통합 음량(LUFS) — 기록만, 게이트 아님 (DN2026_0086, 목표 -14 LUFS)
+    measured["integrated_lufs"] = integrated_lufs(path) if auds else None
 
     # Q4 수치
     gates["Q4"] = _q4(verify_numbers, script, facts, publish_date)
