@@ -5,6 +5,7 @@
 #     생성 직후 같은 실행에서 수행한다(STD-SCHED-03 — 독립 cron 지연 차이로 '알림+62분' 이후 시작되면
 #     예약 시각 경과로 영구 차단되던 구조 해소). 이 워크플로는 workflow_dispatch 로만 실행한다:
 #     생성 연결 발행 실패 후 재시도(step=publish), 예약 후 검증(step=verify), 권한 확인(step=dbcheck).
+#     계정 진단(step=accounts, DN2026_0084): 키별 GET /accounts/health 만 — POST·DB 쓰기 없음, ID 미출력.
 #   cron↔if 매핑: schedule 없음 → job if 는 workflow_dispatch 만
 #   Zernio scheduledFor = max(발행일 08:30 KST, 알림+62분) — 그 시각이 지나면 재시도도 차단된다
 #   Telegram [보류] 콜백은 TELEGRAM_PAID_CHANNEL_ID의 채널 관리자만 인정 (S-04)
@@ -21,7 +22,7 @@ name: 🎬 nuna-weekly-publish
       step:
         description: "실행 단계"
         type: choice
-        options: [publish, verify, dbcheck]
+        options: [publish, verify, dbcheck, accounts]
         default: publish
       date:
         description: "기준일 KST (YYYY-MM-DD, 비우면 오늘)"

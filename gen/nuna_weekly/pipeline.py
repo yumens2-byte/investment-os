@@ -41,7 +41,7 @@ from .backends import make_backends
 from .backends.fal import FalPendingTimeout
 from .models import Asset, Facts, Script
 
-VERSION = "1.1.0"  # 1.1.0 (2026-10-31, DN2026_0079) 생성→발행 연결 출력(GITHUB_OUTPUT)
+VERSION = "1.2.0"  # 1.2.0 (2026-10-31, DN2026_0084) publish --step accounts 계정 진단 · 1.1.0 DN2026_0079 발행 연결
 log = logging.getLogger("nuna_weekly.pipeline")
 
 GEN_STEPS: tuple[tuple[str, str, str], ...] = (
@@ -547,6 +547,32 @@ def _verify(ctx: Ctx, sleep) -> int:
 # --------------------------------------------------------------------------- #
 # CLI
 # --------------------------------------------------------------------------- #
+def run_accounts_check(clients: dict[str, Any] | None = None, accounts: dict[str, str] | None = None) -> int:
+    """DN2026_0084 읽기 전용 계정 진단 — 키별 GET /accounts/health 만 호출(POST·DB 쓰기 없음).
+
+    결과는 GitHub annotation(::notice / ::warning)으로 남긴다. 계정 ID 값은 출력하지 않는다.
+    매핑이 모두 맞으면 0, 하나라도 어긋나면 1.
+    """
+    from .zernio import ZernioClient
+
+    clients = clients if clients is not None else {a: ZernioClient(a) for a in ("main", "sub")}
+    accounts = accounts if accounts is not None else publish_mod.accounts_from_env()
+    health: dict[str, Any] = {}
+    for alias, client in clients.items():
+        try:
+            health[alias] = client.accounts_health()
+        except Exception as e:
+            log.warning("[NunaWeekly:pipeline] %s 계정 헬스 조회 실패: %s", alias,
+                        secret_env.redact(f"{type(e).__name__}: {e}", 200))
+            health[alias] = None
+    report = publish_mod.account_report(health, accounts)
+    for line, r in zip(publish_mod.account_report_lines(report), report, strict=True):
+        level = "notice" if r["mapping_ok"] else "warning"
+        print(f"::{level} title=NUNA 계정 진단::{secret_env.redact(line, 900)}", flush=True)
+        log.info("[NunaWeekly:pipeline] 계정 진단 %s", line)
+    return 0 if all(r["mapping_ok"] for r in report) else 1
+
+
 def _parse_date(s: str | None) -> date:
     if s:
         return date.fromisoformat(s)
@@ -600,9 +626,11 @@ def main(argv: list[str] | None = None) -> int:
     try:
         run_date = _parse_date(a.date)
         allowed = ({"run", "preflight", "poc", "dbcheck"} | {s[0] for s in GEN_STEPS}
-                   if a.command == "gen" else {"publish", "verify", "dbcheck"})
+                   if a.command == "gen" else {"publish", "verify", "dbcheck", "accounts"})
         if a.step and a.step not in allowed:
             raise PipelineError(f"{a.command} 단계 허용값 아님: {a.step}")
+        if a.command == "publish" and a.step == "accounts":
+            return run_accounts_check()
         if a.step == "dbcheck":
             # dry-run 메모리 원장이 아닌 실제 주입 키로 GET만 검사한다.
             result = db.make_store(False).check_access()
