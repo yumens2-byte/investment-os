@@ -1,5 +1,5 @@
 """
-gen/nuna_weekly/collect.py — 월~수 미국시장 사실(facts) 수집 (설계서 D1)
+gen/nuna_weekly/collect.py — 월~금 미국시장 사실(facts) 수집 (설계서 D1, DN2026_0086 월~금 확대)
 =========================================================================
     모드 (config.market_source):
       direct   — 실행 시점 Yahoo v8 chart 직접 수집 (기본). 종가·전일 대비 %·주간 누적.
@@ -56,7 +56,7 @@ class CollectError(RuntimeError):
 
 
 def require_closed_sessions(gate: GateResult, now: datetime) -> None:
-    """월~수 전체가 끝나기 전에는 주간 확정 종가를 조회하지 않는다.
+    """대상 거래일(월~금) 전체가 끝나기 전에는 주간 확정 종가를 조회하지 않는다.
 
     정규장 16:00 NY를 보수적 기준으로 사용한다(조기 폐장도 이 시각 이후 허용).
     --date는 회차 선택일 뿐, 실제 수집 시각을 과거나 미래로 바꾸지 않는다.
@@ -68,9 +68,9 @@ def require_closed_sessions(gate: GateResult, now: datetime) -> None:
         ready = datetime(last.year, last.month, last.day, 16, tzinfo=config.NY)
         if now < ready:
             raise CollectError(
-                f"MARKET_NOT_READY: 월~수 미국장 종료 전 · 수집 가능 시각 "
+                f"MARKET_NOT_READY: 월~금 미국장 종료 전 · 수집 가능 시각 "
                 f"{ready.astimezone(config.KST).isoformat()} 이후 · "
-                "목요일 생성 또는 완료된 과거 주차 --date 사용")
+                "토요일 생성 또는 완료된 과거 주차 --date 사용")
 
 
 # --------------------------------------------------------------------------- #

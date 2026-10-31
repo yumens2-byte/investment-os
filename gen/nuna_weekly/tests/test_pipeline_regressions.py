@@ -22,7 +22,8 @@ def test_unclosed_week_never_calls_market_or_db(now):
                             session=NoIO(), now_kst=now)
 
 
-@pytest.mark.parametrize(("day", "hour"), [(date(2026, 10, 22), 5), (date(2026, 11, 5), 6)])
+# DN2026_0086: 금요일 종가 16:00 NY = 토 05:00 KST(서머타임)·06:00 KST(표준시)
+@pytest.mark.parametrize(("day", "hour"), [(date(2026, 10, 24), 5), (date(2026, 11, 7), 6)])
 def test_readiness_observes_new_york_dst(day, hour):
     gate = calendar_gate.evaluate(day)
     with pytest.raises(collect.CollectError):
