@@ -112,7 +112,8 @@ B 를 돌려도 「발행 보류 — 생성 미완료」로 끝난다. 생성 �
 | `last_error` 접두 | 뜻 | 조치 |
 | --- | --- | --- |
 | `FAL_PENDING:images:` · `FAL_PENDING:clips:` | fal 작업이 대기 상한 안에 안 끝남(작업 기록 보존) | gen 을 `dry_run=false`, 같은 `date`로 재실행 → 재제출·재과금 없이 같은 작업을 재조회해 이어간다 |
-| `collect:` · `assemble:` · `qc:` · `stage:` · `notify:` | 무료 단계 실패 | 원인(시세·네트워크·QC 게이트)을 확인한 뒤 같은 방법으로 재실행 → 실패한 단계부터 이어간다 |
+| `collect:` · `qc:` · `stage:` · `notify:` | 무료 단계 실패 | 원인(시세·네트워크·QC 게이트)을 확인한 뒤 같은 방법으로 재실행 → 실패한 단계부터 이어간다 |
+| `assemble:` | 조립 실패. 새 러너는 음성 파일이 없어 **TTS 를 다시 합성(유료, 회당 약 ₩12)** 하며, 길이가 실행마다 달라 `TTSFitError`(목표×1.15 초과)가 날 수 있다(DN2026_0085, W44 베타 실측) | 같은 방법으로 재실행(2회 한도) → 클립·이미지는 재사용하고 TTS 만 다시 합성한다. 회차 비용 상한(2,000원) 여유를 확인한다 |
 | `script:` · `tts:` · `images:` · `clips:` (접두에 `FAL_PENDING` 없음), `PAID_STEP_IN_PROGRESS:` | 유료 호출 결과가 불확정 | **재실행 금지**(자동 재과금 차단, `PAID_RECOVERY_REQUIRED`). 비용 원장·공급사 대사 후 원장 정리가 필요하다 — 개발조직에 요청 |
 | (없음, 상태 `NOTIFIED`) | 생성은 끝났고 연결 발행만 실패·skipped | 예약 시각 전에 B 워크플로를 `step=publish`, 같은 `date`, `dry_run=false`로 수동 실행 |
 

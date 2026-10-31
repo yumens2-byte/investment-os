@@ -68,11 +68,12 @@ def test_build_entries_validation():
 def test_plan_requests():
     specs = plan_requests(EP, MEDIA, "fb_cut")
     assert [(s["key_alias"], s["platforms"], s["idempotency_key"]) for s in specs] == [
-        ("main", ["instagram", "threads"], f"{EP}:main"),
+        ("main", ["instagram"], f"{EP}:main:instagram"),   # DN2026_0085 플랫폼별 분리
+        ("main", ["threads"], f"{EP}:main:threads"),
         ("sub", ["youtube"], f"{EP}:sub:youtube"),
         ("sub", ["facebook"], f"{EP}:sub:facebook")]
-    assert specs[2]["media_url"] == "https://cdn.test/fb_s.mp4"
-    assert specs[1]["media_url"] == "https://cdn.test/main_s.mp4"
+    assert specs[3]["media_url"] == "https://cdn.test/fb_s.mp4"
+    assert specs[2]["media_url"] == "https://cdn.test/main_s.mp4"
     with pytest.raises(PublishError):
         plan_requests(EP, {"main": {"main": "x"}}, "main")
 
@@ -82,7 +83,8 @@ def test_publish_ok_and_idempotent_rerun():
     res = publish(EP, st, cl, script(), MEDIA, ACCTS, None, PDATE, "main", dry=False)
     assert {p: r.status for p, r in res.items()} == {p: "scheduled" for p in config.PLATFORMS}
     posts = [c for c in cl["main"].calls + cl["sub"].calls if c[0] == "create_post"]
-    assert sorted(c[1] for c in posts) == sorted([f"{EP}:main", f"{EP}:sub:youtube", f"{EP}:sub:facebook"])
+    assert sorted(c[1] for c in posts) == sorted([f"{EP}:main:instagram", f"{EP}:main:threads",
+                                                  f"{EP}:sub:youtube", f"{EP}:sub:facebook"])
     body = posts[0][2]
     assert body["scheduledFor"] == "2026-10-26T08:30:00+09:00" and body["timezone"] == "Asia/Seoul"
     assert "publishNow" not in body
@@ -144,7 +146,8 @@ def test_retry_after_failure_uses_new_key():
             script(), MEDIA, ACCTS, None, PDATE, "main", dry=False)
     cl = clients()
     publish(EP, st, cl, script(), MEDIA, ACCTS, None, PDATE, "main", dry=False)
-    assert [c[1] for c in cl["main"].calls if c[0] == "create_post"] == [f"{EP}:main:r1"]
+    assert [c[1] for c in cl["main"].calls if c[0] == "create_post"] == [f"{EP}:main:instagram:r1",
+                                                                    f"{EP}:main:threads:r1"]  # DN2026_0085
     assert not [c for c in cl["sub"].calls if c[0] == "create_post"]
 
 
@@ -178,3 +181,59 @@ def test_accounts_from_env(monkeypatch):
     for p, env in config.ACCOUNT_ENV.items():
         monkeypatch.setenv(env, ACCTS[p])
     assert accounts_from_env() == ACCTS
+
+
+def test_main_key_403_on_one_platform_does_not_fail_the_other():
+    """DN2026_0085 재현: W44 베타에서 Instagram·Threads 묶음 요청이 403 하나로 둘 다 실패했다."""
+    class Reject403ForInstagram(DummyZernioClient):
+        def create_post(self, body, idempotency_key):
+            plats = [p.get("platform") for p in body["platforms"]]
+            if "instagram" in plats:
+                self.calls.append(("create_post", idempotency_key, body))
+                return 403, {"error": "One or more accounts do not belong to this user"}
+            return super().create_post(body, idempotency_key)
+
+    st = MemoryStore()
+    cl = {"main": Reject403ForInstagram("main"), "sub": DummyZernioClient("sub")}
+    res = publish(EP, st, cl, script(), MEDIA, ACCTS, None, PDATE, "main", dry=False)
+    assert res["instagram"].status == "failed"
+    assert res["threads"].status == "scheduled"
+    assert res["youtube"].status == "scheduled" and res["facebook"].status == "scheduled"
+    bodies = [c[2] for c in cl["main"].calls if c[0] == "create_post"]
+    assert [[p["platform"] for p in b["platforms"]] for b in bodies] == [["instagram"], ["threads"]]
+
+
+def test_retry_after_failed_then_blocked_still_uses_new_key():
+    """DN2026_0085(R6-03): 실패 → 헬스 차단(blocked) → 재시도 때도 첫 시도와 다른 키를 써야 한다
+    (24h 내 같은 키는 Zernio 가 캐시된 실패 응답을 돌려줌)."""
+    st = MemoryStore()
+    publish(EP, st, {"main": DummyZernioClient("main", http_status=400), "sub": DummyZernioClient("sub")},
+            script(), MEDIA, ACCTS, None, PDATE, "main", dry=False)
+    blocked = {"accounts": [{"platform": "instagram", "canPost": False, "status": "x"},
+                            {"platform": "threads", "canPost": False, "status": "x"}]}
+    publish(EP, st, {"main": DummyZernioClient("main", health=blocked), "sub": DummyZernioClient("sub")},
+            script(), MEDIA, ACCTS, None, PDATE, "main", dry=False)
+    assert {t["platform"]: t["status"] for t in st.list_targets(EP)}["instagram"] == "blocked"
+    cl = clients()
+    publish(EP, st, cl, script(), MEDIA, ACCTS, None, PDATE, "main", dry=False)
+    keys = [c[1] for c in cl["main"].calls if c[0] == "create_post"]
+    assert keys == [f"{EP}:main:instagram:r1", f"{EP}:main:threads:r1"]
+
+
+def test_split_requests_keep_separate_ledger_rows_on_403():
+    """R6-03 제안: 403 격리 시 채널별 원장 키·시도 수·오류가 각자 남는다(STD-PUB-04)."""
+    class Reject403ForInstagram(DummyZernioClient):
+        def create_post(self, body, idempotency_key):
+            if "instagram" in [p.get("platform") for p in body["platforms"]]:
+                self.calls.append(("create_post", idempotency_key, body))
+                return 403, {"error": "One or more accounts do not belong to this user"}
+            return super().create_post(body, idempotency_key)
+
+    st = MemoryStore()
+    publish(EP, st, {"main": Reject403ForInstagram("main"), "sub": DummyZernioClient("sub")},
+            script(), MEDIA, ACCTS, None, PDATE, "main", dry=False)
+    rows = {t["platform"]: t for t in st.list_targets(EP)}
+    assert rows["instagram"]["idempotency_key"] == f"{EP}:main:instagram"
+    assert rows["threads"]["idempotency_key"] == f"{EP}:main:threads"
+    assert rows["instagram"]["attempts"] == 1 and rows["threads"]["attempts"] == 1
+    assert rows["instagram"]["last_error"] and rows["threads"]["last_error"] is None

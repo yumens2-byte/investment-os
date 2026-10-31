@@ -1,8 +1,9 @@
 """
 gen/nuna_weekly/publish.py — 4채널 예약 발행·검증 (설계서 8장 외부연계, 15장 보안)
 =================================================================================
-요청 3건(Q9 키 분리):
-    main  [instagram, threads]  미디어 main/main   Idempotency-Key "<ep>:main"
+요청 4건(Q9 키 분리, DN2026_0085 플랫폼별 분리 — 한 계정 403 이 다른 채널을 막지 않게):
+    main  [instagram]           미디어 main/main   Idempotency-Key "<ep>:main:instagram"
+    main  [threads]             미디어 main/main   "<ep>:main:threads"
     sub   [youtube]             미디어 main/sub    "<ep>:sub:youtube"
     sub   [facebook]            미디어 fb_variant/sub "<ep>:sub:facebook"
 
@@ -25,7 +26,7 @@ from . import config, policy, secret_env
 from .models import Script, TargetResult
 from .zernio import decompose
 
-VERSION = "1.1.0"  # 1.1.0 (2026-10-31, DN2026_0084) 읽기 전용 계정 진단 account_report
+VERSION = "1.2.0"  # 1.2.0 (2026-10-31, DN2026_0085) 플랫폼별 요청 분리 · 1.1.0 DN2026_0084 계정 진단
 log = logging.getLogger("nuna_weekly.publish")
 
 DONE_STATES = ("scheduled", "published")
@@ -118,10 +119,15 @@ def build_entries(script: Script, accounts: dict[str, str]) -> dict[str, dict[st
 def plan_requests(episode_id: str, media: dict[str, dict[str, str]], fb_variant: str,
                   entries: dict[str, dict[str, Any]] | None = None, title: str = "",
                   scheduled_iso: str = "") -> list[dict[str, Any]]:
-    """요청 3건 명세. entries 를 주면 각 명세에 body 를 채운다."""
+    """요청 4건 명세(플랫폼당 1건). entries 를 주면 각 명세에 body 를 채운다.
+
+    DN2026_0085: main 키의 Instagram·Threads 를 한 요청으로 묶으면 한 계정의 403(계정 미연결 등)이
+    다른 채널까지 실패시킨다(W44 베타). 플랫폼별로 나눠 실패를 격리한다.
+    """
     if fb_variant not in FB_VARIANTS:
         raise PublishError(f"fb_variant 허용값 아님: {fb_variant}")
-    raw = (("main", ["instagram", "threads"], "main", f"{episode_id}:main"),
+    raw = (("main", ["instagram"], "main", f"{episode_id}:main:instagram"),
+           ("main", ["threads"], "main", f"{episode_id}:main:threads"),
            ("sub", ["youtube"], "main", f"{episode_id}:sub:youtube"),
            ("sub", ["facebook"], fb_variant, f"{episode_id}:sub:facebook"))
     specs: list[dict[str, Any]] = []
@@ -245,16 +251,18 @@ def _header_key(base: str, send: list[str], plats: list[str], existing: dict[str
                 attempts: dict[str, int]) -> str:
     """Idempotency-Key 헤더.
 
-    · 기본: 설계 키 그대로(예: "<ep>:main").
+    · 기본: 설계 키 그대로(예: "<ep>:main:instagram").
     · 요청 플랫폼 일부만 보낼 때: ":<p1>+<p2>" 접미 — 본문이 달라지므로 다른 키여야 한다.
-    · 직전 확정 실패 재시도: ":r<attempts>" 접미 — 24h 내 동일 키는 원본(실패) 응답을 돌려준다.
+    · 이전 전송 이력이 있는 재시도: ":r<attempts>" 접미 — 24h 내 동일 키는 원본(실패) 응답을 돌려준다.
+      DN2026_0085(R6-03): 직전 상태가 failed 가 아니어도(예: 실패 → 헬스 blocked → 재시도) attempts>0 이면 붙인다.
+      pending·전송 후 불명 건은 이 함수에 오기 전에 RECONCILE_REQUIRED 로 차단된다.
     """
     key = base
     if list(send) != list(plats):
         key += ":" + "+".join(send)
-    failed = [attempts[p] for p in send if (existing.get(p) or {}).get("status") == "failed"]
-    if failed and max(failed) > 0:
-        key += f":r{max(failed)}"
+    prior = [attempts[p] for p in send if attempts[p] > 0]
+    if prior:
+        key += f":r{max(prior)}"
     return key
 
 
