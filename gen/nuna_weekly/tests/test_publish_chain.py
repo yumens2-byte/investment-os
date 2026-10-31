@@ -151,7 +151,7 @@ def test_main_weekend_skip_never_chains_publish(env, monkeypatch):  # noqa: F811
 
     assert pipeline.main(["gen", "--step", "run", "--date", "2026-10-25"]) == 0   # 일요일(DN2026_0086)
     outputs = _read_outputs(out_file)
-    assert outputs["episode_status"] == "SKIPPED"
+    assert outputs["episode_status"] == "PLANNED"   # 일요일은 SKIPPED 를 남기지 않는다
     assert outputs["chain"] == NONE
 
 

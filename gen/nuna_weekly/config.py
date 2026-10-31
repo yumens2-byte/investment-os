@@ -213,11 +213,11 @@ def chars_limit(seconds: float) -> int:
     return max(10, int((seconds - 0.8) * 6.5))
 
 
-CHARS_MIN_RATIO = 0.85   # DN2026_0086: 구간 길이 대비 무음 축소(W44 무음 16.0초/60초 실측)
+CHARS_MIN_RATIO = 0.70   # DN2026_0086: 무음 축소(W44 무음 16.0초/60초 실측). R6-05: 0.85 는 허용 폭이 좁아 재생성 실패 위험
 
 
 def chars_min(seconds: float) -> int:
-    """구간 내레이션 글자수 하한 — 상한의 85%."""
+    """구간 내레이션 글자수 하한 — 상한의 70%."""
     return int(chars_limit(seconds) * CHARS_MIN_RATIO)
 
 

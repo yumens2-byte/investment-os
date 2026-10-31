@@ -314,3 +314,12 @@ def test_five_day_numbers_allowed():
     sc = script._to_script(_good_data(facts, config.segments(60)), facts, config.segments(60), "m", 1)
     sc.segments[2].narration = "월요일부터 금요일까지 5거래일 흐름입니다."
     assert script.verify_numbers(sc, facts, PUB) == []
+
+
+def test_card_title_numbers_are_verified():
+    facts = make_facts()
+    segs = config.segments(60)
+    sc = script._to_script(_good_data(facts, segs), facts, segs, "m", 1)
+    sc.segments[0].card_title = "S&P500 9.87% 폭등"
+    errs = script.verify_numbers(sc, facts, PUB)
+    assert any("9.87" in e for e in errs)

@@ -207,6 +207,8 @@ def _draw_chart(draw: ImageDraw.ImageDraw, box: tuple[int, int, int, int],
     peak = max([abs(v) for _, v in bars if v is not None] or [1.0]) or 1.0
     half = (bottom - top) / 2
     draw.line((x0, mid, x1, mid), fill=GRAY, width=2)
+    leg = "S&P500 일별 등락"   # R6-05: 지수 범례
+    draw.text((x1 - _text_w(draw, leg, val_f), y0), leg, font=val_f, fill=GRAY)
     for i, (label, v) in enumerate(bars):
         cx = x0 + slot * (i + 0.5)
         bw = slot * 0.46

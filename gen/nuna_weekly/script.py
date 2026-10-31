@@ -275,6 +275,7 @@ def verify_numbers(script: Script, facts: Facts, publish_date: date) -> list[str
     targets = [("title", script.title)]
     for s in script.segments:
         targets.append((s.seg_id, s.narration))
+        targets.append((s.seg_id, s.card_title))   # DN2026_0086 R6-05: breaking 헤드라인도 숫자 근거 검사
         targets.extend((s.seg_id, ln) for ln in s.card_lines)
     for where, text in targets:
         errors.extend(f"{where}: 근거 없는 숫자 {tok}"

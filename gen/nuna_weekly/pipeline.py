@@ -41,7 +41,7 @@ from .backends import make_backends
 from .backends.fal import FalPendingTimeout
 from .models import Asset, Facts, Script
 
-VERSION = "1.2.0"  # 1.2.0 (2026-10-31, DN2026_0084) publish --step accounts 계정 진단 · 1.1.0 DN2026_0079 발행 연결
+VERSION = "1.3.0"  # 1.3.0 (2026-10-31, DN2026_0086) 토요일·월~금·뉴스 방송 형식 · 1.2.0 (2026-10-31, DN2026_0084) publish --step accounts 계정 진단 · 1.1.0 DN2026_0079 발행 연결
 log = logging.getLogger("nuna_weekly.pipeline")
 
 GEN_STEPS: tuple[tuple[str, str, str], ...] = (
@@ -344,6 +344,17 @@ def _do_step(ctx: Ctx, step: str) -> dict[str, Any]:
     raise PipelineError(f"알 수 없는 단계: {step}")
 
 
+FORMAT_MIN_VERSION = (1, 3, 0)   # DN2026_0086 뉴스 방송 형식이 시작된 파이프라인 버전
+
+
+def _version_tuple(v: object) -> tuple[int, ...]:
+    """'1.2.0' → (1, 2, 0). 비었거나 형식이 다르면 (0,) — 구 형식으로 본다."""
+    try:
+        return tuple(int(x) for x in str(v).split("."))
+    except (TypeError, ValueError):
+        return (0,)
+
+
 def run_gen(ctx: Ctx, only: str | None = None) -> int:
     log.info("[NunaWeekly:pipeline] v%s (pkg %s) 생성 시작 · %s · dry=%s · 길이 %ds · 시장소스 %s",
              VERSION, PKG_VERSION, ctx.episode_id, ctx.dry, config.duration_sec(), config.market_source())
@@ -351,7 +362,9 @@ def run_gen(ctx: Ctx, only: str | None = None) -> int:
                               "us_days": [d.isoformat() for d in ctx.gate.us_days],
                               "duration_target_sec": config.duration_sec(), "pipeline_version": VERSION})
     if not ctx.gate.ok:
-        ctx.store.transition(ctx.episode_id, ["PLANNED"], "SKIPPED", {"skip_reason": ctx.gate.skip_reason})
+        # DN2026_0086: 일요일은 토요일 회차와 같은 ISO 주 — 실패한 토요일 회차(PLANNED)를 SKIPPED 로 닫지 않는다
+        if ctx.gate.skip_reason != calendar_gate.SKIP_WEEKEND:
+            ctx.store.transition(ctx.episode_id, ["PLANNED"], "SKIPPED", {"skip_reason": ctx.gate.skip_reason})
         log.info("[NunaWeekly:pipeline] 미발행 판정: %s", ctx.gate.skip_reason)
         _report(ctx, f"[NUNA] {ctx.episode_id} 미발행: {ctx.gate.skip_reason}")
         return 0
@@ -361,6 +374,13 @@ def run_gen(ctx: Ctx, only: str | None = None) -> int:
     if status in DONE_GEN or status in ("SKIPPED", "FAILED"):
         log.info("[NunaWeekly:pipeline] 이미 %s — 생성 단계 없음", status)
         return 0
+    if _version_tuple(ctx.episode().get("pipeline_version")) < FORMAT_MIN_VERSION:
+        # DN2026_0086: 구 형식(목요일·월~수·day 카드) 회차를 새 큐시트로 재개하면 원고와 카드가 어긋난다
+        msg = (f"구 형식 회차 재개 금지(pipeline_version {ctx.episode().get('pipeline_version')} < "
+               f"{'.'.join(map(str, FORMAT_MIN_VERSION))}) — 원장 종결 후 새로 생성")
+        log.error("[NunaWeekly:pipeline] ✖ %s", msg)
+        _report(ctx, f"[NUNA] {ctx.episode_id} {msg}")
+        return 1
     _check_fal_wait(_segs())
     if status in ("ASSEMBLED", "QC_PASSED"):
         assets = dict(ctx.episode().get("assets_json") or {})

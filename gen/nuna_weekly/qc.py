@@ -99,7 +99,7 @@ _LUFS_RE = re.compile(r"I:\s+(-?[0-9.]+) LUFS")
 
 def integrated_lufs(path: Path) -> float | None:
     """ebur128 통합 음량(LUFS). 측정 실패 시 None."""
-    r = subprocess.run(["ffmpeg", "-hide_banner", "-nostats", "-i", str(path), "-af", "ebur128",
+    r = subprocess.run(["ffmpeg", "-hide_banner", "-nostats", "-i", str(path), "-vn", "-af", "ebur128",
                         "-f", "null", "-"], capture_output=True, text=True)
     hits = _LUFS_RE.findall(r.stderr or "")
     return float(hits[-1]) if r.returncode == 0 and hits else None

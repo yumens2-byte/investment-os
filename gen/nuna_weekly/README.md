@@ -19,8 +19,13 @@ Zernio 예약 발행한다(DN2026_0086 — 이전 목요일·월~수). hero_shor
 
 - 연출: 이미지 구간마다 다른 움직임(줌인·좌우 이동·줌아웃), 조각 사이 0.4초 전환, 카드 아래→위 등장,
   상단 채널 로고·'주간' 배지·흐르는 시세 띠(facts 수치만), 카드 위 자막(발화 구간에 글자 수 비례 배치).
-- 내레이션 길이: 구간별 `chars_min`(상한의 85%) 이상 `chars_limit` 이하 — 무음 축소.
+- 내레이션 길이: 구간별 `chars_min`(상한의 70%) 이상 `chars_limit` 이하 — 무음 축소.
 - 음량: loudnorm -14 LUFS. QC JSON `measured.integrated_lufs`에 기록(게이트 아님).
+- 일요일 실행은 스킵하되 원장에 SKIPPED 를 남기지 않는다(같은 ISO 주 토요일 회차 재실행 보호).
+- 주의: 토요일 KST 에는 금요일분 `daily_news`·`daily_snapshots` 행이 없을 수 있다(main.yml morning 은 KST 월~금).
+  기본 시장 수집(direct)은 Yahoo 를 직접 읽어 영향이 없고, 금요일 뉴스·key_risk 가 빠질 수 있다.
+  `NUNA_MARKET_SOURCE=supabase` 는 금요일 행이 없으면 CollectError 로 멈춘다.
+- 구 형식(DN2026_0086 이전, 목요일·day 카드) 회차를 새 코드로 재개하지 않는다 — 원장 `pipeline_version` 1.3.0 미만은 종결 후 새로 생성.
 
 - 설계서: Notion「NUNA 주간 뉴스 쇼츠 — 상세설계서 (2026-10-19)」(Investment OS 허브 하위)
 - 원장: Supabase `nuna_*` 4테이블 (적용 완료, `sql/` 참조)

@@ -192,7 +192,7 @@ def test_weekend_skip(env):
     ctx = pipeline.Ctx(date(2026, 10, 25), False, store=store, backends=make_backends(True),
                        zernio_clients={}, telegram=_NoTelegram())  # 일요일 스킵(DN2026_0086)
     assert pipeline.run_gen(ctx) == 0
-    assert store.get_episode(ctx.episode_id)["status"] == "SKIPPED"
+    assert store.get_episode(ctx.episode_id)["status"] == "PLANNED"   # 원장에 SKIPPED 를 남기지 않음
 
 
 def test_budget_blocks_when_month_cap_reached(env, monkeypatch):
@@ -202,3 +202,27 @@ def test_budget_blocks_when_month_cap_reached(env, monkeypatch):
     assert pipeline.run_gen(ctx) == 1
     ep = store.get_episode(ctx.episode_id)
     assert "NUNA_BUDGET_EXCEEDED" in ep["last_error"]
+
+
+# --------------------------------------------------------------------------- #
+# DN2026_0086 R6-05 보완
+# --------------------------------------------------------------------------- #
+def test_sunday_rerun_keeps_saturday_episode_open(env):
+    store = db.MemoryStore(daily=_daily())
+    store.create_episode({"episode_id": "nuna-2026-W43", "publish_date": "2026-10-24", "us_days": [],
+                          "duration_target_sec": 60, "pipeline_version": pipeline.VERSION})
+    ctx = pipeline.Ctx(date(2026, 10, 25), False, store=store, backends=make_backends(True),
+                       zernio_clients={}, telegram=_NoTelegram())
+    assert pipeline.run_gen(ctx) == 0
+    assert store.get_episode("nuna-2026-W43")["status"] == "PLANNED"
+
+
+@pytest.mark.parametrize("version", ["1.2.0", None, "test"])
+def test_old_format_episode_is_not_resumed(env, version):
+    store = db.MemoryStore(daily=_daily())
+    store.create_episode({"episode_id": "nuna-2026-W43", "publish_date": "2026-10-22", "us_days": [],
+                          "duration_target_sec": 60, "pipeline_version": version})
+    store.episodes["nuna-2026-W43"]["status"] = "IMAGED"
+    ctx = _ctx(store, dry=False, tg=_NoTelegram())
+    assert pipeline.run_gen(ctx) == 1
+    assert store.get_episode("nuna-2026-W43")["status"] == "IMAGED"

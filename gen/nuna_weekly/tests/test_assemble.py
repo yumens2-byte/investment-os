@@ -170,3 +170,32 @@ def test_chart_bars_from_facts():
                     DayFacts("2026-10-28", sp500_chg=-0.28)])
     assert assemble.chart_bars(f) == [("월", 0.7), ("화", None), ("수", -0.28)]
     assert assemble.chart_bars(None) is None
+
+
+def test_full_60s_sheet_real_render(tmp_path):
+    """R6-05: 운영 큐시트(60초) 전체를 실제 연출 설정으로 1회 렌더 — 움직임 패턴·카드 종류·S8 면책 띠 배경."""
+    from gen.nuna_weekly.config import segments as sheet
+    from gen.nuna_weekly.models import DayFacts, Facts
+
+    segs = sheet(60)
+    src = tmp_path / "src"
+    src.mkdir()
+    img = src / "bg.png"
+    Image.new("RGB", (720, 1280), (30, 60, 120)).save(img)
+    images = {s.seg_id: Asset("image", f"img_{s.seg_id}", str(img)) for s in segs if s.visual == "image_card"}
+    clips = {s: Asset("clip", f"clip_{s}", str(_clip(src / f"{s}.mp4", 5.0))) for s in ("S1", "S8")}
+    audio = {s.seg_id: Asset("audio", f"tts_{s.seg_id}", str(_wav(src / f"{s.seg_id}.wav", s.seconds * 0.7)))
+             for s in segs}
+    cards = {"breaking": ("이번 주 핵심", ["S&P500 +1.58%"]), "week": ("주간 성적", ["S&P500 +1.58%"]),
+             "chart": ("월~금 흐름", ["화요일 상승폭 최대"]), "issue": ("왜 움직였나", ["기술주 강세"]),
+             "risk": ("리스크 점검", ["공포탐욕 51"])}
+    script = Script(episode_id="t", title="t", captions={}, segments=[
+        ScriptSegment(s.seg_id, s.seconds, "이번 주 흐름을 정리합니다, 다음 구간입니다.", *cards.get(s.card, ("", [])))
+        for s in segs])
+    facts = Facts(episode_id="t", source="direct", fetched_at="", week_sp500_chg=1.58, fear_greed=51,
+                  days=[DayFacts(f"2026-10-{26 + i}", sp500_chg=v) for i, v in enumerate((0.7, -0.6, 0.28, 1.1, 0.0))])
+    p = build("main", segs, script, images, clips, audio, tmp_path / "out", facts=facts)
+    assert abs(float(_probe(p)["format"]["duration"]) - 60.0) <= 0.1
+    work = tmp_path / "out" / "_work_main"
+    assert (work / "band_S8.png").is_file() and (work / "S8_end.mp4").is_file()
+    assert {f"card_{s}.png" for s in ("S1", "S2", "S3", "S4", "S5", "S7")} <= {x.name for x in work.iterdir()}
