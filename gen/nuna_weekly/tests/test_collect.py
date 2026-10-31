@@ -67,7 +67,8 @@ def daily():
             {"news_date": "2026-10-20", "top_headlines": json.dumps(["  Fed  holds ", "Tech rally", "Fed holds"]),
              "top_issues": [{"topic": "Fed", "summary": "금리 동결"}, "유가"]},
             {"news_date": "2026-10-22", "top_headlines": ["Tech rally", "X" * 300, 5, "a", "b", "c", "d"],
-             "top_issues": None},
+             "top_issues": None, "key_risk": "  기술주   실적 부진 우려 "},
+            {"news_date": "2026-10-23", "top_headlines": [], "key_risk": None},
             {"news_date": "2026-10-25", "top_headlines": ["미래 헤드라인"]},
         ],
         "daily_analysis": [{"analysis_date": "2026-10-21", "regime": "Risk-On", "risk_level": "LOW"},
@@ -128,6 +129,7 @@ def test_direct_full():
     # 10-22 행은 상위 5개만(5 는 문자열 아님 → 제외): Tech rally(중복), X*300, a, b
     assert texts[2] == "X" * 200 and texts[-1] == "b"
     assert f.top_issues == ["Fed: 금리 동결", "유가"]
+    assert f.key_risk == "기술주 실적 부진 우려"   # DN2026_0086: 가장 최근 비어 있지 않은 행
     assert f.fetched_at.startswith("2026-10-24T06:00:00+09:00")
 
 

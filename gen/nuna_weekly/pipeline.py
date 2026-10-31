@@ -292,8 +292,10 @@ def _do_step(ctx: Ctx, step: str) -> dict[str, Any]:
             audio = {a.key: a for a in new_audio}
             assets_json["audio"] = _assets_dump(audio)
         videos = {}
+        facts = _facts(ep)   # DN2026_0086 월~금 그래프·시세 띠(facts 수치만)
         for v in _variants():
-            out = assemble.build(v, segs, sc, imgs, cl, _audio_by_seg(list(audio.values())), ctx.out)
+            out = assemble.build(v, segs, sc, imgs, cl, _audio_by_seg(list(audio.values())), ctx.out,
+                                 facts=facts)
             videos[v] = str(out)
         assets_json["videos"] = videos
         return {"assets_json": assets_json}

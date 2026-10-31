@@ -18,7 +18,7 @@ from typing import Any
 from .. import config, secret_env
 from . import LLMResult
 
-VERSION = "1.0.0"
+VERSION = "1.1.0"
 log = logging.getLogger("nuna_weekly.backends.llm")
 
 _FENCE_RE = re.compile(r"^\s*```[a-zA-Z]*\s*\n?|\n?\s*```\s*$")
@@ -129,6 +129,16 @@ def _fit(text: str, limit: int) -> str:
     return text if len(text) <= limit else text[:limit]
 
 
+_PAD = " 흐름을 차분히 정리합니다."
+
+
+def _pad(text: str, floor: int) -> str:
+    """DN2026_0086 하한 충족용 숫자 없는 문장 덧붙임."""
+    while len(text) < floor:
+        text += _PAD
+    return text
+
+
 def _md(iso: str) -> str:
     d = date.fromisoformat(iso)
     return f"{d.month}월 {d.day}일"
@@ -149,20 +159,33 @@ class DummyLLM:
 
     def _segment(self, seg: dict[str, Any], facts: dict[str, Any]) -> dict[str, Any]:
         limit = int(seg["chars_limit"])
+        floor = int(seg.get("chars_min") or 0)
         card = seg["card"]
         days = facts.get("days") or []
         title, lines = "", []
+        sp, nq = facts.get("week_sp500_chg"), facts.get("week_nasdaq_chg")
         if card == "none":
             narr = "아이언 누나입니다. 미국증시 요약입니다."
+        elif card == "breaking":   # DN2026_0086 첫 구간 = 핵심 한 줄(인사말 금지)
+            narr = (f"이번 주 S&P500 {_p(sp)}, 나스닥 {_p(nq)}." if sp is not None and nq is not None
+                    else "이번 주 미국증시 핵심입니다.")
+            title, lines = "이번 주 핵심", [f"S&P500 {_p(sp)}" if sp is not None else "주간 흐름"]
         elif card == "week":
-            sp, nq = facts.get("week_sp500_chg"), facts.get("week_nasdaq_chg")
             if sp is not None and nq is not None:
                 narr = f"이번 주 S&P500 {_p(sp)}, 나스닥 {_p(nq)} 누적입니다."
                 lines = [f"S&P500 누적 {_p(sp)}", f"나스닥 누적 {_p(nq)}"]
             else:
-                narr = "이번 주 월요일부터 수요일까지 흐름입니다."
-                lines = ["월~수 흐름 정리"]
+                narr = "이번 주 월요일부터 금요일까지 흐름입니다."
+                lines = ["월~금 흐름 정리"]
             title = "이번 주 요약"
+        elif card == "chart":
+            title, lines = "월~금 흐름", ["일별 등락 정리"]
+            narr = "월요일부터 금요일까지 일별 흐름을 그래프로 보겠습니다."
+        elif card == "issue":
+            issues = facts.get("top_issues") or []
+            topic = str(issues[0]) if issues else "주요 뉴스"
+            title, lines = "왜 움직였나", [_fit(topic, 18)]
+            narr = "이번 주 시장을 움직인 배경을 짚어 보겠습니다."
         elif card == "day":
             day = days[int(seg["day_index"])]
             wd = WEEKDAY_KO[int(seg["day_index"])]
@@ -186,7 +209,15 @@ class DummyLLM:
             lines = [f"공포탐욕 {fg}"] if fg is not None else ["심리 지표 점검"]
         else:  # disclaimer
             narr = "시청 감사합니다. " + config.DISCLAIMER
-        return {"seg_id": seg["seg_id"], "narration": _fit(narr, limit) if card != "disclaimer" else narr,
+        if card == "disclaimer":
+            for lead in ("브리핑을 마칩니다. 시청 감사합니다. ", "시청 감사합니다. ",
+                         "브리핑을 마칩니다. 다음 주에 뵙겠습니다. ", "다음 주에 뵙겠습니다. "):
+                narr = lead + config.DISCLAIMER
+                if floor <= len(narr) <= limit:
+                    break
+        else:
+            narr = _fit(_pad(narr, floor), limit)
+        return {"seg_id": seg["seg_id"], "narration": narr,
                 "card_title": title, "card_lines": lines,
                 "image_prompt": IMAGE_PROMPT if seg["visual"] in ("image", "image_card") else "",
                 "clip_prompt": CLIP_PROMPT if seg["visual"] == "clip" else ""}
@@ -195,7 +226,7 @@ class DummyLLM:
         facts = _between(user, "facts")
         segs = _between(user, "segments")
         title = "아이언 누나 주간 미국증시 브리핑"
-        caption = f"{title}\n월요일부터 수요일까지 미국증시를 정리했습니다.\n\n{config.DISCLAIMER}"
+        caption = f"{title}\n월요일부터 금요일까지 미국증시를 정리했습니다.\n\n{config.DISCLAIMER}"
         data = {"title": title, "hashtags": ["#미국증시", "#나스닥", "#아이언누나"],
                 "captions": {p: caption for p in config.PLATFORMS},
                 "segments": [self._segment(s, facts) for s in segs]}

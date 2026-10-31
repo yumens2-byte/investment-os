@@ -24,7 +24,7 @@ from . import config
 from .calendar_gate import week_candidates
 from .models import DayFacts, Facts, GateResult
 
-VERSION = "1.0.0"
+VERSION = "1.1.0"
 log = logging.getLogger("nuna_weekly.collect")
 
 # collectors/yahoo_finance.py::_fetch_with_requests 와 동일한 URL·헤더
@@ -248,6 +248,18 @@ def _issue_text(item: Any) -> str:
     return _clean(item) if item is not None else ""
 
 
+KEY_RISK_MAX = 200
+
+
+def _key_risk(rows: list[dict[str, Any]]) -> str | None:
+    """가장 최근 행의 key_risk(DN2026_0086). 문자열이 아니거나 비면 None."""
+    for row in reversed(rows):
+        t = _clean(row.get("key_risk")) if isinstance(row.get("key_risk"), str) else ""
+        if t:
+            return t[:KEY_RISK_MAX]
+    return None
+
+
 def _collect_news(gate: GateResult, store) -> tuple[list[dict[str, str]], list[str]]:
     dates = sorted({(d + timedelta(days=1)).isoformat() for d in gate.us_days} | {gate.publish_date.isoformat()})
     rows = sorted(store.select_by_dates("daily_news", "news_date", dates), key=lambda r: str(r.get("news_date")))
@@ -290,6 +302,10 @@ def build_facts(gate: GateResult, store, session=None, now_kst: datetime | None 
         _collect_supabase(gate, days, store)
 
     headlines, issues = _collect_news(gate, store)
+    news_dates = sorted({(d + timedelta(days=1)).isoformat() for d in gate.us_days}
+                        | {gate.publish_date.isoformat()})
+    key_risk = _key_risk(sorted(store.select_by_dates("daily_news", "news_date", news_dates),
+                                key=lambda r: str(r.get("news_date"))))
     pub = gate.publish_date.isoformat()
     analysis = store.latest_row("daily_analysis", "analysis_date", pub) or {}
     snap = store.latest_row("daily_snapshots", "snapshot_date", pub) or {}
@@ -306,7 +322,7 @@ def build_facts(gate: GateResult, store, session=None, now_kst: datetime | None 
         regime=analysis.get("regime"), risk_level=analysis.get("risk_level"),
         regime_date=str(analysis["analysis_date"]) if analysis.get("analysis_date") else None,
         fear_greed=fear_greed, fear_greed_label=snap.get("fear_greed_label"),
-        headlines=headlines, top_issues=issues, usdkrw=_num(snap.get("usdkrw")),
+        headlines=headlines, top_issues=issues, usdkrw=_num(snap.get("usdkrw")), key_risk=key_risk,
     )
     log.info("수집 완료: 모드 %s 거래일 %d 헤드라인 %d 이슈 %d 주간 S&P %s 나스닥 %s", mode, len(gate.us_days),
              len(headlines), len(issues), week_sp, week_nq)
