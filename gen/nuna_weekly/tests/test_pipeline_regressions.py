@@ -44,7 +44,7 @@ def _publish_ctx(monkeypatch, tmp_path, status):
     ctx = pipeline.Ctx(date(2099, 10, 22), False, store=store,
                        zernio_clients={a: DummyZernioClient(a) for a in ("main", "sub")})
     monkeypatch.setattr(ctx, "telegram", lambda: None)
-    store.create_episode({"episode_id": ctx.episode_id, "status": status,
+    store.create_episode({"episode_id": ctx.episode_id, "status": status, "pipeline_version": pipeline.VERSION,
                           "notified_at": "2099-10-22T06:50:00+09:00",
                           "script_json": Script(episode_id=ctx.episode_id, title="주간 브리핑", segments=[],
                               captions={p: config.DISCLAIMER for p in config.PLATFORMS}).to_dict(),
