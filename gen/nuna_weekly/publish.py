@@ -25,7 +25,7 @@ from . import config, policy, secret_env
 from .models import Script, TargetResult
 from .zernio import decompose
 
-VERSION = "1.0.0"
+VERSION = "1.1.0"  # 1.1.0 (2026-10-31, DN2026_0084) 읽기 전용 계정 진단 account_report
 log = logging.getLogger("nuna_weekly.publish")
 
 DONE_STATES = ("scheduled", "published")
@@ -148,6 +148,62 @@ def build_body(media_url: str, entries: list[dict[str, Any]], title: str, schedu
 
 def accounts_from_env() -> dict[str, str]:
     return {p: secret_env.require(config.ACCOUNT_ENV[p]) for p in config.PLATFORMS}
+
+
+# --------------------------------------------------------------------------- #
+# 계정 진단 (DN2026_0084) — 읽기 전용. 키(main/sub)별 /accounts/health 에서
+#   플랫폼 계정 수와 설정 계정 ID(NUNA_*_ACCOUNT_ID)가 어느 키에 있는지 판정한다. ID 값은 반환하지 않는다.
+# --------------------------------------------------------------------------- #
+def _row_ids(row: dict[str, Any]) -> set[str]:
+    return {str(row.get(k)) for k in ("accountId", "_id", "id") if row.get(k) not in (None, "")}
+
+
+def account_report(health_by_alias: dict[str, Any], accounts: dict[str, str]) -> list[dict[str, Any]]:
+    """platform 별 진단 행. health 가 None 이면 그 키는 조회 실패로 표시한다."""
+    out: list[dict[str, Any]] = []
+    for p in config.PLATFORMS:
+        acct = accounts.get(p) or ""
+        row: dict[str, Any] = {"platform": p, "mapped_alias": config.KEY_ALIAS[p], "account_set": bool(acct),
+                               "per_alias": {}, "found_in": []}
+        for alias in sorted(health_by_alias):
+            health = health_by_alias[alias]
+            rows = health.get("accounts") if isinstance(health, dict) else None
+            if not isinstance(rows, list):
+                row["per_alias"][alias] = {"ok": False}
+                continue
+            cands = [a for a in rows if isinstance(a, dict) and str(a.get("platform", "")).lower() == p]
+            match = [a for a in rows if isinstance(a, dict) and acct and acct in _row_ids(a)]
+            info: dict[str, Any] = {"ok": True, "platform_accounts": len(cands), "id_match": bool(match)}
+            if match:
+                m = match[0]
+                info.update({"match_platform": str(m.get("platform", "")).lower(),
+                             "canPost": m.get("canPost"), "needsReconnect": m.get("needsReconnect")})
+                row["found_in"].append(alias)
+            row["per_alias"][alias] = info
+        row["mapping_ok"] = row["mapped_alias"] in row["found_in"]
+        out.append(row)
+    return out
+
+
+def account_report_lines(report: list[dict[str, Any]]) -> list[str]:
+    """GitHub annotation 한 줄씩 (계정 ID 미포함)."""
+    lines = []
+    for r in report:
+        parts = []
+        for alias, info in r["per_alias"].items():
+            if not info.get("ok"):
+                parts.append(f"{alias}=조회실패")
+                continue
+            s = f"{alias}: {r['platform']}계정 {info['platform_accounts']}건·설정ID {'있음' if info['id_match'] else '없음'}"
+            if info["id_match"]:
+                s += (f"(platform={info.get('match_platform')}, canPost={info.get('canPost')}, "
+                      f"needsReconnect={info.get('needsReconnect')})")
+            parts.append(s)
+        verdict = "OK" if r["mapping_ok"] else ("ID 미설정" if not r["account_set"] else
+                                               (f"매핑 불일치 → {','.join(r['found_in'])}" if r["found_in"]
+                                                else "어느 키에도 없음"))
+        lines.append(f"[{r['platform']}] 코드 매핑={r['mapped_alias']} · 판정={verdict} · " + " / ".join(parts))
+    return lines
 
 
 # --------------------------------------------------------------------------- #
