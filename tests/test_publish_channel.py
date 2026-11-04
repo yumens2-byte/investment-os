@@ -51,7 +51,8 @@ class Harness:
     """run_view.run 이 호출하는 외부 경계를 전부 mock 한다."""
 
     def __init__(self, tmp_path, *, face_enabled=False, duplicate=False,
-                 fb_status="ok", x_success=True, fb_raises=False, data=None):
+                 fb_status="ok", x_success=True, fb_raises=False, data=None,
+                 earnings_enabled=False):
         self.tmp_path = tmp_path
         self.face_enabled = face_enabled
         self.duplicate = duplicate
@@ -59,6 +60,7 @@ class Harness:
         self.x_success = x_success
         self.fb_raises = fb_raises
         self.data = data if data is not None else dict(SAMPLE_DATA)
+        self.earnings_enabled = earnings_enabled
         self.m = {}
 
     def __enter__(self):
@@ -106,6 +108,7 @@ class Harness:
         st.enter_context(patch.object(run_view, "FACE_ENABLED", self.face_enabled))
         st.enter_context(patch.object(run_view, "FACE_SESSIONS", ("morning", "narrative", "full")))
         st.enter_context(patch.object(run_view, "DRY_RUN", False))
+        st.enter_context(patch.object(run_view, "MORNING_EARNINGS_ENABLED", self.earnings_enabled))
         return self
 
     def __exit__(self, *exc):
@@ -178,7 +181,8 @@ def test_channel_x_only_x(tmp_path):
 
 
 def test_channel_x_big_tech_tweets_only_x(tmp_path):
-    with Harness(tmp_path) as h, \
+    # DN2026_0095: 스위치 활성 시 기존 동작(v1.32.0) 그대로
+    with Harness(tmp_path, earnings_enabled=True) as h, \
          patch("engines.earnings_checker.get_today_earnings",
                return_value={"success": True, "big_tech": ["NVDA"]}), \
          patch("engines.stock_analyzer.analyze_big_tech_earnings",
@@ -186,6 +190,97 @@ def test_channel_x_big_tech_tweets_only_x(tmp_path):
         run_view.run(mode="tweet", session="morning", channel="x")
     assert h.m["publish_tweet"].call_count == 1          # C-17 X 트윗
     assert h.tg_calls() == 0
+
+
+# ── DN2026_0095 morning 실적 경로 스위치 ─────────────────────
+_BIG_TECH = {"success": True, "big_tech": ["NVDA"], "tg_line": "📅 실적: NVDA(AMC)",
+             "earnings": ["NVDA(AMC)"]}
+_C17 = [{"success": True, "tweet": "NVDA 실적", "tg_text": "NVDA 실적 TG", "ticker": "NVDA"}]
+
+
+@pytest.mark.parametrize("channel", ["all", "x"])
+def test_morning_earnings_disabled_by_default(tmp_path, channel):
+    """기본(비활성): 실적 목록 조회·C-17 생성·발행이 일어나지 않는다."""
+    with Harness(tmp_path) as h, \
+         patch("engines.earnings_checker.get_today_earnings", return_value=_BIG_TECH) as ge, \
+         patch("engines.stock_analyzer.analyze_big_tech_earnings", return_value=_C17) as ab:
+        res = run_view.run(mode="tweet", session="morning", channel=channel)
+    assert res["success"] is True
+    ge.assert_not_called()
+    ab.assert_not_called()
+    assert [c for c in h.m["publish_tweet"].call_args_list if c.args and c.args[0] == "NVDA 실적"] == []
+    sent = [c.args[0] for c in h.m["send_message"].call_args_list if c.args]
+    assert "📅 실적: NVDA(AMC)" not in sent and "NVDA 실적 TG" not in sent
+
+
+def test_morning_disabled_keeps_main_outputs_identical(tmp_path):
+    """레이아웃 불변(실적 없음 조건): 스위치 비활성/활성 두 경우 X·TG·다국어·FB 호출 인자가 동일.
+
+    하네스 기본값은 get_today_earnings 실패 → 활성이어도 실적 출력이 없다.
+    즉 이 테스트는 스위치 판별이 아니라 '스위치 도입이 기존 출력을 바꾸지 않음'을 검증한다.
+    """
+    calls = {}
+    for enabled in (False, True):
+        sub = tmp_path / str(enabled)
+        sub.mkdir()
+        with Harness(sub, face_enabled=True, earnings_enabled=enabled) as h:
+            run_view.run(mode="tweet", session="morning", channel="all")
+        calls[enabled] = (
+            # 이미지 경로는 테스트 임시 폴더라 제외, 본문 텍스트만 비교
+            [c.args[0] for c in h.m["publish_tweet_with_image"].call_args_list],
+            [c.args for c in h.m["publish_thread"].call_args_list],
+            [c.args for c in h.m["send_message"].call_args_list],
+            h.m["send_photo"].call_count,
+            h.m["send_document"].call_count,
+            [c.args for c in h.m["publish_multilingual"].call_args_list],
+            [c.args[0] for c in h.m["publish_page_post"].call_args_list],
+        )
+    assert calls[False] == calls[True]
+
+
+@pytest.mark.parametrize("session", ["intraday", "close"])
+@pytest.mark.parametrize("enabled", [False, True])
+def test_non_morning_sessions_never_call_earnings(tmp_path, session, enabled):
+    """morning 외 세션은 스위치와 무관하게 실적 경로를 타지 않는다(기존 동작 동일)."""
+    with Harness(tmp_path, earnings_enabled=enabled), \
+         patch("engines.earnings_checker.get_today_earnings", return_value=_BIG_TECH) as ge, \
+         patch("engines.stock_analyzer.analyze_big_tech_earnings", return_value=_C17) as ab:
+        run_view.run(mode="tweet", session=session, channel="all")
+    ge.assert_not_called()
+    ab.assert_not_called()
+
+
+def test_morning_earnings_enabled_all_publishes_x_and_tg(tmp_path):
+    with Harness(tmp_path, earnings_enabled=True) as h, \
+         patch("engines.earnings_checker.get_today_earnings", return_value=_BIG_TECH), \
+         patch("engines.stock_analyzer.analyze_big_tech_earnings", return_value=_C17):
+        run_view.run(mode="tweet", session="morning", channel="all")
+    assert len([c for c in h.m["publish_tweet"].call_args_list if c.args and c.args[0] == "NVDA 실적"]) == 1
+    sent = [c.args[0] for c in h.m["send_message"].call_args_list if c.args]
+    assert "📅 실적: NVDA(AMC)" in sent and "NVDA 실적 TG" in sent
+
+
+@pytest.mark.parametrize("raw,expected", [
+    (None, False), ("", False), ("false", False), ("1", False), ("yes", False),
+    ("true", True), ("TRUE", True), (" true ", True),
+])
+def test_morning_earnings_flag_parsing(raw, expected):
+    import os
+    import subprocess
+    env = {k: v for k, v in os.environ.items() if k != "MORNING_EARNINGS_ENABLED"}
+    if raw is not None:
+        env["MORNING_EARNINGS_ENABLED"] = raw
+    # 로컬 .env(load_dotenv) 영향 차단 — dotenv 를 무동작 스텁으로 대체해 env 값만으로 판정
+    code = (
+        "import sys, types; m = types.ModuleType('dotenv'); "
+        "m.load_dotenv = lambda *a, **k: False; sys.modules['dotenv'] = m; "
+        "from config.settings import MORNING_EARNINGS_ENABLED as v; print(v)"
+    )
+    out = subprocess.run(
+        [sys.executable, "-c", code],
+        cwd=ROOT, env=env, capture_output=True, text=True, check=True,
+    ).stdout.strip().splitlines()[-1]
+    assert out == str(expected)
 
 
 def test_channel_face_only_fb_even_when_disabled(tmp_path):
@@ -339,6 +434,7 @@ def test_workflow_channel_input_and_env():
     assert env["FACE_PAGE_TOKEN"] == "${{ secrets.FACE_PAGE_TOKEN }}"
     assert env["FACE_ENABLED"] == "${{ vars.FACE_ENABLED || 'false' }}"
     assert env["FACE_SESSIONS"] == "${{ vars.FACE_SESSIONS || 'morning,narrative,full' }}"
+    assert env["MORNING_EARNINGS_ENABLED"] == "${{ vars.MORNING_EARNINGS_ENABLED || 'false' }}"  # DN2026_0095
 
 
 @pytest.mark.parametrize("job", ["morning", "full_dashboard", "narrative"])

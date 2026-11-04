@@ -57,6 +57,11 @@ v1.32.0 (2026-10-05) — FB-1 Facebook 채널 추가 + 발행 채널 선택:
     - Step 7  X 이력 기록     : x 허용 시에만
   [success 기준] all/x = X 발행 결과(기존과 동일) / face = FB 게시 결과
   [불변] channel=all 의 X·TG 발행 순서·내용·조건은 v1.31.0 과 동일.
+
+v1.33.0 (2026-11-04) — DN2026_0095 morning 실적 경로 기본 비활성:
+  - Step 6-TG D-3·C-17 / Step 6-X2 는 MORNING_EARNINGS_ENABLED=true 일 때만 수행
+  - 비활성 시 get_today_earnings·analyze_big_tech_earnings 미호출(LLM 호출 0)
+  - [불변] 본 트윗·TG free·다국어·FB 의 출력 레이아웃·순서·조건은 v1.32.0 과 동일
 """
 import argparse
 import logging
@@ -67,6 +72,7 @@ from config.settings import (
     LOG_LEVEL, DRY_RUN,
     PUBLISH_CHANNEL, PUBLISH_CHANNEL_ALLOWED, channel_allows,
     FACE_ENABLED, FACE_SESSIONS,
+    MORNING_EARNINGS_ENABLED,  # DN2026_0095
 )
 
 logging.basicConfig(
@@ -76,7 +82,7 @@ logging.basicConfig(
 )
 logger = logging.getLogger("run_view")
 
-VERSION = "1.32.0"
+VERSION = "1.33.0"
 
 
 def _resolve_session_type(data: dict, session: str | None) -> str:
@@ -259,6 +265,7 @@ def run(mode: str = "tweet", session: str = None, channel: str | None = None) ->
     logger.info(f"{'='*50}")
     logger.info(
         f"[run_view] v{VERSION} 시작 — mode={mode} | channel={channel} | DRY_RUN={DRY_RUN}"
+        f" | MORNING_EARNINGS={MORNING_EARNINGS_ENABLED}"  # DN2026_0095
     )
     logger.info(f"{'='*50}")
 
@@ -661,7 +668,13 @@ def run(mode: str = "tweet", session: str = None, channel: str | None = None) ->
                 free_text = format_free_signal(data, session=session_type)
                 send_message(free_text, channel="free")
 
-                if session_type == "morning":
+                # DN2026_0095: 실적 경로(D-3·C-17)는 스위치가 켜진 경우에만 수행
+                if session_type == "morning" and not MORNING_EARNINGS_ENABLED:
+                    logger.info(
+                        "[Step 6-TG] D-3·C-17 실적 경로 비활성 "
+                        "(MORNING_EARNINGS_ENABLED=false, DN2026_0095)"
+                    )
+                elif session_type == "morning":
                     earnings = {}
                     try:
                         from engines.earnings_checker import get_today_earnings
@@ -706,7 +719,14 @@ def run(mode: str = "tweet", session: str = None, channel: str | None = None) ->
         logger.info(f"[Step 6-TG] channel={channel} — 텔레그램·다국어 발행 생략")
         # channel=x: TG 블록 내부의 C-17 빅테크 실적 X 트윗만 별도 수행
         if channel == "x" and session_type == "morning":
-            _publish_big_tech_x_only()
+            # DN2026_0095: 스위치가 꺼져 있으면 C-17 X 전용 경로도 수행하지 않는다
+            if MORNING_EARNINGS_ENABLED:
+                _publish_big_tech_x_only()
+            else:
+                logger.info(
+                    "[Step 6-X2] C-17 실적 경로 비활성 "
+                    "(MORNING_EARNINGS_ENABLED=false, DN2026_0095)"
+                )
 
     # ── Step 6-FB: Facebook 페이지 게시 (v1.32.0, FB-1) ─────────
     #   X·TG 이후 독립 실행. 실패·예외는 X·TG 결과와 종료코드에 영향 없음(all/x 기준).

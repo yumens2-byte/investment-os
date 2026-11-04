@@ -1,11 +1,13 @@
 """
-Investment OS — Settings (v1.7.0)
+Investment OS — Settings (v1.8.0)
 모든 상수와 설정을 중앙 관리한다.
 v1.5.0 변경: Reddit(유료화) 제거 → 다중 RSS 소스로 대체
 v1.6.0 변경 (2026-10-05, FB-1): 발행 채널 선택(PUBLISH_CHANNEL·channel_allows) +
        Facebook 페이지 발행 설정(FACE_*) 추가
 v1.7.0 변경 (2026-10-21, DN2026_0022): DRY_RUN 단일 파서(parse_dry_run·is_dry_run, STD-MODE-06).
        빈 값·자리표시자는 dry_run, 'false'일 때만 실발행, 그 외 값은 dry_run + WARNING
+v1.8.0 변경 (2026-11-04, DN2026_0095): MORNING_EARNINGS_ENABLED 신설(기본 false) —
+       morning 실적 경로(D-3·C-17) 근거 데이터 미검증으로 기본 비활성. SYSTEM_VERSION 유지
 """
 import logging
 import os
@@ -530,6 +532,13 @@ FACE_PHOTO_MAX_BYTES  = 10 * 1024 * 1024
 FACE_HTTP_TIMEOUT_SEC = 60
 FB_HISTORY_FILE       = PUBLISHED_DIR / "fb_history.json"
 FB_HISTORY_MAX        = 200
+
+# ── Morning 실적 경로 스위치 (DN2026_0095, 2026-11-04) ──────
+# D-3(TG 실적 한 줄)·C-17(빅테크 실적 X+TG, channel=x 전용 포함) 발행 여부.
+#   실적 목록이 grounding 없는 LLM 생성이고(engines/earnings_checker.py),
+#   C-17 요약은 EPS·매출 실측값 없이 생성되므로(engines/stock_analyzer.py)
+#   검증된 소스가 붙기 전까지 기본 비활성. 'true'일 때만 활성(빈 값·미설정·그 외 = false).
+MORNING_EARNINGS_ENABLED = os.getenv("MORNING_EARNINGS_ENABLED", "false").strip().lower() == "true"
 
 # 세션별 영문 표시명
 SESSION_LABELS = {

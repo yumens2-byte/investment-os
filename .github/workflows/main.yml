@@ -208,6 +208,8 @@ env:
   FACE_PAGE_TOKEN: ${{ secrets.FACE_PAGE_TOKEN }}
   FACE_ENABLED: ${{ vars.FACE_ENABLED || 'false' }}
   FACE_SESSIONS: ${{ vars.FACE_SESSIONS || 'morning,narrative,full' }}
+  # DN2026_0095 (2026-11-04): morning 실적 경로(D-3·C-17) 스위치. 미설정 = 비활성.
+  MORNING_EARNINGS_ENABLED: ${{ vars.MORNING_EARNINGS_ENABLED || 'false' }}
 
 jobs:
 
