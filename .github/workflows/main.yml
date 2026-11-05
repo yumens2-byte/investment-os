@@ -233,8 +233,9 @@ jobs:
         env:
           DRY_RUN: "true"
           LOG_LEVEL: WARNING
+      # DN2026_0101 (2026-11-06): C-16 유튜버 RSS 수집 관측 테스트(test_youtube_rss) 추가
       - name: Daily store and pipeline boundary tests
-        run: python -m pytest -q tests/test_daily_store_contract.py tests/test_daily_query_mixed_json.py tests/test_market_holiday_timezone.py tests/test_duplicate_checker_scope.py tests/test_external_publish_preview.py tests/test_facebook_publisher.py tests/test_publish_channel.py tests/test_fg_display.py tests/test_streamer_fact_guard.py
+        run: python -m pytest -q tests/test_daily_store_contract.py tests/test_daily_query_mixed_json.py tests/test_market_holiday_timezone.py tests/test_duplicate_checker_scope.py tests/test_external_publish_preview.py tests/test_facebook_publisher.py tests/test_publish_channel.py tests/test_fg_display.py tests/test_streamer_fact_guard.py tests/test_youtube_rss.py
         env:
           DRY_RUN: "true"
           FORCE_RUN: "false"
