@@ -46,6 +46,10 @@ v1.8.2 (2026-10-05) — F3 유튜버 요약 사실 정합성 가드
   - streamer_consensus 주입 직후 engines/streamer_fact_guard.apply() 적용.
     실제 지표와 반대되는 bullet 줄만 삭제, 정합 줄 0개면 tweet="" (Step 6-YT 미발행).
   - 가드 예외 시 tweet="" (검증 안 된 요약 미발행).
+
+v1.8.3 (2026-11-06) — DN2026_0101 Step 1-YT 로그 사유 분리(STD-PROC-15)
+  - 수집 0건을 「전 채널 수집 실패(all_channels_failed)」·「최근 영상 없음」·「수집 불가(설정·환경)」로 나눠 기록.
+    youtube_rss v1.1.0 의 error·stats 를 그대로 출력. 분기·발행 동작은 불변.
 """
 import argparse
 import logging
@@ -61,7 +65,7 @@ logging.basicConfig(
 )
 logger = logging.getLogger("run_market")
 
-VERSION = "1.8.2"
+VERSION = "1.8.3"
 
 
 def _detect_session() -> str:
@@ -263,8 +267,16 @@ def run(session: str) -> dict:
                 )
             else:
                 logger.info("[Step 1-YT] 유튜버 요약 스킵")
+        elif yt_data.get("error") == "all_channels_failed":
+            # DN2026_0101: RSS 응답 실패와 영상 부재를 다른 문구로 기록(STD-PROC-15)
+            logger.warning(
+                f"[Step 1-YT] RSS 수집 실패(전 채널) → 스킵 | stats={yt_data.get('stats')}"
+            )
+        elif yt_data.get("error") == "no_recent_videos":
+            logger.info(f"[Step 1-YT] 최근 영상 없음 → 스킵 | stats={yt_data.get('stats')}")
         else:
-            logger.info("[Step 1-YT] 최근 영상 없음 → 스킵")
+            # 설정·환경 문제(YOUTUBE_CHANNELS 미설정, feedparser 미설치 등)
+            logger.warning(f"[Step 1-YT] 수집 불가(설정·환경) → 스킵 | error={yt_data.get('error')}")
     except Exception as e:
         logger.warning(f"[Step 1-YT] 유튜버 요약 실패 (영향 없음): {e}")
       

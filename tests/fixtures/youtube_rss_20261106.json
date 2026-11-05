@@ -1,0 +1,320 @@
+{
+ "_source": "2026-11-06 실측 YouTube RSS 15개 채널의 최신 3개 발행 시각 분포(published 원값)와 설명란 유무를 보존. 채널 이름·ID·제목은 가명으로 대체(R6-03, 실제 Secret 내용 미포함)",
+ "channels": [
+  {
+   "name": "채널01",
+   "channel_id": "UC44646gtpu3MeJRUoLmEMM4",
+   "entries": [
+    {
+     "title": "채널01 영상 제목",
+     "published": "2026-11-05T12:42:09+00:00",
+     "description": "설명"
+    },
+    {
+     "title": "채널01 영상 제목",
+     "published": "2026-11-04T23:50:13+00:00",
+     "description": "설명"
+    },
+    {
+     "title": "채널01 영상 제목",
+     "published": "2026-11-04T23:14:06+00:00",
+     "description": "설명"
+    }
+   ]
+  },
+  {
+   "name": "채널02",
+   "channel_id": "UCZwV0a4nSrzUZKJyRWC4Dzt",
+   "entries": [
+    {
+     "title": "채널02 영상 제목",
+     "published": "2026-11-05T09:00:25+00:00",
+     "description": "설명"
+    },
+    {
+     "title": "채널02 영상 제목",
+     "published": "2026-11-04T09:00:26+00:00",
+     "description": "설명"
+    },
+    {
+     "title": "채널02 영상 제목",
+     "published": "2026-11-03T09:00:03+00:00",
+     "description": "설명"
+    }
+   ]
+  },
+  {
+   "name": "채널03",
+   "channel_id": "UCOIt6zozfaPvzkpUgzY0Mlj",
+   "entries": [
+    {
+     "title": "채널03 영상 제목",
+     "published": "2026-11-05T16:38:19+00:00",
+     "description": "설명"
+    },
+    {
+     "title": "채널03 영상 제목",
+     "published": "2026-11-05T01:45:46+00:00",
+     "description": "설명"
+    },
+    {
+     "title": "채널03 영상 제목",
+     "published": "2026-11-04T03:23:30+00:00",
+     "description": "설명"
+    }
+   ]
+  },
+  {
+   "name": "채널04",
+   "channel_id": "UCUGFYfRWfgGN1DzbQlpHByG",
+   "entries": [
+    {
+     "title": "채널04 영상 제목",
+     "published": "2026-11-05T07:27:36+00:00",
+     "description": ""
+    },
+    {
+     "title": "채널04 영상 제목",
+     "published": "2026-11-04T12:25:21+00:00",
+     "description": ""
+    },
+    {
+     "title": "채널04 영상 제목",
+     "published": "2026-11-03T11:17:34+00:00",
+     "description": ""
+    }
+   ]
+  },
+  {
+   "name": "채널05_stale",
+   "channel_id": "UCFK6EDathfm3kM4GP0S6NIn",
+   "entries": [
+    {
+     "title": "채널05_stale 영상 제목",
+     "published": "2026-11-03T11:53:59+00:00",
+     "description": "설명"
+    },
+    {
+     "title": "채널05_stale 영상 제목",
+     "published": "2026-11-02T11:36:15+00:00",
+     "description": "설명"
+    },
+    {
+     "title": "채널05_stale 영상 제목",
+     "published": "2026-10-30T09:33:21+00:00",
+     "description": "설명"
+    }
+   ]
+  },
+  {
+   "name": "채널06",
+   "channel_id": "UC5A1xoCgAU_u6adNVAzdxOs",
+   "entries": [
+    {
+     "title": "채널06 영상 제목",
+     "published": "2026-11-05T20:10:35+00:00",
+     "description": "설명"
+    },
+    {
+     "title": "채널06 영상 제목",
+     "published": "2026-11-05T10:30:30+00:00",
+     "description": "설명"
+    },
+    {
+     "title": "채널06 영상 제목",
+     "published": "2026-11-04T21:40:36+00:00",
+     "description": "설명"
+    }
+   ]
+  },
+  {
+   "name": "채널07",
+   "channel_id": "UCd5_XQ0DGRaaeqI7IoUj7F2",
+   "entries": [
+    {
+     "title": "채널07 영상 제목",
+     "published": "2026-11-05T09:15:17+00:00",
+     "description": "설명"
+    },
+    {
+     "title": "채널07 영상 제목",
+     "published": "2026-11-05T08:56:40+00:00",
+     "description": "설명"
+    },
+    {
+     "title": "채널07 영상 제목",
+     "published": "2026-11-05T08:28:38+00:00",
+     "description": "설명"
+    }
+   ]
+  },
+  {
+   "name": "채널08",
+   "channel_id": "UCd4b-lYVDZbjCob0ZkL-oYd",
+   "entries": [
+    {
+     "title": "채널08 영상 제목",
+     "published": "2026-11-05T06:00:14+00:00",
+     "description": "설명"
+    },
+    {
+     "title": "채널08 영상 제목",
+     "published": "2026-11-05T03:00:38+00:00",
+     "description": "설명"
+    },
+    {
+     "title": "채널08 영상 제목",
+     "published": "2026-11-05T00:09:54+00:00",
+     "description": "설명"
+    }
+   ]
+  },
+  {
+   "name": "채널09",
+   "channel_id": "UCiHnqiTVAQcRF_UGLYryTOY",
+   "entries": [
+    {
+     "title": "채널09 영상 제목",
+     "published": "2026-11-05T13:55:48+00:00",
+     "description": "설명"
+    },
+    {
+     "title": "채널09 영상 제목",
+     "published": "2026-11-02T12:08:56+00:00",
+     "description": "설명"
+    },
+    {
+     "title": "채널09 영상 제목",
+     "published": "2026-11-02T02:26:16+00:00",
+     "description": "설명"
+    }
+   ]
+  },
+  {
+   "name": "채널10",
+   "channel_id": "UCj1WQDy-tOksZZIsjDbgMjU",
+   "entries": [
+    {
+     "title": "채널10 영상 제목",
+     "published": "2026-11-05T13:58:27+00:00",
+     "description": "설명"
+    },
+    {
+     "title": "채널10 영상 제목",
+     "published": "2026-11-05T12:30:02+00:00",
+     "description": "설명"
+    },
+    {
+     "title": "채널10 영상 제목",
+     "published": "2026-11-05T08:00:15+00:00",
+     "description": "설명"
+    }
+   ]
+  },
+  {
+   "name": "채널11",
+   "channel_id": "UCq7X-W8_7KOzezjhw9sQLU1",
+   "entries": [
+    {
+     "title": "채널11 영상 제목",
+     "published": "2026-11-05T12:00:31+00:00",
+     "description": "설명"
+    },
+    {
+     "title": "채널11 영상 제목",
+     "published": "2026-11-05T10:00:31+00:00",
+     "description": "설명"
+    },
+    {
+     "title": "채널11 영상 제목",
+     "published": "2026-11-04T12:00:36+00:00",
+     "description": "설명"
+    }
+   ]
+  },
+  {
+   "name": "채널12",
+   "channel_id": "UCvpsHViux_TNBATDigU2ksA",
+   "entries": [
+    {
+     "title": "채널12 영상 제목",
+     "published": "2026-11-05T12:15:39+00:00",
+     "description": "설명"
+    },
+    {
+     "title": "채널12 영상 제목",
+     "published": "2026-11-05T12:00:07+00:00",
+     "description": "설명"
+    },
+    {
+     "title": "채널12 영상 제목",
+     "published": "2026-11-05T11:30:12+00:00",
+     "description": "설명"
+    }
+   ]
+  },
+  {
+   "name": "채널13",
+   "channel_id": "UCMraLx2L-LHwBk6McOLyeJn",
+   "entries": [
+    {
+     "title": "채널13 영상 제목",
+     "published": "2026-11-05T07:00:02+00:00",
+     "description": "설명"
+    },
+    {
+     "title": "채널13 영상 제목",
+     "published": "2026-11-05T05:13:49+00:00",
+     "description": "설명"
+    },
+    {
+     "title": "채널13 영상 제목",
+     "published": "2026-11-05T01:30:05+00:00",
+     "description": "설명"
+    }
+   ]
+  },
+  {
+   "name": "채널14",
+   "channel_id": "UCMMIB3l6U5mdEL29l6n5tPa",
+   "entries": [
+    {
+     "title": "채널14 영상 제목",
+     "published": "2026-11-05T09:15:22+00:00",
+     "description": "설명"
+    },
+    {
+     "title": "채널14 영상 제목",
+     "published": "2026-11-04T08:58:38+00:00",
+     "description": "설명"
+    },
+    {
+     "title": "채널14 영상 제목",
+     "published": "2026-11-02T09:22:47+00:00",
+     "description": "설명"
+    }
+   ]
+  },
+  {
+   "name": "채널15",
+   "channel_id": "UC5vjOEfCdccA-pShQfzLI7m",
+   "entries": [
+    {
+     "title": "채널15 영상 제목",
+     "published": "2026-11-05T07:00:24+00:00",
+     "description": "설명"
+    },
+    {
+     "title": "채널15 영상 제목",
+     "published": "2026-11-04T07:00:17+00:00",
+     "description": "설명"
+    },
+    {
+     "title": "채널15 영상 제목",
+     "published": "2026-11-03T10:00:34+00:00",
+     "description": "설명"
+    }
+   ]
+  }
+ ]
+}
