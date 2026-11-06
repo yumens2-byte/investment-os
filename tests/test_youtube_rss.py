@@ -1,4 +1,5 @@
 """DN2026_0101 (2026-11-06): C-16 유튜버 RSS 수집 관측 강화 테스트.
+DN2026_0103 (2026-11-06): 실패 채널 재호출(최대 3회) 테스트 추가(R1~R6).
 
 외부 호출 없음(STD-TEST-14): feedparser.parse 를 가짜로 바꾸고, 문자열 XML 을 실제 feedparser 로 파싱한다.
 픽스처: tests/fixtures/youtube_rss_20261106.json — 11-06 실측 15개 채널의 발행 시각 분포(최신 3개, STD-CI-11).
@@ -79,7 +80,7 @@ def env(monkeypatch):
 
 
 def test_version_bumped():
-    assert yr.VERSION.startswith("1.1.")
+    assert yr.VERSION.startswith("1.2.")
 
 
 def test_ok_and_48h_filter(env):
@@ -148,7 +149,8 @@ def test_all_channels_failed_warns(env, capsys, caplog):
     r = yr.collect_youtube_summaries()
     assert r["success"] is False and r["error"] == yr.ERROR_ALL_FAILED
     assert r["stats"] == {"channels": 3, "ok": 0, "stale": 0, "empty_feed": 1,
-                          "http_error": 1, "parse_error": 0, "fetch_error": 1, "entry_error": 0}
+                          "http_error": 1, "parse_error": 0, "fetch_error": 1, "entry_error": 0,
+                          "attempts": 1, "recovered": 0}
     out = capsys.readouterr().out
     assert out.count("::warning title=YouTubeRSS::all_channels_failed") == 1
     assert "youtube.com" not in out and "UCa" not in out  # 공개 화면에 URL·ID 미노출
@@ -207,3 +209,101 @@ def test_entry_error_is_contained_per_channel(env, monkeypatch, caplog):
     assert [v["title"] for v in r["videos"]] == ["b"]
     assert r["stats"]["entry_error"] == 1 and r["stats"]["ok"] == 1
     assert "A: entry_error ValueError" in caplog.text
+
+
+# ── DN2026_0103: 실패 채널 재호출 ─────────────────────────────
+
+def _ok(name, cid, title="t"):
+    return _parsed(_atom(name, cid, [{"title": title, "published": "2026-11-05T00:00:00+00:00"}]))
+
+
+def _e404():
+    return _parsed("<html/>", status=404, ctype="text/html")
+
+
+@pytest.fixture
+def seq_env(monkeypatch):
+    """채널별 응답을 호출 순서대로 돌려주는 헬퍼. 대기는 기록만 하고 실제로 쉬지 않는다."""
+    monkeypatch.setattr(yr, "datetime", _FixedDT)
+    sleeps, calls = [], []
+    monkeypatch.setattr(yr, "_sleep", lambda s: sleeps.append(s))
+
+    def setup(channels: list, seqs: dict):
+        monkeypatch.setenv("YOUTUBE_CHANNELS", ",".join(f"{n}:{c}" for n, c in channels))
+        it = {cid: iter(v) for cid, v in seqs.items()}
+
+        def fake_parse(url, *a, **k):
+            cid = url[len(RSS_BASE):]
+            calls.append(cid)
+            return next(it[cid])
+
+        monkeypatch.setattr(feedparser, "parse", fake_parse)
+        return calls, sleeps
+
+    return setup
+
+
+def test_r1_recovered_on_second_attempt(seq_env, caplog):
+    calls, sleeps = seq_env([("A", "UCa")], {"UCa": [_e404(), _ok("A", "UCa")]})
+    caplog.set_level("INFO")
+    r = yr.collect_youtube_summaries(max_attempts=3)
+    assert r["success"] is True and r["total"] == 1 and r["error"] is None
+    assert r["stats"]["ok"] == 1 and r["stats"]["http_error"] == 0
+    assert r["stats"]["attempts"] == 2 and r["stats"]["recovered"] == 1
+    assert calls == ["UCa", "UCa"] and sleeps == [30]
+    assert "A: http_error status=404" in caplog.text and "attempt=1" in caplog.text
+    assert "A: ok n=1 attempt=2" in caplog.text
+    assert "재시도 2/3 — 대상 1채널 (30s 대기)" in caplog.text
+
+
+def test_r2_all_three_attempts_fail(seq_env, capsys):
+    calls, sleeps = seq_env([("A", "UCa"), ("B", "UCb")],
+                            {"UCa": [_e404()] * 3, "UCb": [_e404()] * 3})
+    r = yr.collect_youtube_summaries(max_attempts=3)
+    assert r["error"] == yr.ERROR_ALL_FAILED and r["success"] is False
+    assert r["stats"]["http_error"] == 2 and r["stats"]["attempts"] == 3
+    assert r["stats"]["recovered"] == 0
+    assert len(calls) == 6 and sleeps == [30, 60]
+    assert capsys.readouterr().out.count("::warning title=YouTubeRSS::all_channels_failed") == 1
+
+
+def test_r3_only_failed_channels_are_retried(seq_env):
+    stale = _parsed(_atom("S", "UCs", [{"title": "old", "published": "2026-11-01T00:00:00+00:00"}]))
+    calls, sleeps = seq_env(
+        [("S", "UCs"), ("F", "UCf"), ("O", "UCo")],
+        {"UCs": [stale], "UCf": [_e404(), _e404(), _ok("F", "UCf", "f")], "UCo": [_ok("O", "UCo", "o")]},
+    )
+    r = yr.collect_youtube_summaries(max_attempts=3)
+    assert calls == ["UCs", "UCf", "UCo", "UCf", "UCf"]
+    assert sleeps == [30, 60]
+    assert r["stats"]["stale"] == 1 and r["stats"]["ok"] == 2 and r["stats"]["recovered"] == 1
+    assert [v["title"] for v in r["videos"]] == ["f", "o"]  # 채널 등록 순서 유지
+
+
+def test_r4_no_retry_when_all_ok(seq_env):
+    calls, sleeps = seq_env([("A", "UCa")], {"UCa": [_ok("A", "UCa")]})
+    r = yr.collect_youtube_summaries(max_attempts=3)
+    assert calls == ["UCa"] and sleeps == []
+    assert r["stats"]["attempts"] == 1 and r["stats"]["recovered"] == 0
+
+
+def test_r5_default_is_single_attempt(seq_env, caplog):
+    calls, sleeps = seq_env([("A", "UCa")], {"UCa": [_e404(), _ok("A", "UCa")]})
+    caplog.set_level("INFO")
+    r = yr.collect_youtube_summaries()
+    assert calls == ["UCa"] and sleeps == []
+    assert r["error"] == yr.ERROR_ALL_FAILED and r["stats"]["attempts"] == 1
+    assert "attempt=" not in caplog.text  # 기본 경로 로그 문구는 v1.1.0 과 동일
+
+
+def test_r5b_invalid_max_attempts_falls_back_to_one(seq_env):
+    calls, _ = seq_env([("A", "UCa")], {"UCa": [_e404(), _ok("A", "UCa")]})
+    r = yr.collect_youtube_summaries(max_attempts="x")
+    assert calls == ["UCa"] and r["stats"]["attempts"] == 1
+
+
+def test_r6_run_market_passes_three_only_for_morning():
+    src = (Path(__file__).resolve().parents[1] / "run_market.py").read_text(encoding="utf-8")
+    assert 'YT_RSS_MAX_ATTEMPTS_MORNING = 3' in src
+    assert 'yt_attempts = YT_RSS_MAX_ATTEMPTS_MORNING if session == "morning" else 1' in src
+    assert "collect_youtube_summaries(max_attempts=yt_attempts)" in src
