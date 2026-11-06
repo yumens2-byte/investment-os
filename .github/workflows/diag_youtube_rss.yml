@@ -1,0 +1,18 @@
+# 임시 진단 워크플로(diag/** 브랜치 push 전용, main 미반영). 읽기 전용.
+name: diag-youtube-rss
+on:
+  push:
+    branches: ["diag/**"]
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - run: pip install -q feedparser==6.0.11
+      - run: python tools/diag/youtube_rss_probe.py
+        env:
+          YOUTUBE_CHANNELS: ${{ secrets.YOUTUBE_CHANNELS }}
