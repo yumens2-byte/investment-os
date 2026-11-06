@@ -50,6 +50,10 @@ v1.8.2 (2026-10-05) — F3 유튜버 요약 사실 정합성 가드
 v1.8.3 (2026-11-06) — DN2026_0101 Step 1-YT 로그 사유 분리(STD-PROC-15)
   - 수집 0건을 「전 채널 수집 실패(all_channels_failed)」·「최근 영상 없음」·「수집 불가(설정·환경)」로 나눠 기록.
     youtube_rss v1.1.0 의 error·stats 를 그대로 출력. 분기·발행 동작은 불변.
+
+v1.8.4 (2026-11-06) — DN2026_0103 Step 1-YT RSS 실패 채널 재호출
+  - session == "morning" 일 때만 collect_youtube_summaries(max_attempts=3).
+    그 외 세션(narrative·full_dashboard 등)은 1회(기존 동작, 실행 시간 불변).
 """
 import argparse
 import logging
@@ -65,7 +69,10 @@ logging.basicConfig(
 )
 logger = logging.getLogger("run_market")
 
-VERSION = "1.8.3"
+VERSION = "1.8.4"
+
+# DN2026_0103: morning Step 1-YT RSS 실패 채널 최대 호출 횟수
+YT_RSS_MAX_ATTEMPTS_MORNING = 3
 
 
 def _detect_session() -> str:
@@ -256,7 +263,9 @@ def run(session: str) -> dict:
     try:
         from collectors.youtube_rss import collect_youtube_summaries
         from engines.streamer_analyzer import analyze_streamer_content
-        yt_data = collect_youtube_summaries()
+        # DN2026_0103: 요약 트윗을 발행하는 morning 만 실패 채널 최대 3회 호출
+        yt_attempts = YT_RSS_MAX_ATTEMPTS_MORNING if session == "morning" else 1
+        yt_data = collect_youtube_summaries(max_attempts=yt_attempts)
         if yt_data.get("success") and yt_data.get("videos"):
             streamer_result = analyze_streamer_content(yt_data["videos"])
             if streamer_result.get("success"):
