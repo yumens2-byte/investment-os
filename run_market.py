@@ -54,6 +54,8 @@ v1.8.3 (2026-11-06) — DN2026_0101 Step 1-YT 로그 사유 분리(STD-PROC-15)
 v1.8.4 (2026-11-06) — DN2026_0103 Step 1-YT RSS 실패 채널 재호출
   - session == "morning" 일 때만 collect_youtube_summaries(max_attempts=3).
     그 외 세션(narrative·full_dashboard 등)은 1회(기존 동작, 실행 시간 불변).
+
+v1.8.5 (2026-11-06) — DN2026_0105 morning 재호출 5회(최초 1 + 재시도 5 = 최대 6회 호출)
 """
 import argparse
 import logging
@@ -69,10 +71,11 @@ logging.basicConfig(
 )
 logger = logging.getLogger("run_market")
 
-VERSION = "1.8.4"
+VERSION = "1.8.5"
 
 # DN2026_0103: morning Step 1-YT RSS 실패 채널 최대 호출 횟수
-YT_RSS_MAX_ATTEMPTS_MORNING = 3
+# DN2026_0105: 최초 1회 + 재시도 5회 = 6 (재시도 간격 60초, youtube_rss.RETRY_DELAYS_SEC)
+YT_RSS_MAX_ATTEMPTS_MORNING = 6
 
 
 def _detect_session() -> str:

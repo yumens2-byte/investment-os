@@ -25,14 +25,18 @@ v1.2.0 (2026-11-06, DN2026_0103) — 실패 채널 재호출(최대 3회)
   - stats 에 attempts(실제 시도 횟수)·recovered(재시도로 회복한 채널 수) 추가
   - 채널별 최종 로그에 attempt=N, 영상 순서는 채널 등록 순서 유지
 
-VERSION = "1.2.0"
+v1.2.1 (2026-11-06, DN2026_0105) — 재호출 대기 매회 60초로 변경
+  - RETRY_DELAYS_SEC = (60,) — 모든 재호출 전 60초 대기(마지막 값 재사용 규칙 그대로)
+  - 근거: 11-06 03:35·03:52 UTC 30→60초 3회 모두 404, 장애가 분 단위 이상 지속
+
+VERSION = "1.2.1"
 """
 import logging
 import time
 import urllib.error
 from datetime import datetime, timedelta, timezone
 
-VERSION = "1.2.0"
+VERSION = "1.2.1"
 
 logger = logging.getLogger(__name__)
 
@@ -53,8 +57,9 @@ ERROR_NOT_SET = "YOUTUBE_CHANNELS 미설정"
 LOOKBACK_HOURS = 48
 ENTRIES_PER_CHANNEL = 3
 
-# DN2026_0103: 재호출 대기(초). 2회차 전 30초, 3회차 전 60초. 4회차 이상은 마지막 값 재사용
-RETRY_DELAYS_SEC = (30, 60)
+# DN2026_0103: 재호출 대기(초). 회차별 값, 목록보다 회차가 많으면 마지막 값 재사용
+# DN2026_0105: 매회 60초
+RETRY_DELAYS_SEC = (60,)
 _sleep = time.sleep  # 테스트에서 교체
 
 

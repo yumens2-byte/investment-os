@@ -1,5 +1,6 @@
 """DN2026_0101 (2026-11-06): C-16 유튜버 RSS 수집 관측 강화 테스트.
 DN2026_0103 (2026-11-06): 실패 채널 재호출(최대 3회) 테스트 추가(R1~R6).
+DN2026_0105 (2026-11-06): 대기 매회 60초, morning 최대 6회(재시도 5회)로 기대값 갱신(R7 추가).
 
 외부 호출 없음(STD-TEST-14): feedparser.parse 를 가짜로 바꾸고, 문자열 XML 을 실제 feedparser 로 파싱한다.
 픽스처: tests/fixtures/youtube_rss_20261106.json — 11-06 실측 15개 채널의 발행 시각 분포(최신 3개, STD-CI-11).
@@ -81,6 +82,7 @@ def env(monkeypatch):
 
 def test_version_bumped():
     assert yr.VERSION.startswith("1.2.")
+    assert yr.RETRY_DELAYS_SEC == (60,)
 
 
 def test_ok_and_48h_filter(env):
@@ -250,10 +252,10 @@ def test_r1_recovered_on_second_attempt(seq_env, caplog):
     assert r["success"] is True and r["total"] == 1 and r["error"] is None
     assert r["stats"]["ok"] == 1 and r["stats"]["http_error"] == 0
     assert r["stats"]["attempts"] == 2 and r["stats"]["recovered"] == 1
-    assert calls == ["UCa", "UCa"] and sleeps == [30]
+    assert calls == ["UCa", "UCa"] and sleeps == [60]
     assert "A: http_error status=404" in caplog.text and "attempt=1" in caplog.text
     assert "A: ok n=1 attempt=2" in caplog.text
-    assert "재시도 2/3 — 대상 1채널 (30s 대기)" in caplog.text
+    assert "재시도 2/3 — 대상 1채널 (60s 대기)" in caplog.text
 
 
 def test_r2_all_three_attempts_fail(seq_env, capsys):
@@ -263,7 +265,7 @@ def test_r2_all_three_attempts_fail(seq_env, capsys):
     assert r["error"] == yr.ERROR_ALL_FAILED and r["success"] is False
     assert r["stats"]["http_error"] == 2 and r["stats"]["attempts"] == 3
     assert r["stats"]["recovered"] == 0
-    assert len(calls) == 6 and sleeps == [30, 60]
+    assert len(calls) == 6 and sleeps == [60, 60]
     assert capsys.readouterr().out.count("::warning title=YouTubeRSS::all_channels_failed") == 1
 
 
@@ -275,7 +277,7 @@ def test_r3_only_failed_channels_are_retried(seq_env):
     )
     r = yr.collect_youtube_summaries(max_attempts=3)
     assert calls == ["UCs", "UCf", "UCo", "UCf", "UCf"]
-    assert sleeps == [30, 60]
+    assert sleeps == [60, 60]
     assert r["stats"]["stale"] == 1 and r["stats"]["ok"] == 2 and r["stats"]["recovered"] == 1
     assert [v["title"] for v in r["videos"]] == ["f", "o"]  # 채널 등록 순서 유지
 
@@ -304,6 +306,21 @@ def test_r5b_invalid_max_attempts_falls_back_to_one(seq_env):
 
 def test_r6_run_market_passes_three_only_for_morning():
     src = (Path(__file__).resolve().parents[1] / "run_market.py").read_text(encoding="utf-8")
-    assert 'YT_RSS_MAX_ATTEMPTS_MORNING = 3' in src
+    assert 'YT_RSS_MAX_ATTEMPTS_MORNING = 6' in src
     assert 'yt_attempts = YT_RSS_MAX_ATTEMPTS_MORNING if session == "morning" else 1' in src
     assert "collect_youtube_summaries(max_attempts=yt_attempts)" in src
+
+
+def test_r7_morning_six_attempts_five_retries_60s(seq_env):
+    """DN2026_0105: 최초 1회 + 재시도 5회, 매회 60초. 5번째 재시도(6회차)에서 회복."""
+    calls, sleeps = seq_env([("A", "UCa")], {"UCa": [_e404()] * 5 + [_ok("A", "UCa")]})
+    r = yr.collect_youtube_summaries(max_attempts=6)
+    assert len(calls) == 6 and sleeps == [60] * 5
+    assert r["success"] is True and r["stats"]["attempts"] == 6 and r["stats"]["recovered"] == 1
+
+
+def test_r7b_six_attempts_all_fail(seq_env):
+    calls, sleeps = seq_env([("A", "UCa")], {"UCa": [_e404()] * 6})
+    r = yr.collect_youtube_summaries(max_attempts=6)
+    assert len(calls) == 6 and sleeps == [60] * 5 and sum(sleeps) == 300
+    assert r["error"] == yr.ERROR_ALL_FAILED and r["stats"]["attempts"] == 6
