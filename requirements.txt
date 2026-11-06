@@ -43,7 +43,8 @@ openai>=1.30.0
 
 #제미나이
 google-generativeai>=0.8.0
-google-genai>=1.0.0
+# DN2026_0104 (2026-11-06): 3.0.0 자동 설치 시 api v1 기본 → system_instruction·JSON mode 400 → 운영 검증 버전 고정
+google-genai==1.2.0
 
 
 #feedparser
