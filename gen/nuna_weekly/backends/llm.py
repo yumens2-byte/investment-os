@@ -19,7 +19,7 @@ from typing import Any
 from .. import config, secret_env
 from . import LLMResult
 
-VERSION = "1.2.0"  # 1.2.0 (2026-11-08, DN2026_0106) DummyLLM 구간 단축 요청 지원
+VERSION = "1.3.0"  # 1.3.0 (2026-11-08, DN2026_0107) complete_json schema 인자 · 1.2.0 DN2026_0106 DummyLLM 구간 단축
 log = logging.getLogger("nuna_weekly.backends.llm")
 
 _FENCE_RE = re.compile(r"^\s*```[a-zA-Z]*\s*\n?|\n?\s*```\s*$")
@@ -80,13 +80,16 @@ class ClaudeBackend:
                                          timeout=90, max_retries=0)
         self.client = client
 
-    def complete_json(self, system: str, user: str, max_tokens: int) -> LLMResult:
+    def complete_json(self, system: str, user: str, max_tokens: int,
+                      schema: dict[str, Any] | None = None) -> LLMResult:
+        # DN2026_0107: 구조화 출력 스키마를 호출자가 지정한다(기본 = 대본 전체 SCRIPT_SCHEMA).
+        #   구간 단축(DN2026_0106)이 SCRIPT_SCHEMA 로 강제돼 최상위 narration 이 비던 결함(run 11-07 19:59Z) 수정.
         model = config.script_model()
         try:
             resp = self.client.messages.create(model=model, max_tokens=max_tokens, system=system,
                                                messages=[{"role": "user", "content": user}],
                                                output_config={"format": {"type": "json_schema",
-                                                                         "schema": SCRIPT_SCHEMA}})
+                                                                         "schema": schema or SCRIPT_SCHEMA}})
         except Exception as e:
             raise LLMError(secret_env.redact(f"Claude 호출 실패: {type(e).__name__}: {e}", 300)) from None
         text = "".join(getattr(b, "text", "") for b in (resp.content or [])
@@ -235,7 +238,8 @@ class DummyLLM:
             words.pop()
         return _fit(_pad(" ".join(words), floor), limit)
 
-    def complete_json(self, system: str, user: str, max_tokens: int) -> LLMResult:
+    def complete_json(self, system: str, user: str, max_tokens: int,
+                      schema: dict[str, Any] | None = None) -> LLMResult:
         if "<shorten>" in user:   # DN2026_0106
             data = {"narration": self._shorten(_between(user, "shorten"))}
             return LLMResult(data=data, input_tokens=(len(system) + len(user)) // 2,
