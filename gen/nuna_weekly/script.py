@@ -19,9 +19,9 @@ from typing import Any
 
 from . import config, policy
 from .models import Facts, Script, ScriptSegment
-from .backends.llm import LLMResponseError
+from .backends.llm import LLMResponseError, _object_schema
 
-VERSION = "1.2.0"  # 1.2.0 (2026-11-08, DN2026_0106) TTS 길이 초과 구간 단축 재작성
+VERSION = "1.3.0"  # 1.3.0 (2026-11-08, DN2026_0107) 단축 전용 출력 스키마 · 1.2.0 DN2026_0106 구간 단축 재작성
 log = logging.getLogger("nuna_weekly.script")
 
 FACTS_TAG = "facts"
@@ -137,13 +137,16 @@ def _to_script(data: dict[str, Any], facts: Facts, segs: list[config.Segment], m
                   model=model, attempts=attempts)
 
 
-def _call(llm, budget, system: str, user: str, max_tokens: int = MAX_TOKENS):
+def _call(llm, budget, system: str, user: str, max_tokens: int = MAX_TOKENS,
+          schema: dict[str, Any] | None = None):
     model = config.script_model()
     est = EST_IN_TOKENS * config.PRICE_CLAUDE_IN_PER_MTOK / 1e6 + max_tokens * config.PRICE_CLAUDE_OUT_PER_MTOK / 1e6
     with budget.charge(step="script", provider="anthropic", model=model,
                        units=EST_IN_TOKENS + max_tokens, unit="token", est_usd=est) as ch:
         try:
-            res = llm.complete_json(system, user, max_tokens)
+            # DN2026_0107: schema 가 있을 때만 넘긴다(기본 대본 호출은 기존 시그니처 그대로)
+            res = (llm.complete_json(system, user, max_tokens, schema=schema) if schema
+                   else llm.complete_json(system, user, max_tokens))
         except LLMResponseError as exc:
             failed = exc.result
             usd = (failed.input_tokens * config.PRICE_CLAUDE_IN_PER_MTOK
@@ -294,6 +297,7 @@ def verify_numbers(script: Script, facts: Facts, publish_date: date) -> list[str
 SHORTEN_MAX_TOKENS = 1000
 SHORTEN_MIN_RATIO = 0.85      # 단축본 하한 = 단축 목표의 85% — 단, 원래 하한 chars_min 을 넘지 않는다(R6-01 경고 1)
 SHORTEN_FLOOR_CHARS = 10      # config.chars_limit 의 최소값과 같다
+SHORTEN_SCHEMA = _object_schema({"narration": {"type": "string"}})   # DN2026_0107 단축 응답 구조화 출력
 
 SHORTEN_SYSTEM_PROMPT = f"""너는 미국증시 주간 뉴스 쇼츠 '아이언 누나'의 대본 편집자다.
 <{SHORTEN_TAG}> 의 narration 한 개를 max_chars 글자 이하(공백 포함), min_chars 글자 이상으로 줄여 다시 쓴다.
@@ -330,7 +334,7 @@ def shorten_segment(script: Script, seg_id: str, max_chars: int, facts: Facts, s
                "must_not_start_with": list(GREETINGS) if spec.card == "breaking" else []}
     user = f"<{SHORTEN_TAG}>{json.dumps(payload, ensure_ascii=False)}</{SHORTEN_TAG}>"
     log.info("[NunaWeekly:script] %s 단축 재작성 요청: %d자 → %d~%d자", seg_id, len(cur.narration), floor, limit)
-    res = _call(llm, budget, SHORTEN_SYSTEM_PROMPT, user, SHORTEN_MAX_TOKENS)
+    res = _call(llm, budget, SHORTEN_SYSTEM_PROMPT, user, SHORTEN_MAX_TOKENS, schema=SHORTEN_SCHEMA)
     narration = str((res.data or {}).get("narration") or "").strip()
     new = replace(script, segments=[replace(s, narration=narration) if s.seg_id == seg_id else s
                                     for s in script.segments])

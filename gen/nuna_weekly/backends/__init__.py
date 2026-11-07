@@ -5,7 +5,7 @@ gen/nuna_weekly/backends — 외부 호출 인터페이스 (실 구현 / dummy �
 만든다(전수테스트용). 선택: make_backends(dry: bool).
 
 계약 (각 모듈이 구현):
-    LLMBackend.complete_json(system, user, max_tokens) -> LLMResult
+    LLMBackend.complete_json(system, user, max_tokens, schema=None) -> LLMResult   (DN2026_0107 schema)
     TTSBackend.synthesize(text, voice, style, out_wav) -> TTSResult
     FalBackend.run(endpoint, payload, out_path, pending_path) -> FalResult
 """
@@ -47,7 +47,8 @@ class FalResult:
 class LLMBackend(Protocol):
     name: str
 
-    def complete_json(self, system: str, user: str, max_tokens: int) -> LLMResult: ...
+    def complete_json(self, system: str, user: str, max_tokens: int,
+                      schema: dict[str, Any] | None = None) -> LLMResult: ...
 
 
 class TTSBackend(Protocol):

@@ -111,8 +111,9 @@ class FakeLLM:
     def __init__(self, narration: str) -> None:
         self.narration = narration
 
-    def complete_json(self, system, user, max_tokens):
+    def complete_json(self, system, user, max_tokens, schema=None):
         assert "<shorten>" in user
+        assert schema == script.SHORTEN_SCHEMA   # DN2026_0107: 단축 전용 출력 스키마 전달
         return LLMResult(data={"narration": self.narration}, input_tokens=100, output_tokens=20,
                          model="fake", request_id="req-1")
 
@@ -219,7 +220,7 @@ def test_shorten_floor_keeps_chars_min_when_target_allows():
 class BrokenLLM:
     name = "broken"
 
-    def complete_json(self, system, user, max_tokens):
+    def complete_json(self, system, user, max_tokens, schema=None):
         raise RuntimeError("connection reset")   # 과금 여부 불명
 
 
@@ -232,3 +233,53 @@ def test_shorten_network_error_stays_paid_blocked(monkeypatch, tmp_path):
     monkeypatch.setattr(pipeline, "_do_step", lambda *a: pytest.fail("유료 단계 재실행"))
     with pytest.raises(pipeline.PipelineError, match="PAID_RECOVERY_REQUIRED"):
         pipeline.run_gen(ctx, only="tts")
+
+
+# --------------------------------------------------------------------------- #
+# DN2026_0107: 실 ClaudeBackend 경로 — 구조화 출력 스키마가 단축 응답을 결정한다
+#   장애(11-07 19:59Z): complete_json 이 항상 SCRIPT_SCHEMA 를 강제 → 응답이 대본 전체 형태 →
+#   최상위 narration 없음 → '단축본 내레이션 없음'. 가짜 LLM 테스트는 스키마를 거치지 않아 놓쳤다.
+# --------------------------------------------------------------------------- #
+class SchemaObeyingMessages:
+    """실제 API 처럼 output_config 스키마 모양대로만 답한다."""
+
+    def __init__(self, narration: str) -> None:
+        self.narration, self.calls = narration, []
+
+    def create(self, **kw):
+        import json as _json
+        from types import SimpleNamespace as NS
+
+        from gen.nuna_weekly.backends.llm import SCRIPT_SCHEMA
+
+        self.calls.append(kw)
+        schema = kw["output_config"]["format"]["schema"]
+        if schema == SCRIPT_SCHEMA:
+            body = {"title": "t", "hashtags": [], "captions": {}, "segments": [
+                {"seg_id": "S2", "narration": self.narration, "card_title": "", "card_lines": [],
+                 "image_prompt": "", "clip_prompt": ""}]}
+        else:
+            body = {k: self.narration for k in schema["properties"]}
+        return NS(id="msg_x", stop_reason="end_turn", content=[NS(type="text", text=_json.dumps(body))],
+                  usage=NS(input_tokens=1200, output_tokens=40))
+
+
+def test_claude_backend_shorten_uses_shorten_schema(monkeypatch):
+    from types import SimpleNamespace as NS
+
+    from gen.nuna_weekly.backends.llm import SCRIPT_SCHEMA, ClaudeBackend
+
+    monkeypatch.setenv("NUNA_SCRIPT_MODEL", "claude-test")
+    segs = config.segments(60)
+    sc = _dummy_script(segs)
+    s2 = next(x for x in sc.segments if x.seg_id == "S2")
+    short = " ".join(s2.narration.split()[:-1])   # 숫자 토큰 보존, 마지막 단어만 제거
+    msgs = SchemaObeyingMessages(short)
+    new = script.shorten_segment(sc, "S2", len(s2.narration) - 1, make_facts(), segs,
+                                 ClaudeBackend(client=NS(messages=msgs)),
+                                 Budget(MemoryStore(), "x", fx_rate=1400.0), PUB)
+    assert msgs.calls[0]["output_config"]["format"]["schema"] == script.SHORTEN_SCHEMA
+    assert next(x for x in new.segments if x.seg_id == "S2").narration == short
+    # 기본 대본 호출은 기존 SCRIPT_SCHEMA 유지(회귀 방지)
+    ClaudeBackend(client=NS(messages=msgs)).complete_json("s", "u", 10)
+    assert msgs.calls[1]["output_config"]["format"]["schema"] == SCRIPT_SCHEMA
