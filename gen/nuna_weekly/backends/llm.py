@@ -4,6 +4,7 @@ gen/nuna_weekly/backends/llm.py — 대본 LLM 백엔드 (Claude 실 구현 / Du
     ClaudeBackend — anthropic SDK messages.create, 응답 텍스트를 JSON 으로 파싱.
     DummyLLM      — 0원·무네트워크. 사용자 프롬프트의 <facts>·<segments> JSON 을 읽어
                     script.validate 를 통과하는 결정적 대본을 만든다(전수테스트용).
+                    (DN2026_0106) <shorten> 요청이면 단어 단위로 잘라 {"narration"} 만 돌려준다.
 
 비밀값은 secret_env.require 로만 읽고, 오류 메시지는 secret_env.redact 를 거친다.
 """
@@ -18,7 +19,7 @@ from typing import Any
 from .. import config, secret_env
 from . import LLMResult
 
-VERSION = "1.1.0"
+VERSION = "1.2.0"  # 1.2.0 (2026-11-08, DN2026_0106) DummyLLM 구간 단축 요청 지원
 log = logging.getLogger("nuna_weekly.backends.llm")
 
 _FENCE_RE = re.compile(r"^\s*```[a-zA-Z]*\s*\n?|\n?\s*```\s*$")
@@ -222,7 +223,23 @@ class DummyLLM:
                 "image_prompt": IMAGE_PROMPT if seg["visual"] in ("image", "image_card") else "",
                 "clip_prompt": CLIP_PROMPT if seg["visual"] == "clip" else ""}
 
+    @staticmethod
+    def _shorten(req: dict[str, Any]) -> str:
+        """DN2026_0106: 단어 단위로 뒤에서 줄여 max_chars 이하로 맞춘다(숫자 토큰을 자르지 않음)."""
+        limit, floor = int(req["max_chars"]), int(req.get("min_chars") or 0)
+        end = str(req.get("must_end_with") or "")
+        if end:
+            return end if len(end) <= limit else _fit(end, limit)
+        words = str(req["narration"]).split()
+        while words and len(" ".join(words)) > limit:
+            words.pop()
+        return _fit(_pad(" ".join(words), floor), limit)
+
     def complete_json(self, system: str, user: str, max_tokens: int) -> LLMResult:
+        if "<shorten>" in user:   # DN2026_0106
+            data = {"narration": self._shorten(_between(user, "shorten"))}
+            return LLMResult(data=data, input_tokens=(len(system) + len(user)) // 2,
+                             output_tokens=len(data["narration"]), model="dummy", request_id=None)
         facts = _between(user, "facts")
         segs = _between(user, "segments")
         title = "아이언 누나 주간 미국증시 브리핑"

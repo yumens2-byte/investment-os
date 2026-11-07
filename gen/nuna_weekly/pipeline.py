@@ -39,9 +39,10 @@ from . import script as script_mod
 from . import tts as tts_mod
 from .backends import make_backends
 from .backends.fal import FalPendingTimeout
+from .backends.llm import LLMResponseError
 from .models import Asset, Facts, Script
 
-VERSION = "1.3.0"  # 1.3.0 (2026-10-31, DN2026_0086) 토요일·월~금·뉴스 방송 형식 · 1.2.0 (2026-10-31, DN2026_0084) publish --step accounts 계정 진단 · 1.1.0 DN2026_0079 발행 연결
+VERSION = "1.4.0"  # 1.4.0 (2026-11-08, DN2026_0106) TTS 길이 초과 구간 단축·재실행 허용 · 1.3.0 (2026-10-31, DN2026_0086) 토요일·월~금·뉴스 방송 형식 · 1.2.0 (2026-10-31, DN2026_0084) publish --step accounts 계정 진단 · 1.1.0 DN2026_0079 발행 연결
 log = logging.getLogger("nuna_weekly.pipeline")
 
 GEN_STEPS: tuple[tuple[str, str, str], ...] = (
@@ -60,6 +61,10 @@ DONE_GEN = ("NOTIFIED", "HELD", "SCHEDULED", "PUBLISHED", "PARTIAL")
 PAID_STEPS = frozenset({"script", "tts", "images", "clips"})
 FAL_JOB_PREFIX = {"images": "img_", "clips": "clip_"}
 FAL_PENDING = "FAL_PENDING"
+# DN2026_0106: TTS 길이 초과(TTSFitError)는 모든 합성·단축 호출의 비용이 확정된 뒤에만 발생한다.
+#   last_error 를 TTS_FIT:tts: 로 남겨 유료 재호출 차단(PAID_RECOVERY_REQUIRED)의 예외로 둔다.
+#   v1.3.0 이 남긴 'tts: TTSFitError:' 도 같은 사유이므로 재실행을 허용한다(W45 회차 복구).
+TTS_FIT = "TTS_FIT"
 
 
 class PipelineError(RuntimeError):
@@ -235,6 +240,32 @@ def _script(ep: dict[str, Any]) -> Script:
     return Script.from_dict(ep["script_json"])
 
 
+def _cost_settled_error(previous: str, step: str) -> bool:
+    """DN2026_0106: 비용 확정 후 발생한 실패라 재실행해도 과금 대사가 필요 없는 last_error 인지."""
+    if step != "tts":   # TTSFitError 는 tts 단계에서만 비용 확정 후 발생한다
+        return False
+    return previous.startswith((f"{TTS_FIT}:tts:", "tts: TTSFitError:"))
+
+
+def _tts_shortener(ctx: Ctx, ep: dict[str, Any], segs: list[config.Segment],
+                   holder: dict[str, Script]) -> tts_mod.Shortener:
+    """DN2026_0106: TTS 길이 초과 구간을 LLM 1회로 단축하고 원장 script_json 에 즉시 저장하는 콜백.
+    holder["script"] 를 갱신해 호출자가 단축본을 이어 쓴다. 단축 실패(검증·응답 형식)는 비용 확정 후이므로
+    TTSFitError 로 바꿔 재실행 허용 범주에 둔다. 그 외 예외(네트워크 등 과금 불명)는 그대로 전파한다."""
+    def shorten(seg_id: str, text: str, raw: float, target: float) -> str:
+        max_chars = tts_mod.shorten_target_chars(len(text), raw, target)
+        try:
+            new = script_mod.shorten_segment(holder["script"], seg_id, max_chars, _facts(ep), segs,
+                                             ctx.backends.llm, ctx.budget, ctx.gate.publish_date)
+        except (script_mod.ScriptError, LLMResponseError) as e:
+            raise tts_mod.TTSFitError(seg_id, raw, target,
+                                      note=f"구간 단축 실패: {secret_env.redact(str(e), 200)}") from e
+        holder["script"] = new
+        ctx.store.update_episode(ctx.episode_id, {"script_json": new.to_dict()})
+        return next(s.narration for s in new.segments if s.seg_id == seg_id)
+    return shorten
+
+
 def _segs() -> list[config.Segment]:
     return config.segments(config.duration_sec())
 
@@ -258,9 +289,11 @@ def _do_step(ctx: Ctx, step: str) -> dict[str, Any]:
         sc = script_mod.generate(_facts(ep), segs, ctx.backends.llm, ctx.budget, ctx.gate.publish_date)
         return {"script_json": sc.to_dict()}
     if step == "tts":
-        audio = tts_mod.synthesize_segments(_script(ep), segs, ctx.backends.tts, ctx.budget, ctx.out)
+        holder = {"script": _script(ep)}
+        audio = tts_mod.synthesize_segments(holder["script"], segs, ctx.backends.tts, ctx.budget, ctx.out,
+                                            shorten=_tts_shortener(ctx, ep, segs, holder))
         assets_json["audio"] = _assets_dump({a.key: a for a in audio})
-        return {"assets_json": assets_json}
+        return {"assets_json": assets_json, "script_json": holder["script"].to_dict()}
     if step == "images":
         jobs = _FalJobs(ctx, assets_json)
         imgs = images_mod.generate_images(ctx.episode_id, _script(ep), segs, ctx.backends.fal, ctx.budget, ctx.out,
@@ -279,7 +312,7 @@ def _do_step(ctx: Ctx, step: str) -> dict[str, Any]:
         jobs.clear_prefix(FAL_JOB_PREFIX["clips"])
         return {"assets_json": assets_json}
     if step == "assemble":
-        sc = _script(ep)
+        holder = {"script": _script(ep)}
         imgs = _assets_load(assets_json.get("images"))
         cl = _assets_load(assets_json.get("clips"))
         audio = _assets_load(assets_json.get("audio"))
@@ -288,9 +321,12 @@ def _do_step(ctx: Ctx, step: str) -> dict[str, Any]:
             _rehydrate(cl, ctx.out)
         if any(not Path(a.local_path).is_file() for a in audio.values()):
             log.info("음성 파일 없음(새 러너) — TTS 재생성")
-            new_audio = tts_mod.synthesize_segments(sc, segs, ctx.backends.tts, ctx.budget, ctx.out)
+            # DN2026_0106: 재합성도 같은 길이 초과 경로(PROC-07 동일 패턴) — 단축본은 script_json 에 반영
+            new_audio = tts_mod.synthesize_segments(holder["script"], segs, ctx.backends.tts, ctx.budget, ctx.out,
+                                                    shorten=_tts_shortener(ctx, ep, segs, holder))
             audio = {a.key: a for a in new_audio}
             assets_json["audio"] = _assets_dump(audio)
+        sc = holder["script"]
         videos = {}
         facts = _facts(ep)   # DN2026_0086 월~금 그래프·시세 띠(facts 수치만)
         for v in _variants():
@@ -298,7 +334,7 @@ def _do_step(ctx: Ctx, step: str) -> dict[str, Any]:
                                  facts=facts)
             videos[v] = str(out)
         assets_json["videos"] = videos
-        return {"assets_json": assets_json}
+        return {"assets_json": assets_json, "script_json": sc.to_dict()}
     if step == "qc":
         sc, facts = _script(ep), _facts(ep)
         videos = assets_json.get("videos") or {}
@@ -406,7 +442,8 @@ def run_gen(ctx: Ctx, only: str | None = None) -> int:
         if live_paid:
             ep_now = ctx.episode()
             previous = ep_now.get("last_error") or ""
-            if previous.startswith((f"{step}:", f"PAID_STEP_IN_PROGRESS:{step}")):
+            if (previous.startswith((f"{step}:", f"PAID_STEP_IN_PROGRESS:{step}"))
+                    and not _cost_settled_error(previous, step)):
                 raise PipelineError(
                     f"PAID_RECOVERY_REQUIRED: {step} 이전 호출 결과·비용 대사 필요 — 자동 재과금 차단")
             if previous.startswith(f"{FAL_PENDING}:{step}:"):
@@ -423,7 +460,8 @@ def run_gen(ctx: Ctx, only: str | None = None) -> int:
             fields = _do_step(ctx, step)
         except Exception as e:
             fal_pending = isinstance(e, FalPendingTimeout) and e.persisted and step in FAL_JOB_PREFIX
-            head = f"{FAL_PENDING}:{step}" if fal_pending else step
+            tts_fit = isinstance(e, tts_mod.TTSFitError) and step == "tts"   # DN2026_0106 비용 확정 실패
+            head = f"{FAL_PENDING}:{step}" if fal_pending else (f"{TTS_FIT}:{step}" if tts_fit else step)
             err = secret_env.redact(f"{head}: {type(e).__name__}: {e}", 500)
             ctx.store.update_episode(ctx.episode_id, {"last_error": err})
             _step_log(ctx, step, "failed", started, err)
@@ -431,6 +469,9 @@ def run_gen(ctx: Ctx, only: str | None = None) -> int:
             if fal_pending:
                 recovery = (f"'{step}' fal 작업 진행 중(request_id={e.request_id}) — 재실행 시 원장 기록으로 "
                             "재제출 없이 재조회(추가 과금 없음)")
+            elif tts_fit:
+                recovery = ("'tts' 길이 초과 — 비용 확정, 구간 단축 1회 시도 후에도 해소 안 됨. 재실행 시 'tts' 단계부터 "
+                            "재합성(유료 재호출 허용)")
             elif live_paid:
                 recovery = f"'{step}' 유료 호출 결과·비용 대사 후 복구 필요(자동 재호출 차단)"
             else:

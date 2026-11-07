@@ -7,13 +7,16 @@ synthesize_segments(script, segs, backend, budget, out_dir) -> list[Asset]
         raw > target : raw/target ≤ 1.15 이면 atempo 가속, 초과면 TTSFitError (대본 재작성 필요)
         raw ≤ target : apad 로 무음 채움
         최종 -t target 으로 자른다 → 실측 ±0.02s 검증.
+    DN2026_0106: 1.15배 초과 시 shorten 콜백(대본 구간 단축 재작성)이 있으면 그 구간만 1회 단축 후 재합성한다.
+        목표 글자수 = 현재 글자수 × target/raw × SHORTEN_SAFETY (실측 발화 속도 기준, 가속 여유 확보).
+        재합성 후에도 초과하면 TTSFitError. TTSFitError 는 모든 비용이 확정된 뒤에만 발생한다(재실행 허용 근거).
 concat_audio(assets, out_path) -> Path, measure_seconds(path) -> float
 """
 from __future__ import annotations
 
 import logging
 import subprocess
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from pathlib import Path
 from typing import Any
 
@@ -21,20 +24,32 @@ from . import config
 from .backends.tts import TTSError, probe_seconds
 from .models import Asset, Script, ScriptSegment
 
-VERSION = "1.0.0"
+VERSION = "1.1.0"  # 1.1.0 (2026-11-08, DN2026_0106) 길이 초과 구간 단축 재작성 1회 후 재합성
 log = logging.getLogger("nuna_weekly.tts")
 
 OUT_SAMPLE_RATE = 48000
 MAX_ATEMPO = 1.15
 FIT_TOLERANCE_SEC = 0.02
+SHORTEN_SAFETY = 0.95   # DN2026_0106: 단축 목표를 목표 길이의 95% 발화로 잡아 TTS 편차·가속 여유를 남긴다
+
+# DN2026_0106: (seg_id, 현재 내레이션, raw 초, target 초) → 단축된 내레이션. 실패 시 TTSFitError 를 던진다.
+Shortener = Callable[[str, str, float, float], str]
 
 
 class TTSFitError(TTSError):
-    """합성 길이가 목표 대비 1.15배 초과 — 가속으로 맞출 수 없음."""
+    """합성 길이가 목표 대비 1.15배 초과 — 가속으로 맞출 수 없음. 비용 확정 후에만 발생한다."""
 
-    def __init__(self, seg_id: str, raw: float, target: float) -> None:
-        self.seg_id, self.raw, self.target = seg_id, raw, target
-        super().__init__(f"{seg_id} 내레이션 길이 초과: {raw:.2f}s > {target:.2f}s × {MAX_ATEMPO} — 대본 단축 필요")
+    def __init__(self, seg_id: str, raw: float, target: float, note: str = "") -> None:
+        self.seg_id, self.raw, self.target, self.note = seg_id, raw, target, note
+        msg = f"{seg_id} 내레이션 길이 초과: {raw:.2f}s > {target:.2f}s × {MAX_ATEMPO} — 대본 단축 필요"
+        super().__init__(f"{msg} ({note})" if note else msg)
+
+
+def shorten_target_chars(text_len: int, raw: float, target: float) -> int:
+    """DN2026_0106: 실측 발화 속도(text_len/raw)로 target×SHORTEN_SAFETY 초에 들어갈 글자수."""
+    if raw <= 0:
+        return text_len
+    return int(text_len * target / raw * SHORTEN_SAFETY)
 
 
 def measure_seconds(path: Path | str) -> float:
@@ -71,8 +86,20 @@ def _est_usd(target: float, text: str) -> float:
             + len(text) * config.PRICE_TTS_IN_PER_MTOK / 1e6)
 
 
+def _synthesize_one(backend: Any, budget: Any, model: str, voice: str, text: str, target: float,
+                    raw_path: Path) -> Any:
+    """예산 게이트 경유 1회 합성. 반환 시점에 비용은 확정돼 있다."""
+    with budget.charge(step="tts", provider="gemini", model=model, units=target * 25, unit="token",
+                       est_usd=_est_usd(target, text)) as ch:
+        res = backend.synthesize(text, voice, config.TTS_STYLE, raw_path)
+        usd = (res.output_tokens * config.PRICE_TTS_OUT_PER_MTOK / 1e6
+               + res.input_tokens * config.PRICE_TTS_IN_PER_MTOK / 1e6)
+        ch.actual(usd=usd, units=res.output_tokens or None, request_id=res.request_id)
+    return res
+
+
 def synthesize_segments(script: Script, segs: Sequence[config.Segment], backend: Any, budget: Any,
-                        out_dir: Path) -> list[Asset]:
+                        out_dir: Path, shorten: Shortener | None = None) -> list[Asset]:
     log.info("[NunaWeekly:tts] v%s 시작 · backend=%s · 구간 %d", VERSION, getattr(backend, "name", "?"), len(segs))
     out_dir = Path(out_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
@@ -88,13 +115,19 @@ def synthesize_segments(script: Script, segs: Sequence[config.Segment], backend:
         text = ss.narration
         raw_path = out_dir / f"tts_{seg.seg_id}.raw.wav"
         final = out_dir / f"tts_{seg.seg_id}.wav"
-        with budget.charge(step="tts", provider="gemini", model=model, units=target * 25, unit="token",
-                           est_usd=_est_usd(target, text)) as ch:
-            res = backend.synthesize(text, voice, config.TTS_STYLE, raw_path)
-            usd = (res.output_tokens * config.PRICE_TTS_OUT_PER_MTOK / 1e6
-                   + res.input_tokens * config.PRICE_TTS_IN_PER_MTOK / 1e6)
-            ch.actual(usd=usd, units=res.output_tokens or None, request_id=res.request_id)
-        got = fit_to_target(Path(res.path), final, seg.seg_id, target)
+        res = _synthesize_one(backend, budget, model, voice, text, target, raw_path)
+        try:
+            got = fit_to_target(Path(res.path), final, seg.seg_id, target)
+        except TTSFitError as e:
+            if shorten is None:
+                raise
+            # DN2026_0106: 해당 구간만 1회 단축 재작성 → 재합성. 다시 초과하면 TTSFitError 그대로 전파.
+            log.warning("%s 길이 초과(%.2fs > %.2fs×%.2f) — 구간 단축 재작성 1회", seg.seg_id, e.raw, e.target,
+                        MAX_ATEMPO)
+            text = shorten(seg.seg_id, text, e.raw, e.target)
+            res = _synthesize_one(backend, budget, model, voice, text, target, raw_path)
+            got = fit_to_target(Path(res.path), final, seg.seg_id, target)
+            log.info("%s 단축 재합성 통과: %d자 raw %.2fs", seg.seg_id, len(text), res.seconds)
         raw_path.unlink(missing_ok=True)
         assets.append(Asset(kind="audio", key=f"tts_{seg.seg_id}", local_path=str(final),
                             request_id=res.request_id, seconds=round(got, 3)))
