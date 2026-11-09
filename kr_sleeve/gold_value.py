@@ -40,6 +40,7 @@ GOLD_SOURCE_FORMAT = "GOLD_SOURCE_FORMAT"
 GOLD_INSUFFICIENT = "GOLD_INSUFFICIENT"
 GOLD_STALE = "GOLD_STALE"
 GOLD_DB = "GOLD_DB"
+GOLD_TIMEOUT = "GOLD_TIMEOUT"      # 수집 전체 시간 상한 초과(DN2026_0109 보완 B)
 
 
 class GoldSkip(Exception):
@@ -75,12 +76,14 @@ def _confirmed(series: Series, traded_at: str, now_utc: datetime) -> str | None:
     return day if day < now_utc.astimezone(KST).date().isoformat() else None
 
 
-def fetch_page(series: Series, page: int, now_utc: datetime, http_get: Callable) -> list[tuple[str, float]]:
-    """1페이지(최신순) → 확정 (day, close) 목록. 빈 결과는 []."""
+def fetch_page(series: Series, page: int, now_utc: datetime, http_get: Callable,
+               timeout: float | None = None) -> list[tuple[str, float]]:
+    """1페이지(최신순) → 확정 (day, close) 목록. 빈 결과는 []. timeout은 남은 시간 예산으로 줄여 쓴다."""
     params = {"category": series.category, "reutersCode": series.code,
               "page": page, "pageSize": config.GOLD_PAGE_SIZE}
     try:
-        resp = http_get(PRICES_URL, params=params, headers=_UA, timeout=config.HTTP_TIMEOUT_SEC)
+        resp = http_get(PRICES_URL, params=params, headers=_UA,
+                        timeout=timeout if timeout is not None else config.HTTP_TIMEOUT_SEC)
     except requests.RequestException as e:
         raise GoldSkip(GOLD_SOURCE_HTTP, f"{series.key} {type(e).__name__}") from e
     if resp.status_code != 200:
@@ -148,41 +151,71 @@ def month_window(now_utc: datetime) -> tuple[str, str]:
     return m1, m0
 
 
-def sync_history(now_utc: datetime, http_get: Callable, store=None, sleep=time.sleep) -> dict[str, dict]:
+class _Budget:
+    """수집 전체 시간 상한(DN2026_0109 보완 B, 회장 승인 11-09 17:27).
+    네이버 지연 시 요청당 15초 × 최대 139회 ≈ 35분 → job 제한 20분 초과 위험을 막는다.
+    초과하면 GoldSkip(GOLD_TIMEOUT) → 패널만 생략, KR Sleeve 본 발행은 계속."""
+
+    def __init__(self, seconds: float, monotonic: Callable[[], float]):
+        self.seconds, self.monotonic = seconds, monotonic
+        self.start = monotonic()
+
+    def elapsed(self) -> float:
+        return self.monotonic() - self.start
+
+    def request_timeout(self, calls: int) -> float:
+        left = self.seconds - self.elapsed()
+        if left <= 0:
+            raise GoldSkip(GOLD_TIMEOUT, f"{self.seconds:.0f}초 초과 · 호출 {calls}회")
+        return max(1.0, min(float(config.HTTP_TIMEOUT_SEC), left))
+
+
+def sync_history(now_utc: datetime, http_get: Callable, store=None, sleep=time.sleep,
+                 monotonic: Callable[[], float] = time.monotonic) -> dict[str, dict]:
     """시리즈별 확정 이력. store가 있으면 최근 1페이지만 받아 쌓고, 60개월 전 월이 비어 있으면 백필한다.
+    백필은 이미 쌓인 행 수만큼 건너뛰고 이어 받는다(시간 상한으로 중단돼도 다음 날 이어서 진행).
     store가 없으면(dry_run) 필요한 구간까지 페이지를 받아 메모리에서만 쓴다."""
     m1, m0 = month_window(now_utc)
     need_from = f"{m0}-01"
+    budget = _Budget(config.GOLD_TIME_BUDGET_SEC, monotonic)
     hist: dict[str, dict] = {}
     calls = 0
     for s in ALL_SERIES:
         long_needed = s in LONG_SERIES
-        rows = dict(fetch_page(s, 1, now_utc, http_get))
+        rows = dict(fetch_page(s, 1, now_utc, http_get, budget.request_timeout(calls)))
         calls += 1
+        start_page = 2
         if store is not None:
             try:
                 store.upsert_rows(s.key, rows)
                 have = store.count_month(s.key, m0) if long_needed else config.GOLD_MIN_DAYS_PER_MONTH
+                if long_needed and have < config.GOLD_MIN_DAYS_PER_MONTH:
+                    stored = store.count_since(s.key, need_from)
+                    start_page = max(2, stored // config.GOLD_PAGE_SIZE)   # 1페이지 겹쳐 이어 받기
+            except GoldSkip:
+                raise
             except Exception as e:  # noqa: BLE001
                 raise GoldSkip(GOLD_DB, f"{s.key} {type(e).__name__}") from e
         else:
             have = 0 if long_needed else config.GOLD_MIN_DAYS_PER_MONTH
         if long_needed and have < config.GOLD_MIN_DAYS_PER_MONTH:
-            page = 2
-            while page <= config.GOLD_BACKFILL_MAX_PAGES and (not rows or min(rows) >= need_from):
+            page = start_page
+            oldest = min(rows) if rows else None
+            while page <= config.GOLD_BACKFILL_MAX_PAGES and (oldest is None or oldest >= need_from):
                 sleep(config.GOLD_PAGE_SLEEP_SEC)
-                got = fetch_page(s, page, now_utc, http_get)
+                got = fetch_page(s, page, now_utc, http_get, budget.request_timeout(calls))
                 calls += 1
                 if not got:
                     break
                 rows.update(got)
+                oldest = min(rows)
                 if store is not None:
                     try:
                         store.upsert_rows(s.key, dict(got))
                     except Exception as e:  # noqa: BLE001
                         raise GoldSkip(GOLD_DB, f"{s.key} {type(e).__name__}") from e
                 page += 1
-            logger.info("[GoldValue] %s 백필 %d페이지, 최오래 %s", s.key, page - 1, min(rows) if rows else "-")
+            logger.info("[GoldValue] %s 백필 %d~%d페이지, 최오래 %s", s.key, start_page, page - 1, oldest or "-")
         if store is not None:
             try:
                 since = need_from if long_needed else None
@@ -191,7 +224,7 @@ def sync_history(now_utc: datetime, http_get: Callable, store=None, sleep=time.s
             except Exception as e:  # noqa: BLE001
                 raise GoldSkip(GOLD_DB, f"{s.key} {type(e).__name__}") from e
         hist[s.key] = clean(s, rows)
-    logger.info("[GoldValue] 수집 완료 호출 %d회", calls)
+    logger.info("[GoldValue] 수집 완료 호출 %d회 · %.1f초", calls, budget.elapsed())
     return hist
 
 
@@ -279,11 +312,12 @@ def compute(hist: dict[str, dict], now_utc: datetime) -> dict:
     return {"status": "ok", "version": config.VERSION, "long": long, "short": short}
 
 
-def build_panel(now_utc: datetime, http_get: Callable | None = None, store=None, sleep=time.sleep) -> dict:
+def build_panel(now_utc: datetime, http_get: Callable | None = None, store=None, sleep=time.sleep,
+                monotonic: Callable[[], float] = time.monotonic) -> dict:
     """패널 dict. 실패는 {'status': 'skipped', 'reason', 'detail'} — 예외를 밖으로 내지 않는다(G-09)."""
     logger.info("[GoldValue] v%s 시작 | store=%s", config.VERSION, "on" if store is not None else "off")
     try:
-        hist = sync_history(now_utc, http_get or requests.get, store, sleep)
+        hist = sync_history(now_utc, http_get or requests.get, store, sleep, monotonic)
         panel = compute(hist, now_utc)
         lg = panel["long"]["grams"]["krw"]
         logger.info("[GoldValue] 5년 1억 원 %.0fg → %.0fg (%+.2f%%)", lg["then"], lg["now"], lg["pct"])
@@ -402,6 +436,12 @@ class GoldStore:
         payload = [{"day": d, "series": series, "close": v, "source": "naver_marketindex", "fetched_at": now}
                    for d, v in sorted(rows.items())]
         self.client.table(self.TABLE).upsert(payload, on_conflict="day,series").execute()
+
+    def count_since(self, series: str, since: str) -> int:
+        """since 이후 적재 행 수(백필 이어 받기용). 행 데이터는 받지 않고 count만 받는다."""
+        res = (self.client.table(self.TABLE).select("day", count="exact").eq("series", series)
+               .gte("day", since).limit(1).execute())
+        return int(getattr(res, "count", None) or 0)
 
     def count_month(self, series: str, month: str) -> int:
         start, end = _month_bounds(month)

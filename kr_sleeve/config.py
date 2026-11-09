@@ -10,7 +10,7 @@ import logging
 import os
 from dataclasses import dataclass
 
-VERSION = "1.1.0"  # 1.1.0: 금으로 잰 화폐가치 패널(DN2026_0109)
+VERSION = "1.1.1"  # 1.1.1: 금 수집 시간 상한·백필 이어 받기(DN2026_0109 보완 B) · 1.1.0: 금 패널
 
 logger = logging.getLogger(__name__)
 
@@ -76,6 +76,7 @@ GOLD_PAGE_SIZE = 60             # 실측 상한(100은 HTTP 400)
 GOLD_BACKFILL_MAX_PAGES = 45
 GOLD_PAGE_SLEEP_SEC = 0.4
 GOLD_RECENT_DAYS = 45           # DB에서 1개월 계산용으로 읽는 최근 일수
+GOLD_TIME_BUDGET_SEC = 120      # 금 수집 전체 상한(초). 실측 dry_run 64회 약 60초, shadow 첫날 백필 포함 여유분
 
 # ── 모드 (STD-MODE-01) ───────────────────────────────────────
 MODES = ("dry_run", "shadow", "live")

@@ -423,3 +423,88 @@ def test_schema_sql_matches_series_keys():
     for s in gold_value.ALL_SERIES:
         assert f"'{s.key}'" in sql
     assert "DISABLE ROW LEVEL SECURITY" in sql
+
+
+# ── DN2026_0109 보완 B: 수집 시간 상한·백필 이어 받기 ─────────────
+class _Clock:
+    def __init__(self, step: float):
+        self.t, self.step = 0.0, step
+
+    def __call__(self) -> float:
+        v = self.t
+        self.t += self.step
+        return v
+
+
+def test_time_budget_exceeded_skips_panel_with_reason():
+    clock = _Clock(10.0)                       # 호출마다 10초 경과로 가정
+    p = gold_value.build_panel(NOW, _fake_prices(_long_hist()), None, lambda s: None, clock)
+    assert p["status"] == "skipped" and p["reason"] == gold_value.GOLD_TIMEOUT
+
+
+def test_request_timeout_shrinks_to_remaining_budget(monkeypatch):
+    monkeypatch.setattr(config, "GOLD_TIME_BUDGET_SEC", 20)
+    seen = []
+    base = _fake_prices(_long_hist())
+
+    def get(url, params=None, headers=None, timeout=None):
+        seen.append(timeout)
+        return base(url, params=params, headers=headers, timeout=timeout)
+    clock = _Clock(6.0)
+    p = gold_value.build_panel(NOW, get, None, lambda s: None, clock)
+    assert p["reason"] == gold_value.GOLD_TIMEOUT
+    assert seen[0] == 14.0 and seen[1] == 8.0   # 20초 예산 − 경과 6초·12초
+    assert all(t >= 1.0 for t in seen)
+
+
+def test_normal_run_within_budget_is_ok():
+    p = gold_value.build_panel(NOW, _fake_prices(_long_hist()), None, lambda s: None, _Clock(0.5))
+    assert p["status"] == "ok"
+
+
+def test_backfill_resumes_from_stored_count():
+    class S:
+        def upsert_rows(self, k, rows):
+            pass
+
+        def count_month(self, k, m):
+            return 0
+
+        def count_since(self, k, since):
+            return 600
+
+        def load(self, k, since, m1):
+            return {}
+
+        def load_recent(self, k, days):
+            return {}
+    calls = []
+    gold_value.sync_history(NOW, _fake_prices(_long_hist(), calls), S(), lambda s: None)
+    krx_pages = [p for k, p in calls if k == KRX_GOLD.key]
+    assert krx_pages[:2] == [1, 10]           # 600행 적재 → 10페이지부터(1페이지 겹침)
+
+
+def test_gold_store_count_since_uses_exact_count():
+    class R:
+        data, count = [], 642
+
+    class Q(_Q):
+        def execute(self):
+            return R()
+
+    class C(_Client):
+        def table(self, name):
+            return Q(self.log)
+    c = C()
+    assert gold_value.GoldStore(c).count_since("usdkrw", "2021-10-01") == 642
+    assert ("select", ("day",), {"count": "exact"}) in c.log
+
+
+def test_run_gold_timeout_keeps_sleeve_texts(tmp_path, monkeypatch):
+    from test_kr_sleeve import _http_ok
+    monkeypatch.setattr(gold_value, "build_panel",
+                        lambda *a, **k: {"status": "skipped", "reason": gold_value.GOLD_TIMEOUT, "detail": ""})
+    code, res, pub = _run(tmp_path, "dry_run", _http_ok(date(2026, 10, 2)))
+    assert code == 0 and res["status"] == "computed"
+    assert res["gold_panel"]["reason"] == gold_value.GOLD_TIMEOUT
+    assert "금으로" not in json.dumps(res["texts"], ensure_ascii=False)
