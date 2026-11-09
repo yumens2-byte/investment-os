@@ -8,6 +8,7 @@ kr_sleeve/formatter.py — KR 슬리브 발행 문구 (DN2026_0108, 회장 승�
   Facebook : 평문 별도 요약
   운영자    : skipped·발행 실패 알림(종목코드·정식명 포함 — 비공개 방)
 공개 문구에는 마스킹 표기(P**S, Ti**ER)만 쓰고 종목코드·정식 브랜드명은 넣지 않는다(회장 지시 11-09).
+금으로 잰 화폐가치 패널(DN2026_0109): ctx["gold"]가 status ok일 때만 넣는다. 아니면 문구는 v1.0.2와 바이트 동일.
 """
 from __future__ import annotations
 
@@ -15,7 +16,7 @@ import random
 from datetime import datetime, timedelta, timezone
 from zoneinfo import ZoneInfo
 
-from kr_sleeve import config
+from kr_sleeve import config, gold_value
 
 KST = timezone(timedelta(hours=9))
 _ET = ZoneInfo("America/New_York")
@@ -71,6 +72,11 @@ def _kr_total(result: dict, etf: config.KrEtf) -> int:
     return result["total_allocation"][etf.code]
 
 
+def _gold(ctx: dict) -> dict | None:
+    g = ctx.get("gold")
+    return g if isinstance(g, dict) and g.get("status") == "ok" else None
+
+
 def _kr_date(quotes: dict) -> str:
     days = sorted({q["as_of"] for q in quotes.values()})
     return " / ".join(_mmdd(d) for d in days)
@@ -88,6 +94,8 @@ def format_x(ctx: dict, rng: random.Random | None = None) -> str:
     ]
     for etf in config.KR_ETFS:
         lines.append(f"▪ {etf.display} {_kr_total(res, etf)}%")
+    if _gold(ctx):
+        lines += ["", *gold_value.panel_x(_gold(ctx))]
     lines += [
         "",
         f"🗓 레짐: 미국 {ctx['us_session']} 마감 · 가격: 국내 {_kr_date(ctx['quotes'])} 종가",
@@ -130,6 +138,10 @@ def format_telegram(ctx: dict) -> str:
         f"🗓 레짐 기준: 미국 {ctx['us_session']} 마감  |  국내 가격: {_kr_date(quotes)} 종가",
         f"ℹ️ morning 미국 6종 비중과 다른 이유: KR 슬리브 {res['k_pct']}%를 더한 합산 모델",
         "",
+    ]
+    if _gold(ctx):
+        lines += [*gold_value.panel_telegram(_gold(ctx)), ""]
+    lines += [
         DISCLAIMER,
     ]
     return "\n".join(lines)
@@ -158,6 +170,10 @@ def format_facebook(ctx: dict) -> str:
         f"이를 포함한 실효 미국 주식 노출은 약 {res['lookthrough_us_pct']:.0f}%입니다.",
         f"국내 가격은 {_kr_date(ctx['quotes'])} 종가, 원화 평가 기준입니다.",
         "",
+    ]
+    if _gold(ctx):
+        lines += [*gold_value.panel_facebook(_gold(ctx)), ""]
+    lines += [
         DISCLAIMER,
         "#국내ETF #자산배분",
     ]
