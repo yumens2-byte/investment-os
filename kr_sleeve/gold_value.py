@@ -301,9 +301,8 @@ CUR_LABEL = {"usd": "달러", "jpy": "엔", "krw": "원"}
 
 
 def fmt_pct(x: float) -> str:
-    """공개 표기 소수 1자리, 음수 기호는 U+2212."""
-    s = f"{x:+.1f}%"
-    return s.replace("-", "−")
+    """공개 표기 소수 1자리. 마이너스는 슬리브 본문과 같은 ASCII '-'(R5, 회장 승인 11-09 16:39)."""
+    return f"{x:+.1f}%"
 
 
 def won_position(value_pct: dict) -> str:
@@ -329,30 +328,35 @@ def _month_label(m: str) -> str:
     return f"{m[2:4]}년 {int(m[5:])}월"
 
 
+def _month_short(m: str) -> str:
+    return f"{m[2:4]}.{m[5:7]}"
+
+
 def short_line(p: dict) -> str:
     v = p["short"]["value_pct"]
     return " · ".join(f"{CUR_LABEL[c]} {fmt_pct(v[c])}" for c in ("usd", "jpy", "krw"))
 
 
-SOURCE_NOTE = "국내 금 KRX 금시장(원/g) 월평균 · 1개월은 국제 금 선물(근월물) × 환율 · 세금·수수료 제외"
+SOURCE_NOTE = "국내 금 KRX 금시장(원/g) 월평균 · 1개월은 국제 금 선물(근월물)×환율 · 세금·수수료 제외"
+PLUS_NOTE = "※ +는 같은 돈으로 살 수 있는 금이 늘었다는 뜻"
 
 
 def panel_telegram(p: dict) -> list[str]:
+    """가독성 최종 검토 반영(R1~R6): 공백 정렬 제거, 기준 월 명시, '금 기준' 명시, 줄 분리."""
     lg, sh = p["long"], p["short"]
     g = lg["grams"]
     d0, d1 = sh["from"], sh["to"]
     return [
         "🪙 <b>금으로 잰 화폐가치</b>",
-        f"1억 원으로 살 수 있는 금 (5년 · {_month_label(lg['from_month'])} 평균 → "
-        f"{_month_label(lg['to_month'])} 평균)",
-        f"  5년 전  {g['krw']['then']:,.0f}g",
-        f"  지금    {g['krw']['now']:,.0f}g   ({fmt_pct(g['krw']['pct'])})",
-        f"같은 기간 1만 달러 {fmt_pct(g['usd']['pct'])} ({g['usd']['then']:,.1f}g → {g['usd']['now']:,.1f}g)"
-        f" · 100만 엔 {fmt_pct(g['jpy']['pct'])} ({g['jpy']['then']:,.1f}g → {g['jpy']['now']:,.1f}g)",
+        "1억 원으로 살 수 있는 금",
+        f"5년 전({_month_short(lg['from_month'])} 평균) {g['krw']['then']:,.0f}g → "
+        f"최근({_month_short(lg['to_month'])} 평균) {g['krw']['now']:,.0f}g ({fmt_pct(g['krw']['pct'])})",
+        f"· 1만 달러  {g['usd']['then']:,.1f}g → {g['usd']['now']:,.1f}g ({fmt_pct(g['usd']['pct'])})",
+        f"· 100만 엔  {g['jpy']['then']:,.1f}g → {g['jpy']['now']:,.1f}g ({fmt_pct(g['jpy']['pct'])})",
         "",
-        f"최근 1개월({d0[5:7]}/{d0[8:]} → {d1[5:7]}/{d1[8:]}): {short_line(p)}",
-        f"(금값(달러) {fmt_pct(sh['gold_usd_pct'])} · + = 같은 돈으로 살 수 있는 금 증가)",
-        won_position(sh["value_pct"]),
+        f"최근 1개월 금 기준 가치 ({d0[5:7]}/{d0[8:]} → {d1[5:7]}/{d1[8:]})",
+        f"{short_line(p)} — {won_position(sh['value_pct'])}",
+        f"{PLUS_NOTE} · 같은 기간 금값(달러) {fmt_pct(sh['gold_usd_pct'])}",
         f"<i>{SOURCE_NOTE}</i>",
     ]
 
@@ -362,18 +366,20 @@ def panel_facebook(p: dict) -> list[str]:
     g = lg["grams"]
     return [
         "🪙 금으로 잰 화폐가치",
-        f"5년 전({_month_label(lg['from_month'])} 평균) 1억 원으로 금 {g['krw']['then']:,.0f}g을 살 수 있었는데, "
-        f"지금({_month_label(lg['to_month'])} 평균)은 {g['krw']['now']:,.0f}g입니다({fmt_pct(g['krw']['pct'])}).",
-        f"같은 기간 1만 달러는 {fmt_pct(g['usd']['pct'])}, 100만 엔은 {fmt_pct(g['jpy']['pct'])}.",
-        f"최근 1개월: {short_line(p)} (금값(달러) {fmt_pct(sh['gold_usd_pct'])})",
+        f"1억 원으로 살 수 있는 금이 5년 새 {g['krw']['then']:,.0f}g({_month_label(lg['from_month'])} 평균)에서 "
+        f"{g['krw']['now']:,.0f}g({_month_label(lg['to_month'])} 평균)으로 줄었습니다({fmt_pct(g['krw']['pct'])}).",
+        f"같은 기간 1만 달러는 {fmt_pct(g['usd']['pct'])}, 100만 엔은 {fmt_pct(g['jpy']['pct'])}였습니다.",
+        f"최근 1개월 금 기준 가치: {short_line(p)} (같은 기간 금값(달러) {fmt_pct(sh['gold_usd_pct'])})",
         f"※ {SOURCE_NOTE}",
     ]
 
 
 def panel_x(p: dict) -> list[str]:
-    g = p["long"]["grams"]["krw"]
+    lg = p["long"]
+    g = lg["grams"]["krw"]
     return [
-        f"🪙 금으로 재면 1억 원: 5년 전 {g['then']:,.0f}g → 지금 {g['now']:,.0f}g ({fmt_pct(g['pct'])})",
+        f"🪙 금으로 재면 1억 원: {g['then']:,.0f}g({_month_short(lg['from_month'])}) → "
+        f"{g['now']:,.0f}g({_month_short(lg['to_month'])}), {fmt_pct(g['pct'])}",
         f"1개월 금 기준 가치: {short_line(p)}",
     ]
 

@@ -161,20 +161,28 @@ def test_won_position(v, expected):
     assert gold_value.won_position(v) == expected
 
 
-def test_fmt_pct_one_decimal_minus_sign():
-    assert gold_value.fmt_pct(-61.72) == "−61.7%"
+def test_fmt_pct_one_decimal_ascii_minus():
+    assert gold_value.fmt_pct(-61.72) == "-61.7%"
     assert gold_value.fmt_pct(1.61) == "+1.6%"
 
 
-def test_panel_texts_match_approved_sample():
+def test_panel_texts_match_final_review():
     p = gold_value.compute(_hist(), NOW)
     tg = gold_value.panel_telegram(p)
-    assert tg[2] == "  5년 전  1,479g" and tg[3] == "  지금    566g   (−61.7%)"
-    assert "21년 10월 평균 → 26년 10월 평균" in tg[1]
-    assert "+ = 같은 돈으로 살 수 있는 금 증가" in tg[7]
+    assert tg[2] == "5년 전(21.10 평균) 1,479g → 최근(26.10 평균) 566g (-61.7%)"
+    assert tg[3] == "· 1만 달러  174.8g → 75.7g (-56.7%)"
+    assert tg[4] == "· 100만 엔  154.4g → 47.9g (-69.0%)"
+    assert tg[6] == "최근 1개월 금 기준 가치 (10/07 → 11/06)"
+    assert tg[8].startswith("※ +는 같은 돈으로 살 수 있는 금이 늘었다는 뜻 · 같은 기간 금값(달러) -1.6%")
+    assert not any("  " in line.strip() and line.startswith(" ") for line in tg)   # R1 공백 정렬 없음
+    fb = gold_value.panel_facebook(p)
+    assert fb[1] == ("1억 원으로 살 수 있는 금이 5년 새 1,479g(21년 10월 평균)에서 566g(26년 10월 평균)으로 "
+                     "줄었습니다(-61.7%).")
+    assert fb[3].startswith("최근 1개월 금 기준 가치: ")
     x = gold_value.panel_x(p)
-    assert x[0] == "🪙 금으로 재면 1억 원: 5년 전 1,479g → 지금 566g (−61.7%)"
+    assert x[0] == "🪙 금으로 재면 1억 원: 1,479g(21.10) → 566g(26.10), -61.7%"
     assert x[1].startswith("1개월 금 기준 가치: 달러 +1.6% · 엔 +1.6% · 원 +1.6%")
+    assert "\u2212" not in "\n".join(tg + fb + x)   # R5 마이너스 기호 통일
 
 
 # ── T-G07 금지 표현·종목 노출 ────────────────────────────────
