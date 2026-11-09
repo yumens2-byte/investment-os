@@ -189,9 +189,6 @@ def _publish_all(out: dict, texts: dict, store, pub, sleep, rng, input_ts: datet
     plan = (("telegram", pub.publish_telegram), ("facebook", pub.publish_facebook), ("x", pub.publish_x))
     for name, fn in plan:
         if name == "x":
-            if formatter.x_weighted_length(texts["x"]) > formatter.X_MAX_WEIGHTED:   # R4 S1
-                channels[name] = {"status": "blocked", "reason": "X_TOO_LONG"}
-                continue
             sleep(rng.uniform(*config.X_DELAY_RANGE_SEC))
         why = _window_reason(input_ts, clock())
         if why:

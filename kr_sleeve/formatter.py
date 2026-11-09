@@ -1,7 +1,9 @@
 """
 kr_sleeve/formatter.py — KR 슬리브 발행 문구 (DN2026_0108, 회장 승인 템플릿 11-09)
 
-  X        : 국내 2종 + k 한 줄, 기준일. 가중 280자 이내. 첫 줄 5종·해시태그 풀 무작위(STD-PUB-10)
+  X        : 국내 2종 + k 한 줄, 기준일. 첫 줄 5종·해시태그 풀 무작위(STD-PUB-10).
+             X 계정은 프리미엄(장문 허용)이라 길이 차단·자르기 없음(회장 지시 11-09).
+             가중 길이는 참고값으로만 기록
   Telegram : HTML. 슬리브 구성 · 합산 8종 · 실효 미국 노출 · 기준일 2개 · 통화 주석
   Facebook : 평문 별도 요약
   운영자    : skipped·발행 실패 알림(종목코드·정식명 포함 — 비공개 방)
@@ -18,7 +20,6 @@ from kr_sleeve import config
 KST = timezone(timedelta(hours=9))
 _ET = ZoneInfo("America/New_York")
 DISCLAIMER = "⚠️ 모델 비중 · 투자 참고 정보, 투자 권유 아님"
-X_MAX_WEIGHTED = 280
 
 _X_OPENERS = (
     "🇰🇷 KR Sleeve",
@@ -94,10 +95,7 @@ def format_x(ctx: dict, rng: random.Random | None = None) -> str:
         "",
         tags,
     ]
-    text = "\n".join(lines)
-    if x_weighted_length(text) > X_MAX_WEIGHTED:   # 해시태그부터 줄인다
-        text = "\n".join(lines[:-2])
-    return text
+    return "\n".join(lines)
 
 
 # ── Telegram (HTML) ─────────────────────────────────────────

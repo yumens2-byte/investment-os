@@ -370,7 +370,7 @@ def test_public_texts_contract(regime):
     ctx = _ctx(regime)
     for seed in range(30):
         x = formatter.format_x(ctx, random.Random(seed))
-        assert formatter.x_weighted_length(x) <= 280
+        assert x.endswith(formatter._REGIME_TAG[regime])   # 프리미엄 계정: 해시태그를 자르지 않는다
         assert formatter.DISCLAIMER in x
     texts = [formatter.format_telegram(ctx), formatter.format_facebook(ctx),
              formatter.format_x(ctx, random.Random(1))]
@@ -559,14 +559,6 @@ def test_run_live_publisher_exception_continues(tmp_path, monkeypatch):
     assert res["publish"]["channels"]["facebook"]["status"] == "unknown"
     assert ("finish", "facebook", "unknown") in store.calls
     assert res["status"] == "published" and pub.notes
-
-
-def test_run_live_x_too_long_blocked(tmp_path, monkeypatch):
-    monkeypatch.setattr(formatter, "X_MAX_WEIGHTED", 10)
-    store = FakeStore()
-    code, res, pub, *_ = _run_live(tmp_path, monkeypatch, store=store)
-    assert res["publish"]["channels"]["x"] == {"status": "blocked", "reason": "X_TOO_LONG"}
-    assert "x" not in pub.calls
 
 
 def test_artifact_and_summary_masked(tmp_path, monkeypatch):
