@@ -26,6 +26,7 @@ name: Investment OS Auto Publish
 #  cron ↔ job if 매핑표 (전 세션 KST 월~금 기준으로 정합화 완료)
 #
 #   '36 21 * * 0-4'      → morning         | KST 월~금 06:36  (UTC 일~목)
+#   (cron 없음, needs)   → kr_sleeve       | morning 성공 직후 같은 실행에서 (DN2026_0108)
 #   '36 2  * * 1-5'      → narrative       | KST 월~금 11:36  (UTC 월~금)
 #   '36 9  * * 1-5'      → full_dashboard  | KST 월~금 18:36  (UTC 월~금)
 #   '*/10 13-14 * * 1-5' → alert_check     | KST 월~금 22:00~23:50 (UTC 월~금)
@@ -155,6 +156,16 @@ on:
         options:
           - "false"
           - "true"
+      # DN2026_0108 (2026-11-09): KR Sleeve 모드. session=morning 수동 실행 때만 쓰인다(예약 실행은 vars.KR_SLEEVE_MODE).
+      kr_sleeve_mode:
+        description: "KR Sleeve 모드 (dry_run=계산만, shadow=DB 기록, live=발행) — morning 선택 시만 적용"
+        required: false
+        default: dry_run
+        type: choice
+        options:
+          - dry_run
+          - shadow
+          - live
       # FB-1 (2026-10-05): 발행 채널 선택. alert 세션에는 적용되지 않는다.
       channel:
         description: "channel (all=X+TG+FB, x=X만, face=FB만 / alert 선택 시 무시됨)"
@@ -239,6 +250,12 @@ jobs:
         env:
           DRY_RUN: "true"
           FORCE_RUN: "false"
+      # DN2026_0108 (2026-11-09): KR Sleeve 단위·계약 테스트 (외부 호출 없음)
+      - name: KR Sleeve tests
+        run: python -m pytest -q tests/test_kr_sleeve.py
+        env:
+          DRY_RUN: "true"
+          KR_SLEEVE_MODE: dry_run
 
   # ═══════════════════════════════════════════════════════════
   #  morning | KST 월~금 06:36  (cron: 36 21 * * 0-4 / UTC 일~목)
@@ -394,6 +411,46 @@ jobs:
         with:
           path: data/published/dlq.json
           key: dlq-${{ github.ref }}-${{ github.run_id }}
+
+  # ═══════════════════════════════════════════════════════════
+  #  kr_sleeve | KR Sleeve — 국내 ETF 2종 별도 파이프라인 (DN2026_0108)
+  #  morning 이 성공한 같은 실행에서 바로 이어서 돈다(needs). 자체 cron 없음.
+  #  - 입력: morning artifact 의 core_data.json (읽기 전용). core-data 캐시는 저장하지 않는다
+  #    (alert_check 가 core-data- prefix 로 복원하므로 간섭 방지).
+  #  - 모드: KR_SLEEVE_MODE (dry_run/shadow/live, 미등록·오타 = dry_run). 기존 DRY_RUN=true 면 발행 안 함.
+  #  - morning job 의 단계·시간·출력은 바뀌지 않는다(별도 러너).
+  # ═══════════════════════════════════════════════════════════
+  kr_sleeve:
+    name: KR Sleeve
+    needs: morning
+    if: needs.morning.result == 'success'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    concurrency:
+      group: kr-sleeve-${{ github.ref }}
+      cancel-in-progress: false
+    env:
+      KR_SLEEVE_MODE: ${{ github.event_name == 'workflow_dispatch' && inputs.kr_sleeve_mode || vars.KR_SLEEVE_MODE || 'dry_run' }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+      - run: pip install -r requirements.txt
+      - name: Download morning core_data
+        uses: actions/download-artifact@v4
+        with:
+          name: morning-${{ github.run_id }}
+          path: data/outputs
+      - name: Run KR Sleeve
+        run: python -m kr_sleeve.run --input data/outputs/core_data.json --out data/outputs/kr_sleeve.json
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: kr-sleeve-${{ github.run_id }}
+          path: data/outputs/kr_sleeve.json
+          retention-days: 14
 
   # ═══════════════════════════════════════════════════════════
   #  intraday | cron 비활성 — workflow_dispatch(session=intraday) 전용
