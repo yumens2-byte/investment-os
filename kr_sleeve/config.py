@@ -10,7 +10,7 @@ import logging
 import os
 from dataclasses import dataclass
 
-VERSION = "1.0.2"
+VERSION = "1.1.0"  # 1.1.0: 금으로 잰 화폐가치 패널(DN2026_0109)
 
 logger = logging.getLogger(__name__)
 
@@ -59,6 +59,23 @@ MIN_COMPLETED_BARS = 2
 FCHART_COUNT = 30
 HTTP_TIMEOUT_SEC = 15
 X_DELAY_RANGE_SEC = (180, 600)  # X 발행 전 무작위 대기(안티봇, STD-PUB-10)
+
+# ── 금으로 잰 화폐가치 패널 (DN2026_0109, 회장 승인 11-09) ─────────
+GOLD_ENABLED = True
+GOLD_AMOUNTS = {"krw": 100_000_000, "usd": 10_000, "jpy": 1_000_000}   # 1억 원 · 1만 달러 · 100만 엔
+OZ_G = 31.1034768               # 트로이온스 → g
+GOLD_LONG_YEARS = 5             # 5년 = 최신 완료 월 vs 60개월 전 같은 월(고정 규칙 G-03)
+GOLD_SHORT_DAYS = 30            # 1개월 = 금 마지막 확정일 T vs T−30일 이하 최신일
+GOLD_MIN_DAYS_PER_MONTH = 10    # 월평균 최소 거래일
+GOLD_FX_MAX_GAP_DAYS = 4        # 기준일 대비 허용 공백(연휴 고려)
+GOLD_MAX_STALE_DAYS = 7         # 마지막 확정일이 이보다 오래되면 GOLD_STALE
+GOLD_JUMP_REJECT_PCT = 15.0     # 전일 대비 초과 시 의심값으로 제외
+GOLD_JUMP_WARN_PCT = 8.0        # 1개월 창 안 급변 경고(롤오버 후보)
+GOLD_SIMILAR_PP = 0.2           # 통화 간 차이가 이 미만이면 '비슷'
+GOLD_PAGE_SIZE = 60             # 실측 상한(100은 HTTP 400)
+GOLD_BACKFILL_MAX_PAGES = 45
+GOLD_PAGE_SLEEP_SEC = 0.4
+GOLD_RECENT_DAYS = 45           # DB에서 1개월 계산용으로 읽는 최근 일수
 
 # ── 모드 (STD-MODE-01) ───────────────────────────────────────
 MODES = ("dry_run", "shadow", "live")

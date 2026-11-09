@@ -19,7 +19,7 @@ import sys
 import time
 from datetime import UTC, datetime, timedelta, timezone
 
-from kr_sleeve import config, engine, formatter, input_contract
+from kr_sleeve import config, engine, formatter, gold_value, input_contract
 from kr_sleeve import publisher as default_publisher
 from kr_sleeve.collector import MARKET_CLOSED, MARKET_OPEN, collect
 from kr_sleeve.errors import ALREADY_DONE, BENIGN, DB_WRITE_FAILED, SleeveSkip
@@ -82,7 +82,8 @@ def _publish_gate(mode: str, inp, market: str, now: datetime) -> tuple[bool, str
 
 def run(input_path: str, out_path: str, *, now: datetime | None = None, mode: str | None = None,
         http_get=None, store_factory=None, pub=None, sleep=time.sleep,
-        rng: random.Random | None = None, clock=None) -> tuple[int, dict]:
+        rng: random.Random | None = None, clock=None,
+        gold_http_get=None, gold_store_factory=None) -> tuple[int, dict]:
     now = now or datetime.now(UTC)
     clock = clock or (lambda: datetime.now(UTC))
     mode = mode or config.current_mode()
@@ -116,11 +117,12 @@ def run(input_path: str, out_path: str, *, now: datetime | None = None, mode: st
         quotes, market = collect(now, **kwargs)
         result = engine.compute(inp.us_allocation)
         q = {code: v.to_dict() for code, v in quotes.items()}
+        gold = _gold_panel(now, mode, http_get, store_factory, gold_http_get, gold_store_factory, sleep)
         ctx = {"result": result, "quotes": q, "regime": inp.regime, "risk_level": inp.risk_level,
-               "us_session": formatter.us_session_label(inp.timestamp)}
+               "us_session": formatter.us_session_label(inp.timestamp), "gold": gold}
         texts = {"x": formatter.format_x(ctx, rng), "telegram": formatter.format_telegram(ctx),
                  "facebook": formatter.format_facebook(ctx)}
-        out.update({"status": "computed", "kr_quotes": q, "kr_market_state": market,
+        out.update({"status": "computed", "kr_quotes": q, "kr_market_state": market, "gold_panel": gold,
                     "kr_market_closed": {MARKET_OPEN: False, MARKET_CLOSED: True}.get(market),
                     "result": result, "texts": texts,
                     "x_weighted_length": formatter.x_weighted_length(texts["x"])})
@@ -160,6 +162,24 @@ def run(input_path: str, out_path: str, *, now: datetime | None = None, mode: st
     _summary(out)
     logger.info("[KRSleeve] 종료 status=%s reason=%s exit=%s", out["status"], out.get("reason"), exit_code)
     return exit_code, out
+
+
+def _gold_panel(now, mode, http_get, store_factory, gold_http_get, gold_store_factory, sleep) -> dict:
+    """DN2026_0109 금 패널. 실패해도 예외를 내지 않는다(패널만 생략, G-09).
+    - 테스트가 http_get만 주입하면 그 가짜를 금 수집에도 써서 외부 호출을 막는다(STD-TEST-14).
+    - 이력 DB는 shadow·live 운영 경로(store_factory 미주입)에서만 쓴다. dry_run은 메모리 계산."""
+    if not config.GOLD_ENABLED:
+        return {"status": "skipped", "reason": "GOLD_DISABLED", "detail": ""}
+    getter = gold_http_get or http_get
+    gstore = None
+    try:
+        if gold_store_factory is not None:
+            gstore = gold_store_factory()
+        elif mode in ("shadow", "live") and store_factory is None:
+            gstore = gold_value.GoldStore()
+    except Exception as e:  # noqa: BLE001
+        return {"status": "skipped", "reason": gold_value.GOLD_DB, "detail": type(e).__name__}
+    return gold_value.build_panel(now, getter, gstore, sleep)
 
 
 def _default_store():
