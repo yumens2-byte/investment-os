@@ -12,12 +12,15 @@ from __future__ import annotations
 from kr_sleeve import config
 
 
-def largest_remainder(raw: dict[str, float], total: int = 100) -> dict[str, int]:
-    """실수 비중을 합이 total인 정수로 바꾼다. 잔여가 같으면 입력 순서가 앞선 키에 먼저 준다."""
-    floors = {k: int(v) for k, v in raw.items()}
-    short = total - sum(floors.values())
-    order = sorted(raw, key=lambda k: (-(raw[k] - floors[k]), list(raw).index(k)))
-    for k in order[:max(short, 0)]:
+def largest_remainder(hundredths: dict[str, int], total: int = 100) -> dict[str, int]:
+    """1/100% 단위 정수 비중을 합이 total인 % 정수로 바꾼다(정수 연산 — 부동소수 동점 오차 없음, R4 W1).
+    잔여가 같으면 입력 순서가 앞선 키에 먼저 준다."""
+    if sum(hundredths.values()) != total * 100:
+        raise ValueError(f"입력 합 {sum(hundredths.values())} ≠ {total * 100}")
+    floors = {k: v // 100 for k, v in hundredths.items()}
+    keys = list(hundredths)
+    order = sorted(keys, key=lambda k: (-(hundredths[k] % 100), keys.index(k)))
+    for k in order[:total - sum(floors.values())]:
         floors[k] += 1
     return floors
 
@@ -32,9 +35,9 @@ def combine(us_alloc: dict[str, int], internal: dict[str, int], k_pct: int) -> d
         raise ValueError(f"k_pct 범위 오류: {k_pct}")
     if sum(internal.values()) != 100:
         raise ValueError(f"내부 비중 합 {sum(internal.values())} ≠ 100")
-    raw: dict[str, float] = {e: us_alloc[e] * (100 - k_pct) / 100 for e in config.US_ETFS}
+    raw: dict[str, int] = {e: us_alloc[e] * (100 - k_pct) for e in config.US_ETFS}   # 1/100% 단위
     for etf in config.KR_ETFS:
-        raw[etf.code] = k_pct * internal[etf.code] / 100
+        raw[etf.code] = k_pct * internal[etf.code]
     result = largest_remainder(raw)
     assert sum(result.values()) == 100 and min(result.values()) >= 0
     return result

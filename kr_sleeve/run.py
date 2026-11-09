@@ -21,7 +21,7 @@ from datetime import UTC, datetime, timedelta, timezone
 
 from kr_sleeve import config, engine, formatter, input_contract
 from kr_sleeve import publisher as default_publisher
-from kr_sleeve.collector import collect
+from kr_sleeve.collector import MARKET_CLOSED, MARKET_OPEN, collect
 from kr_sleeve.errors import ALREADY_DONE, BENIGN, DB_WRITE_FAILED, SleeveSkip
 
 VERSION = config.VERSION
@@ -37,9 +37,10 @@ def _setup_logging() -> None:
 
 
 def _write_json(path: str, obj: dict) -> None:
+    """artifact는 공개 레포 Actions에서 내려받을 수 있으므로 종목코드·정식명을 마스킹해 쓴다(R4 W5)."""
     os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
     with open(path, "w", encoding="utf-8") as f:
-        json.dump(obj, f, ensure_ascii=False, indent=2)
+        f.write(config.mask_codes(json.dumps(obj, ensure_ascii=False, indent=2)))
 
 
 def _summary(out: dict) -> None:
@@ -55,24 +56,35 @@ def _summary(out: dict) -> None:
     for ch, r in ((out.get("publish") or {}).get("channels") or {}).items():
         lines.append(f"- 발행 {ch}: {r.get('status')} {r.get('reason') or ''}")
     with open(path, "a", encoding="utf-8") as f:
-        f.write("\n".join(lines) + "\n")
+        f.write(config.mask_codes("\n".join(lines)) + "\n")
 
 
-def _publish_gate(mode: str, inp, closed: bool, now: datetime) -> tuple[bool, str | None]:
+def _window_reason(input_ts: datetime, now: datetime) -> str | None:
+    age = (now - input_ts).total_seconds() / 60
+    if age > config.PUBLISH_WINDOW_MIN:
+        return f"PUBLISH_WINDOW_EXCEEDED({age:.0f}분>{config.PUBLISH_WINDOW_MIN}분)"
+    return None
+
+
+def _publish_gate(mode: str, inp, market: str, now: datetime) -> tuple[bool, str | None]:
     if mode != "live":
         return False, f"mode={mode}"
-    if closed:
+    from config.settings import is_dry_run
+    if is_dry_run():                       # R4 S3: 전역 DRY_RUN이면 claim 전에 막는다
+        return False, "GLOBAL_DRY_RUN"
+    if market == MARKET_CLOSED:
         return False, "KR_MARKET_CLOSED"
-    age = (now - inp.timestamp).total_seconds() / 60
-    if age > config.PUBLISH_WINDOW_MIN:
-        return False, f"PUBLISH_WINDOW_EXCEEDED({age:.0f}분>{config.PUBLISH_WINDOW_MIN}분)"
-    return True, None
+    if market != MARKET_OPEN:              # R4 C1: 장 시작 전에는 휴장 여부를 알 수 없음 → 발행 안 함
+        return False, "KR_OPEN_UNVERIFIED"
+    why = _window_reason(inp.timestamp, now)
+    return (why is None), why
 
 
 def run(input_path: str, out_path: str, *, now: datetime | None = None, mode: str | None = None,
         http_get=None, store_factory=None, pub=None, sleep=time.sleep,
-        rng: random.Random | None = None) -> tuple[int, dict]:
+        rng: random.Random | None = None, clock=None) -> tuple[int, dict]:
     now = now or datetime.now(UTC)
+    clock = clock or (lambda: datetime.now(UTC))
     mode = mode or config.current_mode()
     pub = pub or default_publisher
     rng = rng or random.Random()
@@ -101,14 +113,15 @@ def run(input_path: str, out_path: str, *, now: datetime | None = None, mode: st
                 raise SleeveSkip(ALREADY_DONE, out["run_date"])
 
         kwargs = {"http_get": http_get} if http_get else {}
-        quotes, closed = collect(now, **kwargs)
+        quotes, market = collect(now, **kwargs)
         result = engine.compute(inp.us_allocation)
         q = {code: v.to_dict() for code, v in quotes.items()}
         ctx = {"result": result, "quotes": q, "regime": inp.regime, "risk_level": inp.risk_level,
                "us_session": formatter.us_session_label(inp.timestamp)}
         texts = {"x": formatter.format_x(ctx, rng), "telegram": formatter.format_telegram(ctx),
                  "facebook": formatter.format_facebook(ctx)}
-        out.update({"status": "computed", "kr_quotes": q, "kr_market_closed": closed,
+        out.update({"status": "computed", "kr_quotes": q, "kr_market_state": market,
+                    "kr_market_closed": {MARKET_OPEN: False, MARKET_CLOSED: True}.get(market),
                     "result": result, "texts": texts,
                     "x_weighted_length": formatter.x_weighted_length(texts["x"])})
 
@@ -118,14 +131,14 @@ def run(input_path: str, out_path: str, *, now: datetime | None = None, mode: st
             except Exception as e:  # noqa: BLE001
                 raise SleeveSkip(DB_WRITE_FAILED, f"daily 기록 실패: {type(e).__name__}") from e
 
-        allowed, why = _publish_gate(mode, inp, closed, now)
+        allowed, why = _publish_gate(mode, inp, market, now)
         out["publish"] = {"allowed": allowed, "blocked_reason": why, "channels": {}}
         if allowed:
-            _publish_all(out, texts, store, pub, sleep, rng)
+            _publish_all(out, texts, store, pub, sleep, rng, inp.timestamp, clock)
 
     except SleeveSkip as s:
         out.update({"status": "skipped", "reason": s.code, "detail": s.detail})
-        logger.warning("[KRSleeve] skipped: %s %s", s.code, s.detail)
+        logger.warning("[KRSleeve] skipped: %s %s", s.code, config.mask_codes(s.detail))
         if s.code == DB_WRITE_FAILED:
             exit_code = 1
         if store is not None and s.code not in BENIGN and s.code != DB_WRITE_FAILED:
@@ -168,12 +181,22 @@ def _daily_row(out: dict) -> dict:
     }
 
 
-def _publish_all(out: dict, texts: dict, store, pub, sleep, rng) -> None:
-    """채널별 pending 선기록 → 1회 발행 → 결과 기록. 선기록 실패 채널은 발행하지 않는다(STD-PUB-01)."""
+def _publish_all(out: dict, texts: dict, store, pub, sleep, rng, input_ts: datetime, clock) -> None:
+    """채널별 pending 선기록 → 1회 발행 → 결과 기록. 선기록 실패 채널은 발행하지 않는다(STD-PUB-01).
+    60분 창은 채널마다 발행 직전에 다시 판정한다(R4 C2: X 무작위 대기 뒤 창 초과 방지)."""
     run_date = out["run_date"]
     channels = out["publish"]["channels"]
     plan = (("telegram", pub.publish_telegram), ("facebook", pub.publish_facebook), ("x", pub.publish_x))
     for name, fn in plan:
+        if name == "x":
+            if formatter.x_weighted_length(texts["x"]) > formatter.X_MAX_WEIGHTED:   # R4 S1
+                channels[name] = {"status": "blocked", "reason": "X_TOO_LONG"}
+                continue
+            sleep(rng.uniform(*config.X_DELAY_RANGE_SEC))
+        why = _window_reason(input_ts, clock())
+        if why:
+            channels[name] = {"status": "blocked", "reason": why}
+            continue
         try:
             if not store.claim_publish(run_date, name):
                 channels[name] = {"status": "skipped", "reason": "already_claimed"}
@@ -181,9 +204,10 @@ def _publish_all(out: dict, texts: dict, store, pub, sleep, rng) -> None:
         except Exception as e:  # noqa: BLE001
             channels[name] = {"status": "failed", "reason": f"claim_failed:{type(e).__name__}"}
             continue
-        if name == "x":
-            sleep(rng.uniform(*config.X_DELAY_RANGE_SEC))
-        res = fn(texts[name])
+        try:
+            res = fn(texts[name])
+        except Exception as e:  # noqa: BLE001 — R4 W3: 전송 여부 미확정 → unknown, 다음 채널 계속
+            res = {"status": "unknown", "post_id": None, "reason": f"publish_exception:{type(e).__name__}"}
         channels[name] = res
         try:
             store.finish_publish(run_date, name, res["status"], res.get("post_id"), res.get("reason"))

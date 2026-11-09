@@ -39,6 +39,11 @@ class SleeveStore:
         return bool(row and row.get("status") in DONE_STATUSES)
 
     def upsert_daily(self, row: dict) -> None:
+        """published 행은 덮어쓰지 않는다(R4 W2: 동시 실행이 발행 기록을 지우는 것 방지)."""
+        current = self.get_daily(row["run_date"])
+        if current and current.get("status") == "published":
+            logger.warning("[KRSleeve] %s 이미 published — daily 덮어쓰기 생략", row["run_date"])
+            return
         payload = {**row, "updated_at": _now_iso()}
         self.client.table(DAILY).upsert(payload, on_conflict="run_date").execute()
 

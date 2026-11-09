@@ -10,7 +10,7 @@ import logging
 import os
 from dataclasses import dataclass
 
-VERSION = "1.0.0"
+VERSION = "1.0.1"
 
 logger = logging.getLogger(__name__)
 
@@ -62,6 +62,14 @@ X_DELAY_RANGE_SEC = (180, 600)  # X 발행 전 무작위 대기(안티봇, STD-P
 
 # ── 모드 (STD-MODE-01) ───────────────────────────────────────
 MODES = ("dry_run", "shadow", "live")
+
+
+def mask_codes(text: str) -> str:
+    """공개 화면(Actions 로그·job summary·artifact)용: 종목코드·정식명을 마스킹 표기로 바꾼다.
+    (회장 지시 11-09)"""
+    for etf in KR_ETFS:
+        text = text.replace(etf.internal_name, etf.display).replace(etf.code, etf.short)
+    return text
 
 
 def parse_mode(raw: str | None) -> str:

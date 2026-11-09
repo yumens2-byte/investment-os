@@ -19,11 +19,14 @@ import yaml
 from kr_sleeve import config, engine, formatter, input_contract, publisher
 from kr_sleeve import run as kr_run
 from kr_sleeve.collector import (
+    MARKET_CLOSED,
+    MARKET_OPEN,
+    MARKET_UNKNOWN,
     Bar,
     build_quote,
     collect,
     completed_bars,
-    is_kr_market_closed_today,
+    kr_market_state,
     parse_fchart,
 )
 from kr_sleeve.errors import (
@@ -195,6 +198,14 @@ def test_us_input_not_mutated():
     assert us == before
 
 
+def test_largest_remainder_exact_tie_order():
+    # R4 W1: 잔여가 모두 .6인 동점 — 입력 순서(QQQM·XLK·SPYM)에 +1 (부동소수 오차 없음)
+    us = {"QQQM": 7, "XLK": 12, "SPYM": 17, "XLE": 22, "ITA": 27, "TLT": 15}
+    total = engine.combine(us, {"161510": 50, "0060H0": 50}, 20)
+    assert total == {"QQQM": 6, "XLK": 10, "SPYM": 14, "XLE": 17, "ITA": 21, "TLT": 12,
+                     "161510": 10, "0060H0": 10}
+
+
 def test_largest_remainder_rounding():
     us = {"QQQM": 33, "XLK": 17, "SPYM": 17, "XLE": 11, "ITA": 11, "TLT": 11}
     total = engine.combine(us, {"161510": 50, "0060H0": 50}, 15)
@@ -279,12 +290,14 @@ def test_completed_bars_excludes_today_during_session():
     assert [b.day for b in completed_bars(bars, after)] == days
 
 
-def test_kr_market_closed_detection():
+def test_kr_market_state():
     bars = _bars([date(2026, 11, 6)], [100])
-    assert is_kr_market_closed_today(bars, datetime(2026, 11, 9, 11, 0, tzinfo=KST)) is True
-    assert is_kr_market_closed_today(bars, datetime(2026, 11, 9, 7, 0, tzinfo=KST)) is False
+    assert kr_market_state(bars, datetime(2026, 11, 9, 11, 0, tzinfo=KST)) == MARKET_CLOSED
+    # R4 C1: 장 시작 전(07:00)에는 휴장 여부를 알 수 없다 → unknown(발행 불가)
+    assert kr_market_state(bars, datetime(2026, 11, 9, 7, 0, tzinfo=KST)) == MARKET_UNKNOWN
     open_bars = _bars([date(2026, 11, 6), date(2026, 11, 9)], [100, 101])
-    assert is_kr_market_closed_today(open_bars, datetime(2026, 11, 9, 11, 0, tzinfo=KST)) is False
+    assert kr_market_state(open_bars, datetime(2026, 11, 9, 11, 0, tzinfo=KST)) == MARKET_OPEN
+    assert kr_market_state(open_bars, datetime(2026, 11, 8, 11, 0, tzinfo=KST)) == MARKET_CLOSED  # 일요일
 
 
 def test_build_quote_uses_previous_close_intraday():
@@ -406,7 +419,7 @@ def _write_fixture(tmp_path, ts: datetime | None = None) -> pathlib.Path:
     return p
 
 
-def _run(tmp_path, mode, *, now=NOW_FIX, store=None, pub=None, http=None, ts=None):
+def _run(tmp_path, mode, *, now=NOW_FIX, store=None, pub=None, http=None, ts=None, clock=None):
     core = _write_fixture(tmp_path, ts)
     out = tmp_path / "kr_sleeve.json"
     pub = pub or FakePub()
@@ -414,8 +427,21 @@ def _run(tmp_path, mode, *, now=NOW_FIX, store=None, pub=None, http=None, ts=Non
     code, res = kr_run.run(str(core), str(out), now=now, mode=mode,
                            http_get=http or _http_ok(date(2026, 10, 2)),
                            store_factory=(lambda: store) if store else None, pub=pub,
-                           sleep=sleeps.append, rng=random.Random(0))
+                           sleep=sleeps.append, rng=random.Random(0), clock=clock or (lambda: now))
     return code, res, pub, out, core, sleeps
+
+
+# live 시나리오 기준: KST 10-05(월) 10:30 장중, 오늘 봉 존재, morning 10분 전 완료
+LIVE_NOW = datetime(2026, 10, 5, 1, 30, tzinfo=UTC)
+LIVE_TS = LIVE_NOW - timedelta(minutes=10)
+
+
+def _run_live(tmp_path, monkeypatch, **kw):
+    monkeypatch.setenv("DRY_RUN", "false")
+    kw.setdefault("now", LIVE_NOW)
+    kw.setdefault("ts", LIVE_TS)
+    kw.setdefault("http", _http_ok(date(2026, 10, 5)))
+    return _run(tmp_path, "live", **kw)
 
 
 def test_run_dry_run_no_db_no_publish_and_core_data_unchanged(tmp_path):
@@ -430,7 +456,8 @@ def test_run_dry_run_no_db_no_publish_and_core_data_unchanged(tmp_path):
     assert pub.calls == [] and pub.notes == []
     assert hashlib.sha256(core.read_bytes()).hexdigest() == before
     saved = json.loads((tmp_path / "o.json").read_text(encoding="utf-8"))
-    assert saved["result"]["total_allocation"]["161510"] == 10
+    assert res["result"]["total_allocation"]["161510"] == 10        # 메모리 결과는 코드 키
+    assert saved["result"]["total_allocation"]["P**S"] == 10         # artifact는 마스킹 키(R4 W5)
     assert saved["publish"]["allowed"] is False
     assert saved["run_date"] == "2026-10-05"
 
@@ -443,9 +470,9 @@ def test_run_shadow_records_without_publish(tmp_path):
     assert pub.calls == []
 
 
-def test_run_live_publishes_in_order_with_claims(tmp_path):
+def test_run_live_publishes_in_order_with_claims(tmp_path, monkeypatch):
     store = FakeStore()
-    code, res, pub, _, _, sleeps = _run(tmp_path, "live", store=store)
+    code, res, pub, _, _, sleeps = _run_live(tmp_path, monkeypatch, store=store)
     assert code == 0 and res["status"] == "published"
     assert pub.calls == ["telegram", "facebook", "x"]
     claims = [c for c in store.calls if c[0] == "claim"]
@@ -453,37 +480,136 @@ def test_run_live_publishes_in_order_with_claims(tmp_path):
     assert len(sleeps) == 1 and config.X_DELAY_RANGE_SEC[0] <= sleeps[0] <= config.X_DELAY_RANGE_SEC[1]
 
 
-def test_run_live_window_exceeded_blocks_publish(tmp_path):
-    late = datetime(2026, 10, 4, 20, 20, 14, tzinfo=UTC) + timedelta(minutes=61)
+def test_run_live_window_exceeded_blocks_publish(tmp_path, monkeypatch):
     store = FakeStore()
-    code, res, pub, *_ = _run(tmp_path, "live", store=store, now=late)
+    code, res, pub, *_ = _run_live(tmp_path, monkeypatch, store=store,
+                                   ts=LIVE_NOW - timedelta(minutes=61))
     assert res["status"] == "computed" and pub.calls == []
     assert res["publish"]["blocked_reason"].startswith("PUBLISH_WINDOW_EXCEEDED")
 
 
-def test_run_live_kr_holiday_blocks_publish(tmp_path):
-    # KST 10-05(월) 11:00 인데 오늘 봉이 없음 → 국내 휴장으로 보고 발행 생략(기록은 함)
-    now = datetime(2026, 10, 5, 2, 0, tzinfo=UTC)
+def test_run_live_kr_holiday_blocks_publish(tmp_path, monkeypatch):
+    # KST 10-05(월) 10:30 인데 오늘 봉이 없음 → 국내 휴장으로 보고 발행 생략(기록은 함)
     store = FakeStore()
-    code, res, pub, *_ = _run(tmp_path, "live", store=store, now=now, ts=now - timedelta(minutes=10))
+    code, res, pub, *_ = _run_live(tmp_path, monkeypatch, store=store, http=_http_ok(date(2026, 10, 2)))
     assert res["status"] == "computed" and res["kr_market_closed"] is True
     assert pub.calls == [] and res["publish"]["blocked_reason"] == "KR_MARKET_CLOSED"
 
 
-def test_run_live_claim_failure_skips_that_channel(tmp_path):
+def test_run_live_claim_failure_skips_that_channel(tmp_path, monkeypatch):
     store = FakeStore(fail_claim={"facebook"})
-    code, res, pub, *_ = _run(tmp_path, "live", store=store)
+    code, res, pub, *_ = _run_live(tmp_path, monkeypatch, store=store)
     assert pub.calls == ["telegram", "x"]
     assert res["publish"]["channels"]["facebook"]["status"] == "failed"
     assert pub.notes, "발행 문제는 운영자 방에 알려야 한다"
 
 
-def test_run_live_unknown_result_notifies_operator(tmp_path):
+def test_run_live_unknown_result_notifies_operator(tmp_path, monkeypatch):
     store = FakeStore()
     pub = FakePub(result="unknown")
-    code, res, pub, *_ = _run(tmp_path, "live", store=store, pub=pub)
+    code, res, pub, *_ = _run_live(tmp_path, monkeypatch, store=store, pub=pub)
     assert res["status"] == "computed"
     assert pub.notes and "PUBLISH_FAILED" in pub.notes[-1]
+
+
+def test_run_live_pre_open_blocks_publish(tmp_path, monkeypatch):
+    # R4 C1: KST 07:10 실행(장 시작 전) → 휴장 여부 미확인 → 발행 안 함, 기록은 함
+    now = datetime(2026, 10, 4, 22, 10, tzinfo=UTC)
+    store = FakeStore()
+    code, res, pub, *_ = _run_live(tmp_path, monkeypatch, store=store, now=now,
+                                   ts=now - timedelta(minutes=10), http=_http_ok(date(2026, 10, 2)))
+    assert res["status"] == "computed" and res["kr_market_state"] == "unknown"
+    assert res["kr_market_closed"] is None
+    assert res["publish"]["blocked_reason"] == "KR_OPEN_UNVERIFIED" and pub.calls == []
+    assert len(store.daily) == 1
+
+
+def test_run_live_global_dry_run_blocks_before_claim(tmp_path, monkeypatch):
+    # R4 S3: 전역 DRY_RUN=true 면 claim 자체를 하지 않는다(나중 실발행을 막지 않도록)
+    monkeypatch.setenv("DRY_RUN", "true")
+    store = FakeStore()
+    code, res, pub, *_ = _run(tmp_path, "live", store=store, now=LIVE_NOW, ts=LIVE_TS,
+                              http=_http_ok(date(2026, 10, 5)))
+    assert res["publish"]["blocked_reason"] == "GLOBAL_DRY_RUN"
+    assert not [c for c in store.calls if c[0] == "claim"] and pub.calls == []
+
+
+def test_run_live_window_rechecked_before_x(tmp_path, monkeypatch):
+    # R4 C2: TG·FB 뒤 X 대기 중 60분이 지나면 X는 발행하지 않는다
+    times = iter([LIVE_NOW, LIVE_NOW, LIVE_TS + timedelta(minutes=61)])
+    store = FakeStore()
+    code, res, pub, *_ = _run_live(tmp_path, monkeypatch, store=store, clock=lambda: next(times))
+    assert pub.calls == ["telegram", "facebook"]
+    assert res["publish"]["channels"]["x"]["status"] == "blocked"
+    assert res["publish"]["channels"]["x"]["reason"].startswith("PUBLISH_WINDOW_EXCEEDED")
+    assert ("claim", "x") not in store.calls
+
+
+def test_run_live_publisher_exception_continues(tmp_path, monkeypatch):
+    # R4 W3: 한 채널 발행 함수 예외 → unknown 기록, 다음 채널 계속
+    class BoomPub(FakePub):
+        @property
+        def publish_facebook(self):
+            def fn(text):
+                raise RuntimeError("boom")
+            return fn
+    store = FakeStore()
+    code, res, pub, *_ = _run_live(tmp_path, monkeypatch, store=store, pub=BoomPub())
+    assert pub.calls == ["telegram", "x"]
+    assert res["publish"]["channels"]["facebook"]["status"] == "unknown"
+    assert ("finish", "facebook", "unknown") in store.calls
+    assert res["status"] == "published" and pub.notes
+
+
+def test_run_live_x_too_long_blocked(tmp_path, monkeypatch):
+    monkeypatch.setattr(formatter, "X_MAX_WEIGHTED", 10)
+    store = FakeStore()
+    code, res, pub, *_ = _run_live(tmp_path, monkeypatch, store=store)
+    assert res["publish"]["channels"]["x"] == {"status": "blocked", "reason": "X_TOO_LONG"}
+    assert "x" not in pub.calls
+
+
+def test_artifact_and_summary_masked(tmp_path, monkeypatch):
+    # R4 W5: 공개 레포 Actions 화면(artifact·summary)에 종목코드·정식명 미노출
+    summary = tmp_path / "summary.md"
+    monkeypatch.setenv("GITHUB_STEP_SUMMARY", str(summary))
+    code, res, pub, out, *_ = _run(tmp_path, "dry_run")
+    for path in (out, summary):
+        text = path.read_text(encoding="utf-8")
+        for word in _FORBIDDEN_PUBLIC:
+            assert word not in text, (path.name, word)
+    assert "P**S" in out.read_text(encoding="utf-8")
+
+
+def test_store_does_not_overwrite_published():
+    from kr_sleeve.store import SleeveStore
+
+    class Q:
+        def __init__(self, data, log):
+            self.data, self.log = data, log
+
+        def __getattr__(self, name):
+            def chain(*a, **k):
+                self.log.append(name)
+                return self
+            return chain
+
+        def execute(self):
+            return self
+
+    class Client:
+        def __init__(self, existing):
+            self.existing, self.log = existing, []
+
+        def table(self, name):
+            return Q(self.existing, self.log)
+
+    published = Client([{"run_date": "2026-11-09", "status": "published"}])
+    SleeveStore(published).upsert_daily({"run_date": "2026-11-09", "status": "computed"})
+    assert "upsert" not in published.log
+    fresh = Client([])
+    SleeveStore(fresh).upsert_daily({"run_date": "2026-11-09", "status": "computed"})
+    assert "upsert" in fresh.log
 
 
 def test_run_already_done_is_benign(tmp_path):

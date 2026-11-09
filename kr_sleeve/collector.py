@@ -99,13 +99,20 @@ def completed_bars(bars: list[Bar], now_kst: datetime) -> list[Bar]:
     return [b for b in bars if b.day < today or (b.day == today and done_today)]
 
 
-def is_kr_market_closed_today(bars: list[Bar], now_kst: datetime) -> bool:
-    """평일 개장 확인 시각 이후인데 오늘 봉이 없으면 국내 휴장으로 본다. 그 전에는 판정하지 않는다(False)."""
+MARKET_OPEN, MARKET_CLOSED, MARKET_UNKNOWN = "open", "closed", "unknown"
+
+
+def kr_market_state(bars: list[Bar], now_kst: datetime) -> str:
+    """오늘 국내 시장 상태.
+    주말 → closed. 평일 개장 확인 시각(09:10 KST) 이후: 오늘 봉이 있으면 open, 없으면 closed(휴장).
+    그 전에는 봉으로 알 수 없으므로 unknown — 발행 게이트는 unknown을 발행 불가로 본다(default-deny,
+    R4 C1: 장 시작 전 평일 휴장일 오발행 방지.
+    휴장 캘린더 의존성은 기존 requirements 불변을 위해 넣지 않음)."""
     if now_kst.weekday() >= 5:
-        return True
+        return MARKET_CLOSED
     if (now_kst.hour, now_kst.minute) < config.KRX_OPEN_CHECK:
-        return False
-    return not any(b.day == now_kst.date() for b in bars)
+        return MARKET_UNKNOWN
+    return MARKET_OPEN if any(b.day == now_kst.date() for b in bars) else MARKET_CLOSED
 
 
 def _sma(values: list[float], n: int) -> float | None:
@@ -151,15 +158,19 @@ def fetch_fchart(code: str, http_get: Callable = requests.get) -> str:
     return resp.text
 
 
-def collect(now_utc: datetime, http_get: Callable = requests.get) -> tuple[dict[str, Quote], bool]:
-    """2종 시세와 국내 휴장 여부. 1종이라도 실패하면 SleeveSkip(전체 skipped, DN2026_0108 D-6)."""
+def collect(now_utc: datetime, http_get: Callable = requests.get) -> tuple[dict[str, Quote], str]:
+    """2종 시세와 오늘 국내 시장 상태. 1종이라도 실패하면 SleeveSkip(전체 skipped, DN2026_0108 D-6)."""
     now_kst = now_utc.astimezone(KST)
     quotes: dict[str, Quote] = {}
-    closed_flags = []
+    states = []
     for etf in config.KR_ETFS:
         bars = parse_fchart(fetch_fchart(etf.code, http_get))
         quotes[etf.code] = build_quote(etf.code, bars, now_kst)
-        closed_flags.append(is_kr_market_closed_today(bars, now_kst))
+        states.append(kr_market_state(bars, now_kst))
         logger.info("[KRSleeve] 시세 %s as_of=%s close=%s chg=%s%%",
-                    etf.code, quotes[etf.code].as_of, quotes[etf.code].close, quotes[etf.code].change_pct)
-    return quotes, all(closed_flags)
+                    etf.short, quotes[etf.code].as_of, quotes[etf.code].close, quotes[etf.code].change_pct)
+    if MARKET_CLOSED in states:
+        return quotes, MARKET_CLOSED
+    if MARKET_UNKNOWN in states:
+        return quotes, MARKET_UNKNOWN
+    return quotes, MARKET_OPEN
