@@ -1,8 +1,28 @@
 """
 ============================================================
-EDT Market Snapshot Collector v1.3
+EDT Market Snapshot Collector v1.5
 ============================================================
 변경 이력:
+  v1.5 (2026-11-11) — MACRO-IE-01 거시 인플레이션 블록 신설 (IE P2 엔진 게이트)
+    · 목적: Inflation Empress(CHAR_VILLAIN_011) 활성 판정 입력 공급.
+      21 §2-10 INFLATION SURGE 임계(CPI/PPI YoY · T5YIE)를 수동 web_search 없이 판정.
+    · 신설 출력 키: snapshot.macro (최상위, metrics 와 분리)
+        월간: cpi_yoy(CPIAUCSL) / core_cpi_yoy(CPILFESL) /
+              core_pce_yoy(PCEPILFE) / ppi_yoy(PPIACO)
+              → 13개월 전 동일월 관측 대비 YoY(%) 계산. 필드: reference_month /
+                release_date(FRED realtime_start) / revised / stale / age_days
+        일간: t5yie(T5YIE) / t10yie(T10YIE)
+    · 격리 원칙(RULE MACRO-ISO-01): macro 는 metrics · stale_series ·
+      resolve_anchor · core_failed 판정에 일절 관여하지 않는다.
+      ※ 실측 근거: 월간 시리즈를 FRED_SERIES 에 넣으면 STALE_MAX_DEFAULT(4일)로
+        상시 stale 이 되고, resolve_anchor 가 전 metrics 를 순회하므로
+        앵커 계산 입력이 오염된다.
+    · 실패해도 예외 중단 없음 — 해당 지표 value=None, grade="불가".
+    · RULE MACRO-GAP-01: 최신월 YoY 산출 불가(전년 동일월 미공표) 시 추정·보간 금지,
+      직전 산출 가능 월 채택 + yoy_gap_months 기록.
+      ※ 실측 근거: BLS 2026-11-10 공표 10월 CPI 는 2025-10 미수집(셧다운)으로
+        전년 대비 변동률 미공표. 언론 보간 추정치(약 3.8~4.0%)는 공식치가 아니다.
+    · 헤더 표기 정정: v1.4 반영 후에도 제목이 v1.3 으로 남아 있던 표기 오류 교정.
   v1.4 (2026-09-26) — ANCHOR-01 교정 (v1.3 미적용 상태에서 실측 검증으로 발견)
     · v1.3 결함: 앵커 관측일을 us10y(FRED) 단일 시리즈에서 취했다.
       FRED 공표 지연이 1영업일이므로 매 실행마다 anchor_ok=false 오탐 발생.
@@ -93,7 +113,7 @@ import requests
 # 설정
 # ------------------------------------------------------------
 
-SCHEMA_VERSION = "edt_snapshot_v1.4"
+SCHEMA_VERSION = "edt_snapshot_v1.5"
 KST = timezone(timedelta(hours=9))
 
 FRED_API_KEY = os.environ.get("FRED_API_KEY", "")
@@ -136,6 +156,23 @@ FRED_SERIES = {
     # v1.1 신설 — WTI Cushing 현물. 계약월 개념이 없어 롤오버 왜곡이 원천 없음.
     "wti_fred": ("DCOILWTICO",   "WTI Crude (FRED, Cushing 현물)", "높음", 2),
 }
+
+# v1.5 MACRO-IE-01 — 거시 인플레이션 블록 (metrics 와 분리, RULE MACRO-ISO-01)
+# 월간: key -> (series_id, 표시명, 등급, 최대 허용 경과일[reference_month 1일 기준])
+#   허용 경과일 = 80일 4종 공통 (마스터 결정 D-IE-17, 2026-11-11).
+#   ※ PCE 는 익월 말 공표라 다음 공표 직전 약 1~2주 stale 구간 발생 (서사 참고 지표 — 판정 비관여).
+MACRO_MONTHLY = {
+    "cpi_yoy":      ("CPIAUCSL", "CPI YoY (%)",             "높음", 80),
+    "core_cpi_yoy": ("CPILFESL", "Core CPI YoY (%)",        "높음", 80),
+    "core_pce_yoy": ("PCEPILFE", "Core PCE YoY (%)",        "높음", 80),
+    "ppi_yoy":      ("PPIACO",   "PPI All Commodities YoY (%)", "높음", 80),
+}
+# 일간: key -> (series_id, 표시명, 등급, 최대 허용 경과일)
+MACRO_DAILY = {
+    "t5yie":  ("T5YIE",  "5Y Breakeven Inflation (%)",  "높음", 4),
+    "t10yie": ("T10YIE", "10Y Breakeven Inflation (%)", "높음", 4),
+}
+MACRO_FETCH_LIMIT = 30   # 월간 YoY 2회분(최신·직전월) 계산에 필요한 관측 ≥ 14
 
 # yfinance 티커 정의: key -> (ticker, 표시명, 등급)
 YF_TICKERS = {
@@ -327,6 +364,135 @@ def fetch_yf(ticker: str):
 # ------------------------------------------------------------
 # 메트릭 조립
 # ------------------------------------------------------------
+
+def fetch_fred_obs(series_id: str, limit: int = MACRO_FETCH_LIMIT):
+    """v1.5 — FRED 관측 원본 목록(desc) 반환. realtime_start 포함. 실패 시 None."""
+    if not FRED_API_KEY:
+        return None
+    params = {
+        "series_id": series_id,
+        "api_key": FRED_API_KEY,
+        "file_type": "json",
+        "sort_order": "desc",
+        "limit": limit,
+    }
+    try:
+        r = requests.get(FRED_BASE, params=params, timeout=30)
+        r.raise_for_status()
+        obs = [o for o in r.json().get("observations", [])
+               if o.get("value") not in (".", "", None)]
+        return obs or None
+    except Exception as e:
+        print(f"[WARN] FRED {series_id} 실패: {e}", file=sys.stderr)
+        return None
+
+
+def _year_ago(month_str: str) -> str:
+    d = parse_date(month_str)
+    return d.replace(year=d.year - 1).strftime("%Y-%m-%d") if d else None
+
+
+def yoy_from_obs(obs: list, idx: int):
+    """obs[idx] 의 전년동월 대비 YoY(%). 동일월 관측 부재 시 None (인덱스 추정 금지)."""
+    if obs is None or idx >= len(obs):
+        return None
+    cur = obs[idx]
+    target = _year_ago(cur.get("date"))
+    base = next((o for o in obs if o.get("date") == target), None)
+    if base is None:
+        return None
+    b = float(base["value"])
+    if b == 0:
+        return None
+    return round((float(cur["value"]) / b - 1.0) * 100.0, 4)
+
+
+def build_macro_monthly(key, sid, name, grade, max_age, ref_date):
+    out = {
+        "name": name, "series_id": sid, "source": f"FRED:{sid}",
+        "value": None, "reference_month": None, "release_date": None,
+        "latest_observed_month": None, "yoy_gap_months": [],
+        "prev": None, "prev_reference_month": None, "delta": None,
+        "revised": False, "stale": False, "age_days": None,
+        "max_age_days": max_age, "grade": "불가", "frequency": "monthly",
+    }
+    obs = fetch_fred_obs(sid)
+    if not obs:
+        return out
+    out["latest_observed_month"] = obs[0]["date"][:7]
+    # RULE MACRO-GAP-01 — 최신월 YoY 산출 불가(전년 동일월 미공표, 예: 2025-10 셧다운 결측) 시
+    #   추정·보간 금지. 직전 산출 가능 월(최대 2개월 소급)의 YoY 를 채택하고 결측월을 기록한다.
+    idx = None
+    for i in range(0, min(3, len(obs))):
+        if yoy_from_obs(obs, i) is not None:
+            idx = i
+            break
+        out["yoy_gap_months"].append(obs[i]["date"][:7])
+    if idx is None:
+        return out
+    used = obs[idx]
+    v = yoy_from_obs(obs, idx)
+    out.update({
+        "value": v,
+        "reference_month": used["date"][:7],
+        "release_date": used.get("realtime_start"),
+        "grade": grade,
+        "age_days": age_days(used["date"], ref_date),
+    })
+    for j in range(idx + 1, min(idx + 3, len(obs))):
+        pv = yoy_from_obs(obs, j)
+        if pv is not None:
+            out["prev"] = pv
+            out["prev_reference_month"] = obs[j]["date"][:7]
+            out["delta"] = round(v - pv, 4)
+            break
+    # RULE MACRO-REV-01 — 최신 관측 이외 관측의 realtime_start 가 최신 공표일과 같으면
+    #   같은 공표에서 과거치가 개정된 것으로 판정한다.
+    rs = obs[0].get("realtime_start")
+    if rs:
+        out["revised"] = any(o.get("realtime_start") == rs for o in obs[1:13])
+    if out["age_days"] is not None and out["age_days"] > max_age:
+        out["stale"] = True
+    return out
+
+
+def build_macro_daily(key, sid, name, grade, max_age, ref_date):
+    out = {
+        "name": name, "series_id": sid, "source": f"FRED:{sid}",
+        "value": None, "as_of": None, "prev": None, "prev_date": None,
+        "delta": None, "stale": False, "age_days": None,
+        "max_age_days": max_age, "grade": "불가", "frequency": "daily",
+    }
+    obs = fetch_fred_obs(sid, limit=10)
+    if not obs:
+        return out
+    out.update({"value": round(float(obs[0]["value"]), 4), "as_of": obs[0]["date"],
+                "grade": grade, "age_days": age_days(obs[0]["date"], ref_date)})
+    if len(obs) > 1:
+        out["prev"] = round(float(obs[1]["value"]), 4)
+        out["prev_date"] = obs[1]["date"]
+        out["delta"] = round(out["value"] - out["prev"], 4)
+    if out["age_days"] is not None and out["age_days"] > max_age:
+        out["stale"] = True
+    return out
+
+
+def collect_macro(ref_date: date) -> dict:
+    """v1.5 MACRO-IE-01 — metrics 와 독립된 거시 블록. 예외로 중단하지 않는다."""
+    block, failed, stale = {}, [], []
+    for key, (sid, name, grade, mx) in MACRO_MONTHLY.items():
+        block[key] = build_macro_monthly(key, sid, name, grade, mx, ref_date)
+    for key, (sid, name, grade, mx) in MACRO_DAILY.items():
+        block[key] = build_macro_daily(key, sid, name, grade, mx, ref_date)
+    for key, m in block.items():
+        if m["value"] is None:
+            failed.append(key)
+        elif m["stale"]:
+            stale.append(key)
+    return {"series": block, "failed": failed, "stale": stale,
+            "rule": "MACRO-ISO-01: metrics/anchor/core_failed 판정 비관여. "
+                    "월간 값은 다음 공표까지 유지(DATA-IE). revised=true 시 CP-1 명시."}
+
 
 def build_metric(name, value, as_of, prev, prev_date, source, grade, lag_days=None):
     delta = round(value - prev, 4) if (value is not None and prev is not None) else None
@@ -535,6 +701,9 @@ def collect() -> dict:
     if not anchor["anchor_ok"]:
         print(f"[WARN] ANCHOR 불일치: {anchor['anchor_note']}", file=sys.stderr)
 
+    # 5) v1.5 MACRO-IE-01 — 앵커 판정 이후, 별도 키로 수집 (RULE MACRO-ISO-01)
+    macro = collect_macro(ref_date)
+
     snapshot = {
         "schema_version": SCHEMA_VERSION,
         "generated_at_utc": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
@@ -561,6 +730,7 @@ def collect() -> dict:
                         "outlier_no_promote=실제 급변(원본 유지, CP-1 교차검증 권고).",
         },
         "metrics": metrics,
+        "macro": macro,                                 # v1.5 신설 — metrics 와 분리
     }
     return snapshot
 
